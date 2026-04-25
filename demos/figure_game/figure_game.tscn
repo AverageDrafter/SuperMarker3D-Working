@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://figuregame00"]
+[gd_scene format=3 uid="uid://figuregame00"]
 
 [ext_resource type="Script" uid="uid://by1bp7f7u4gl3" path="res://demos/figure_game/figure_game.gd" id="1_game"]
 
@@ -21,128 +21,122 @@ glow_enabled = true
 glow_intensity = 0.5
 glow_strength = 0.8
 
-[node name="FigureGame" type="Node3D"]
+[node name="FigureGame" type="Node3D" unique_id=1947640771]
 script = ExtResource("1_game")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=434232130]
 environment = SubResource("Env_1")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1642158023]
 transform = Transform3D(0.5970223, 0.53154933, -0.6008492, -0.39801487, 0.84656, 0.35344076, 0.69652605, 0.028134868, 0.71697974, 0, 8, 0)
 light_energy = 0.7
 
-[node name="Camera" type="Camera3D" parent="."]
+[node name="Camera" type="Camera3D" parent="." unique_id=1617389183]
 transform = Transform3D(1, 0, 0, 0, 0.7, 0.71, 0, -0.71, 0.7, 0, 9, 6.5)
 fov = 60.0
 
-[node name="Arena" type="Node3D" parent="."]
+[node name="Arena" type="Node3D" parent="." unique_id=1800183164]
 
-[node name="Ground" type="SuperMarker3D" parent="Arena"]
-transform = Transform3D(1, 0, 0, 0, 0.04, 0, 0, 0, 1, 0, -0.4, 0)
+[node name="Ground" type="SuperMarker3D" parent="Arena" unique_id=800390891]
 shape = 4
 marker_size = 10.0
-fill_enabled = true
-fill_color = Color(0.07, 0.10, 0.14, 1)
 outline_color = Color(0.25, 0.55, 0.75, 0.8)
+fill_enabled = true
+fill_color = Color(0.07, 0.1, 0.14, 1)
+transform = Transform3D(1, 0, 0, 0, 0.04, 0, 0, 0, 1, 0, -0.4, 0)
 
-[node name="WallN" type="SuperMarker3D" parent="Arena"]
-transform = Transform3D(1, 0, 0, 0, 0.06, 0, 0, 0, 0.02, 0, 0.6, -10.0)
+[node name="WallN" type="SuperMarker3D" parent="Arena" unique_id=1750537093]
 shape = 4
 marker_size = 10.0
+outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
 fill_color = Color(0.1, 0.2, 0.3, 0.4)
-outline_color = Color(0.5, 0.8, 1.0, 1)
+transform = Transform3D(1, 0, 0, 0, 0.06, 0, 0, 0, 0.02, 0, 0.6, -10)
 
-[node name="WallS" type="SuperMarker3D" parent="Arena"]
-transform = Transform3D(1, 0, 0, 0, 0.06, 0, 0, 0, 0.02, 0, 0.6, 10.0)
+[node name="WallS" type="SuperMarker3D" parent="Arena" unique_id=1042276579]
 shape = 4
 marker_size = 10.0
+outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
 fill_color = Color(0.1, 0.2, 0.3, 0.4)
-outline_color = Color(0.5, 0.8, 1.0, 1)
+transform = Transform3D(1, 0, 0, 0, 0.06, 0, 0, 0, 0.02, 0, 0.6, 10)
 
-[node name="WallW" type="SuperMarker3D" parent="Arena"]
-transform = Transform3D(0.02, 0, 0, 0, 0.06, 0, 0, 0, 1, -10.0, 0.6, 0)
+[node name="WallW" type="SuperMarker3D" parent="Arena" unique_id=146720331]
 shape = 4
 marker_size = 10.0
+outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
 fill_color = Color(0.1, 0.2, 0.3, 0.4)
-outline_color = Color(0.5, 0.8, 1.0, 1)
+transform = Transform3D(0.02, 0, 0, 0, 0.06, 0, 0, 0, 1, -10, 0.6, 0)
 
-[node name="WallE" type="SuperMarker3D" parent="Arena"]
-transform = Transform3D(0.02, 0, 0, 0, 0.06, 0, 0, 0, 1, 10.0, 0.6, 0)
+[node name="WallE" type="SuperMarker3D" parent="Arena" unique_id=1551337255]
 shape = 4
 marker_size = 10.0
+outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
 fill_color = Color(0.1, 0.2, 0.3, 0.4)
-outline_color = Color(0.5, 0.8, 1.0, 1)
+transform = Transform3D(0.02, 0, 0, 0, 0.06, 0, 0, 0, 1, 10, 0.6, 0)
 
-[node name="Player" type="SuperMarker3D" parent="."]
+[node name="Player" type="SuperMarker3D" parent="." unique_id=1544003372]
 shape = 10
 outline_color = Color(0.95, 0.85, 0.4, 1)
 figure_height = 1.4
 
-[node name="Pickups" type="Node3D" parent="."]
+[node name="Pickups" type="Node3D" parent="." unique_id=1570846471]
 
-[node name="Pickup0" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup0" type="SuperMarker3D" parent="Pickups" unique_id=633676993]
+shape = 2
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
+fill_enabled = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.7, -3)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Pickup1" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup1" type="SuperMarker3D" parent="Pickups" unique_id=76163019]
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.7, 4)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Pickup2" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup2" type="SuperMarker3D" parent="Pickups" unique_id=1770913043]
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.7, 6)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Pickup3" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup3" type="SuperMarker3D" parent="Pickups" unique_id=619779653]
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0.7, -6)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Pickup4" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup4" type="SuperMarker3D" parent="Pickups" unique_id=612173731]
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.7, 7)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Pickup5" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup5" type="SuperMarker3D" parent="Pickups" unique_id=1273297366]
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0.7, -7)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Pickup6" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup6" type="SuperMarker3D" parent="Pickups" unique_id=1381918358]
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0.7, -2)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Pickup7" type="SuperMarker3D" parent="Pickups"]
+[node name="Pickup7" type="SuperMarker3D" parent="Pickups" unique_id=991883758]
+marker_size = 0.45
+outline_color = Color(0.4, 1, 0.6, 1)
+outline_thickness = 0.06
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, -8)
-shape = 0
-marker_size = 0.45
-outline_color = Color(0.4, 1.0, 0.6, 1)
-outline_thickness = 0.06
 
-[node name="Arrows" type="Node3D" parent="."]
+[node name="Arrows" type="Node3D" parent="." unique_id=1450800716]
 
-[node name="ScoreLabel" type="Label3D" parent="."]
+[node name="ScoreLabel" type="Label3D" parent="." unique_id=2025289156]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9, 3, -9)
 billboard = 1
 no_depth_test = true

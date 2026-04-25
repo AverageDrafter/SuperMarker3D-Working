@@ -260,7 +260,14 @@ private:
 	// Flip to `true` per-marker (or in scene metadata) when you want
 	// the old preview-only behavior.
 	bool _editor_only  = false;
-	bool _always_on_top = true;
+	// Depth-test is enabled by default. Pre-1.0 default was `true`
+	// (FLAG_DISABLE_DEPTH_TEST) so debug markers always poked through
+	// scene geometry — useful as overlays, but it makes complex shapes
+	// (especially FIGURE, where head + torso + limbs overlap) render
+	// without internal occlusion: the back of the head shows through
+	// the front, overlapping limbs draw in submission order. Flip back
+	// to `true` per-marker for the old "always visible" behavior.
+	bool _always_on_top = false;
 	bool _template_mode = false;
 
 	Ref<ArrayMesh>         _mesh;

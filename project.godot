@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="SuperMarker3D"
 config/description="SuperMarker3D addon working project. Demos in demos/."
-run/main_scene="res://demos/showcase/showcase.tscn"
+run/main_scene="uid://figuregame00"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
 [editor_plugins]
