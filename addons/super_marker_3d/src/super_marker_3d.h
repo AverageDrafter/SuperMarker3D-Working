@@ -253,7 +253,13 @@ private:
 	bool _end_cap_linked   = true;
 	float _length_fraction = 1.0f;
 
-	bool _editor_only  = true;
+	// Marker is visible at runtime by default. The pre-1.0 default was
+	// `true` (editor-preview-only), which made sense when SuperMarker3D
+	// was a debug-gizmo embedded in MultiNode but trips up anyone using
+	// it as game-visible iconography or for shipping debug overlays.
+	// Flip to `true` per-marker (or in scene metadata) when you want
+	// the old preview-only behavior.
+	bool _editor_only  = false;
 	bool _always_on_top = true;
 	bool _template_mode = false;
 
