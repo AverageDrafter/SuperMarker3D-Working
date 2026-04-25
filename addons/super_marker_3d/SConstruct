@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+"""
+Build script for SuperMarker3D GDExtension.
+
+Usage:
+    scons                           # Debug build for current platform
+    scons target=template_release   # Release build
+    scons platform=windows          # Explicit platform
+
+Prerequisites:
+    - Python 3.x
+    - SCons (pip install scons)
+    - C++ compiler (Visual Studio 2022 with C++ workload, or MinGW-w64)
+    - godot-cpp cloned into this directory:
+        git clone https://github.com/godotengine/godot-cpp.git -b 4.6
+        (use the branch matching your Godot version)
+"""
+
+env = SConscript("godot-cpp/SConstruct")
+
+# Mirror MultiNode's MinGW path workaround so this addon builds in the
+# same environments. On Windows, override the toolchain to a no-spaces
+# MinGW install if available.
+import os, sys, subprocess, tempfile as _tmpmod
+if sys.platform == "win32":
+    _mbin = r"C:\mingw64\bin"
+    if os.path.isdir(_mbin):
+        for _tool, _exe in [("CXX","g++.exe"),("CC","gcc.exe"),
+                             ("SHLINK","x86_64-w64-mingw32-g++.exe"),
+                             ("LINK","x86_64-w64-mingw32-g++.exe"),
+                             ("AR","ar.exe"),("RANLIB","ranlib.exe"),
+                             ("RC","windres.exe")]:
+            _p = os.path.join(_mbin, _exe)
+            if os.path.isfile(_p):
+                env[_tool] = _p
+        env.PrependENVPath("PATH", _mbin)
+
+    def _ar_rsp(target, source, env):
+        rsp = _tmpmod.NamedTemporaryFile(mode="w", suffix=".rsp", delete=False)
+        for s in source:
+            rsp.write(str(s).replace("\\", "/") + "\n")
+        rsp.close()
+        ar = env.subst("$AR")
+        tgt = str(target[0])
+        ret = subprocess.call([ar, "rcs", tgt, "@" + rsp.name])
+        os.unlink(rsp.name)
+        return ret
+
+    env["ARCOM"] = _ar_rsp
+
+env.Append(CPPPATH=["src/"])
+sources = Glob("src/*.cpp")
+
+library = env.SharedLibrary(
+    target="bin/libsupermarker3d{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    source=sources,
+)
+
+Default(library)

@@ -1,0 +1,18 @@
+[configuration]
+entry_symbol = "super_marker_3d_init"
+compatibility_minimum = "4.3"
+reloadable = true
+
+[libraries]
+windows.debug.x86_64 = "res://addons/super_marker_3d/bin/libsupermarker3d.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/super_marker_3d/bin/libsupermarker3d.windows.template_release.x86_64.dll"
+linux.debug.x86_64 = "res://addons/super_marker_3d/bin/libsupermarker3d.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/super_marker_3d/bin/libsupermarker3d.linux.template_release.x86_64.so"
+macos.debug = "res://addons/super_marker_3d/bin/libsupermarker3d.macos.template_debug.framework"
+macos.release = "res://addons/super_marker_3d/bin/libsupermarker3d.macos.template_release.framework"
+
+[documentation]
+class_reference = "res://addons/super_marker_3d/doc_classes"
+
+[icons]
+SuperMarker3D = "res://addons/super_marker_3d/icons/super_marker_3d.svg"

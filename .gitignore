@@ -1,0 +1,27 @@
+# Godot
+.godot/
+*.uid
+.import/
+export.cfg
+export_presets.cfg
+*.translation
+
+# Build artifacts
+addons/super_marker_3d/godot-cpp/
+addons/super_marker_3d/bin/*.exp
+addons/super_marker_3d/bin/*.lib
+addons/super_marker_3d/bin/*.pdb
+addons/super_marker_3d/src/*.o
+addons/super_marker_3d/.sconsign.dblite
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Editor
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo

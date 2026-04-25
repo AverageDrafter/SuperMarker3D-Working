@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SuperMarker3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		Graphic-design-oriented 3D marker node — seven shapes with wireframe or billboarded silhouette rendering.
+	</brief_description>
+	<description>
+		SuperMarker3D is a standalone debug/annotation node. It does not require a [MultiNode] parent, though it can also be used as a template child of one (SuperMarkerHandler draws per-instance copies).
+
+		Seven shapes: Cross, Diamond, Sphere, Axis, Cube, Arrow, Flat Arrow.
+
+		Two detail modes:
+		[b]DETAIL_WIREFRAME[/b] — edges as face-normal quads (back-culled so only camera-front edges show) plus optional solid fill. Looks like a real mesh at any angle.
+		[b]DETAIL_SILHOUETTE[/b] — billboarded 2D outline + optional fill, always faces the camera.
+
+		Arrow-shape properties configure the arrowhead style, tail flare, and head dimensions.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="shape" type="int" setter="set_shape" getter="get_shape" enum="SuperMarker3D.MarkerShape" default="0">
+			Which shape to draw.
+		</member>
+		<member name="marker_size" type="float" setter="set_marker_size" getter="get_marker_size" default="0.5">
+			Overall size in meters.
+		</member>
+		<member name="detail_mode" type="int" setter="set_detail_mode" getter="get_detail_mode" enum="SuperMarker3D.DetailMode" default="0">
+			[code]DETAIL_WIREFRAME[/code] (0) or [code]DETAIL_SILHOUETTE[/code] (1).
+		</member>
+		<member name="outline_color" type="Color" setter="set_outline_color" getter="get_outline_color" default="Color(0, 1, 0.8, 1)">
+			Edge / outline color.
+		</member>
+		<member name="outline_thickness" type="float" setter="set_outline_thickness" getter="get_outline_thickness" default="0.0">
+			Thickness of edge quads (wireframe) or outline lines (silhouette). 0 = thin lines.
+		</member>
+		<member name="fill_enabled" type="bool" setter="set_fill_enabled" getter="get_fill_enabled" default="false">
+			Draw solid fill in addition to the outline.
+		</member>
+		<member name="fill_color" type="Color" setter="set_fill_color" getter="get_fill_color" default="Color(0, 1, 0.8, 1)">
+			Fill color when [member fill_enabled] is true.
+		</member>
+		<member name="axis_x_color" type="Color" setter="set_axis_x_color" getter="get_axis_x_color" default="Color(1, 0.3, 0.3, 1)">
+			Axis shape only: color of the X axis line.
+		</member>
+		<member name="axis_y_color" type="Color" setter="set_axis_y_color" getter="get_axis_y_color" default="Color(0.3, 1, 0.3, 1)">
+			Axis shape only: color of the Y axis line.
+		</member>
+		<member name="axis_z_color" type="Color" setter="set_axis_z_color" getter="get_axis_z_color" default="Color(0.3, 0.3, 1, 1)">
+			Axis shape only: color of the Z axis line.
+		</member>
+		<member name="head_length" type="float" setter="set_head_length" getter="get_head_length" default="0.3">
+			Arrow shapes: length of the arrowhead as a fraction of total size.
+		</member>
+		<member name="head_width" type="float" setter="set_head_width" getter="get_head_width" default="0.15">
+			Arrow shapes: width of the arrowhead.
+		</member>
+		<member name="arrowhead_style" type="int" setter="set_arrowhead_style" getter="get_arrowhead_style" enum="SuperMarker3D.ArrowheadStyle" default="0">
+			Triangle, Diamond, or Chevron.
+		</member>
+		<member name="tail_style" type="int" setter="set_tail_style" getter="get_tail_style" enum="SuperMarker3D.TailStyle" default="0">
+			[code]TAIL_NONE[/code] (0) or [code]TAIL_FLARED[/code] (1).
+		</member>
+		<member name="tail_length" type="float" setter="set_tail_length" getter="get_tail_length" default="0.0">
+			Flared tail length (when [member tail_style] = [code]TAIL_FLARED[/code]).
+		</member>
+		<member name="editor_only" type="bool" setter="set_editor_only" getter="get_editor_only" default="true">
+			If true, the marker only renders in the editor.
+		</member>
+		<member name="always_on_top" type="bool" setter="set_always_on_top" getter="get_always_on_top" default="true">
+			If true, disables depth testing — marker draws over opaque geometry.
+		</member>
+	</members>
+	<constants>
+		<constant name="SHAPE_CROSS" value="0" enum="MarkerShape" />
+		<constant name="SHAPE_DIAMOND" value="1" enum="MarkerShape" />
+		<constant name="SHAPE_SPHERE" value="2" enum="MarkerShape" />
+		<constant name="SHAPE_AXIS" value="3" enum="MarkerShape" />
+		<constant name="SHAPE_CUBE" value="4" enum="MarkerShape" />
+		<constant name="SHAPE_ARROW" value="5" enum="MarkerShape" />
+		<constant name="SHAPE_FLAT_ARROW" value="6" enum="MarkerShape" />
+		<constant name="DETAIL_WIREFRAME" value="0" enum="DetailMode" />
+		<constant name="DETAIL_SILHOUETTE" value="1" enum="DetailMode" />
+		<constant name="ARROWHEAD_TRIANGLE" value="0" enum="ArrowheadStyle" />
+		<constant name="ARROWHEAD_DIAMOND" value="1" enum="ArrowheadStyle" />
+		<constant name="ARROWHEAD_CHEVRON" value="2" enum="ArrowheadStyle" />
+		<constant name="TAIL_NONE" value="0" enum="TailStyle" />
+		<constant name="TAIL_FLARED" value="1" enum="TailStyle" />
+	</constants>
+</class>
