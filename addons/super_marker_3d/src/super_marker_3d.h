@@ -105,6 +105,12 @@ public:
 		CURVE_CAP_LINE = 3,
 	};
 
+	enum FigureLegPose {
+		LEGS_TOGETHER = 0,    // both legs straight down (rest pose)
+		LEGS_LEFT_FWD = 1,    // left leg rotated forward at hip, right back
+		LEGS_RIGHT_FWD = 2,   // right leg rotated forward at hip, left back
+	};
+
 protected:
 	static void _bind_methods();
 	void _notification(int p_what);
@@ -143,6 +149,19 @@ public:
 	void set_axis_length_y_neg(float p); float get_axis_length_y_neg() const;
 	void set_axis_length_z_pos(float p); float get_axis_length_z_pos() const;
 	void set_axis_length_z_neg(float p); float get_axis_length_z_neg() const;
+
+	// Figure — humanoid mock-up. Body proportions are derived from
+	// `figure_height` (the standing tip-to-toe extent). Arms each take a
+	// direction Vector3 from the shoulder origin (default ±X arms-out),
+	// no bends — they're straight rods. Head_yaw rotates the head sphere
+	// around its own Y axis in radians (drop a sphere with two eye-dot
+	// markers later if a face is wanted). Leg pose toggles between the
+	// rest stance and one of two stepping silhouettes.
+	void set_figure_height(float p);          float get_figure_height() const;
+	void set_figure_head_yaw(float p);        float get_figure_head_yaw() const;
+	void set_figure_left_arm_dir(const Vector3 &p);  Vector3 get_figure_left_arm_dir() const;
+	void set_figure_right_arm_dir(const Vector3 &p); Vector3 get_figure_right_arm_dir() const;
+	void set_figure_leg_pose(int p);          int get_figure_leg_pose() const;
 
 	void set_head_length(float p);  float get_head_length() const;
 	void set_head_width(float p);   float get_head_width() const;
@@ -199,6 +218,14 @@ private:
 	float _axis_length_y_neg = 0.0f;
 	float _axis_length_z_pos = 0.5f;
 	float _axis_length_z_neg = 0.0f;
+
+	// FIGURE shape. Total standing height in meters; body / limb /
+	// head sizes derive proportionally inside _gen_figure.
+	float _figure_height = 1.8f;
+	float _figure_head_yaw = 0.0f;
+	Vector3 _figure_left_arm_dir = Vector3(-1.0f, 0.0f, 0.0f);
+	Vector3 _figure_right_arm_dir = Vector3( 1.0f, 0.0f, 0.0f);
+	int _figure_leg_pose = LEGS_TOGETHER;
 
 	float _head_length = 0.3f;
 	float _head_width  = 0.15f;
@@ -318,5 +345,6 @@ VARIANT_ENUM_CAST(SuperMarker3D::ArrowheadStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::TailStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::CurvePattern);
 VARIANT_ENUM_CAST(SuperMarker3D::CurveCapStyle);
+VARIANT_ENUM_CAST(SuperMarker3D::FigureLegPose);
 
 #endif // SUPER_MARKER_3D_H

@@ -190,6 +190,28 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_length_z_neg", PROPERTY_HINT_RANGE, "0.0,100.0,0.001,or_greater"),
 			"set_axis_length_z_neg", "get_axis_length_z_neg");
 
+	ClassDB::bind_method(D_METHOD("set_figure_height", "height"), &SuperMarker3D::set_figure_height);
+	ClassDB::bind_method(D_METHOD("get_figure_height"), &SuperMarker3D::get_figure_height);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_height", PROPERTY_HINT_RANGE, "0.1,10.0,0.01,or_greater"),
+			"set_figure_height", "get_figure_height");
+	ClassDB::bind_method(D_METHOD("set_figure_head_yaw", "yaw"), &SuperMarker3D::set_figure_head_yaw);
+	ClassDB::bind_method(D_METHOD("get_figure_head_yaw"), &SuperMarker3D::get_figure_head_yaw);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_head_yaw", PROPERTY_HINT_RANGE, "-3.14159,3.14159,0.001"),
+			"set_figure_head_yaw", "get_figure_head_yaw");
+	ClassDB::bind_method(D_METHOD("set_figure_left_arm_dir", "dir"), &SuperMarker3D::set_figure_left_arm_dir);
+	ClassDB::bind_method(D_METHOD("get_figure_left_arm_dir"), &SuperMarker3D::get_figure_left_arm_dir);
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_left_arm_dir"),
+			"set_figure_left_arm_dir", "get_figure_left_arm_dir");
+	ClassDB::bind_method(D_METHOD("set_figure_right_arm_dir", "dir"), &SuperMarker3D::set_figure_right_arm_dir);
+	ClassDB::bind_method(D_METHOD("get_figure_right_arm_dir"), &SuperMarker3D::get_figure_right_arm_dir);
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_right_arm_dir"),
+			"set_figure_right_arm_dir", "get_figure_right_arm_dir");
+	ClassDB::bind_method(D_METHOD("set_figure_leg_pose", "pose"), &SuperMarker3D::set_figure_leg_pose);
+	ClassDB::bind_method(D_METHOD("get_figure_leg_pose"), &SuperMarker3D::get_figure_leg_pose);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "figure_leg_pose", PROPERTY_HINT_ENUM,
+			"Legs Together,Legs Left Forward,Legs Right Forward"),
+			"set_figure_leg_pose", "get_figure_leg_pose");
+
 	ADD_GROUP("Head", "head_");
 	ClassDB::bind_method(D_METHOD("set_head_length", "length"), &SuperMarker3D::set_head_length);
 	ClassDB::bind_method(D_METHOD("get_head_length"), &SuperMarker3D::get_head_length);
@@ -298,6 +320,9 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(CURVE_PATTERN_DOT);
 	BIND_ENUM_CONSTANT(CURVE_CAP_NONE); BIND_ENUM_CONSTANT(CURVE_CAP_ARROW);
 	BIND_ENUM_CONSTANT(CURVE_CAP_DOT); BIND_ENUM_CONSTANT(CURVE_CAP_LINE);
+	BIND_ENUM_CONSTANT(LEGS_TOGETHER);
+	BIND_ENUM_CONSTANT(LEGS_LEFT_FWD);
+	BIND_ENUM_CONSTANT(LEGS_RIGHT_FWD);
 }
 
 void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
@@ -353,6 +378,13 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 			&& _curve_start_cap == CURVE_CAP_NONE) hide();
 	if ((name == "end_cap_size" || name == "end_cap_linked") && _shape == CURVE_FLAT
 			&& _curve_end_cap == CURVE_CAP_NONE) hide();
+
+	const bool is_figure = (_shape == FIGURE);
+	if ((name == "figure_height" || name == "figure_head_yaw"
+			|| name == "figure_left_arm_dir" || name == "figure_right_arm_dir"
+			|| name == "figure_leg_pose") && !is_figure) hide();
+	// Figure has its own scale knob (figure_height) — hide marker_size.
+	if (name == "marker_size" && is_figure) hide();
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +472,17 @@ void SuperMarker3D::set_axis_length_z_pos(float p) { _axis_length_z_pos = MAX(0.
 float SuperMarker3D::get_axis_length_z_pos() const { return _axis_length_z_pos; }
 void SuperMarker3D::set_axis_length_z_neg(float p) { _axis_length_z_neg = MAX(0.0f, p); if (_shape == AXIS_XYZ) SM_REBUILD(); }
 float SuperMarker3D::get_axis_length_z_neg() const { return _axis_length_z_neg; }
+
+void SuperMarker3D::set_figure_height(float p) { _figure_height = MAX(0.01f, p); if (_shape == FIGURE) SM_REBUILD(); }
+float SuperMarker3D::get_figure_height() const { return _figure_height; }
+void SuperMarker3D::set_figure_head_yaw(float p) { _figure_head_yaw = p; if (_shape == FIGURE) SM_REBUILD(); }
+float SuperMarker3D::get_figure_head_yaw() const { return _figure_head_yaw; }
+void SuperMarker3D::set_figure_left_arm_dir(const Vector3 &p) { _figure_left_arm_dir = p; if (_shape == FIGURE) SM_REBUILD(); }
+Vector3 SuperMarker3D::get_figure_left_arm_dir() const { return _figure_left_arm_dir; }
+void SuperMarker3D::set_figure_right_arm_dir(const Vector3 &p) { _figure_right_arm_dir = p; if (_shape == FIGURE) SM_REBUILD(); }
+Vector3 SuperMarker3D::get_figure_right_arm_dir() const { return _figure_right_arm_dir; }
+void SuperMarker3D::set_figure_leg_pose(int p) { _figure_leg_pose = p; if (_shape == FIGURE) SM_REBUILD(); }
+int SuperMarker3D::get_figure_leg_pose() const { return _figure_leg_pose; }
 
 void SuperMarker3D::set_head_length(float p) { _head_length = MAX(0.0f, p); SM_REBUILD(); }
 float SuperMarker3D::get_head_length() const { return _head_length; }
@@ -911,25 +954,128 @@ void SuperMarker3D::_gen_axis_xyz(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
-// Curve Line 3D — placeholder, fills in next commit. Render nothing for now
-// so a freshly-created marker on this shape doesn't blow up; the existing
-// CURVE_FLAT generator handles the same Curve3D resource and serves as a
-// fallback while CURVE_LINE_3D is being built out.
+// Curve Line 3D — tube extrusion along a Curve3D resource. No billboarding,
+// no caps, no dash patterns: a true 3D line. Honors `length_fraction` for
+// progressive reveal and uses `curve_width` as the tube radius. Sampling
+// step is set so segments are roughly twice the tube radius (smooth at
+// any tube width without ballooning the vertex count).
 // ---------------------------------------------------------------------------
 
-void SuperMarker3D::_gen_curve_line_3d(GeoBuf & /*geo*/) const {
-	// TODO: tube extrusion via _add_tube along a sampled Curve3D path.
+void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
+	if (_curve.is_null()) return;
+	const float L_total = _curve->get_baked_length();
+	if (L_total <= 0.0001f) return;
+	const float L = L_total * CLAMP(_length_fraction, 0.0f, 1.0f);
+	if (L <= 0.0001f) return;
+
+	const float radius = MAX(0.001f, _curve_width * 0.5f);
+	// Step ≈ 2 * radius keeps each tube segment about the same length as
+	// its diameter — smooth bends without runaway segment counts on long
+	// curves. Cap the upper bound so very straight, very long curves still
+	// produce at least a handful of segments.
+	const float step = MAX(radius * 2.0f, L / 256.0f);
+	const int segments = MAX(1, (int)Math::ceil(L / step));
+
+	// Tubes joined endpoint-to-endpoint don't share vertices, so the
+	// junction shows a faceted ring. A small sphere blob at each interior
+	// joint hides that — same trick the cube/diamond shapes use for
+	// corner rounding. Caps at the start and end too.
+	const int sides = 6;
+	Vector3 prev = _curve->sample_baked(0.0f, true);
+	_add_sphere_blob(geo, prev, radius, 4, sides);
+	for (int i = 1; i <= segments; i++) {
+		float s = (float)i / segments * L;
+		Vector3 p = _curve->sample_baked(s, true);
+		_add_tube(geo, prev, p, radius, sides);
+		// Skip the joint blob on the very last segment — the end cap
+		// blob below covers it.
+		if (i < segments) _add_sphere_blob(geo, p, radius, 3, sides);
+		prev = p;
+	}
+	_add_sphere_blob(geo, prev, radius, 4, sides);
 }
 
 // ---------------------------------------------------------------------------
-// Figure — placeholder. Implementation lands with the figure_game demo
-// commit; for now an empty mesh keeps the enum slot reserved without
-// drawing garbage if a user picks the shape early.
+// Figure — minimal humanoid for blocking out gameplay scenes. Built from
+// cylinder limbs + a head sphere, all in outline_color (no per-part tint).
+// Anatomy is proportional to figure_height:
+//
+//   Head     top 1/8 of height — sphere blob
+//   Torso    next 3/8 — body cylinder from neck down to waist
+//   Legs     bottom 4/8 — two cylinders from waist to floor
+//   Arms     ~3/8 of height — straight rods from each shoulder, pointing
+//            wherever figure_*_arm_dir says (no bends, no segments)
+//
+// Origin is at the figure's feet (Y=0). Head_yaw rotates the head sphere
+// around its own Y axis — useful for look-tracking visualization.
+// Leg pose toggles between rest and stepping silhouettes.
 // ---------------------------------------------------------------------------
 
-void SuperMarker3D::_gen_figure(GeoBuf & /*geo*/) const {
-	// TODO: head sphere, body cylinder, arms (per-side direction Vector3),
-	// legs (LEFT_FWD / RIGHT_FWD / TOGETHER pose enum), head yaw.
+void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
+	const float H = _figure_height;
+	const float head_r   = H * 0.0625f;       // radius (1/16 height)
+	const float neck_y   = H * 0.875f;        // neck base / shoulder line
+	const float waist_y  = H * 0.5f;          // hip joint
+	const float shoulder_offset = H * 0.10f;  // left/right shoulder spread
+	const float hip_offset      = H * 0.05f;  // left/right hip spread
+	const float limb_r   = H * 0.04f;         // limb cylinder radius
+	const float arm_len  = H * 0.40f;
+	const float leg_len  = waist_y;
+
+	// --- Head ---
+	const Vector3 head_center(0.0f, neck_y + head_r * 1.4f, 0.0f);
+	_add_sphere_blob(geo, head_center, head_r, 6, 8);
+	// Look-tracker — short stub pointing along +Z by default, rotated by
+	// figure_head_yaw around the head's Y axis. Visualizes facing.
+	{
+		const float yaw = _figure_head_yaw;
+		const Vector3 fwd(std::sin(yaw), 0.0f, std::cos(yaw));
+		_add_tube(geo, head_center, head_center + fwd * head_r * 1.6f,
+				limb_r * 0.4f, 5);
+	}
+
+	// --- Torso ---
+	_add_tube(geo, Vector3(0.0f, neck_y, 0.0f),
+			Vector3(0.0f, waist_y, 0.0f), limb_r * 1.4f, 8);
+
+	// --- Arms — straight rods from shoulder along figure_*_arm_dir ---
+	auto add_arm = [&](float side_x, const Vector3 &dir) {
+		Vector3 d = dir;
+		if (d.length_squared() < 1e-6f) d = Vector3(0.0f, -1.0f, 0.0f);
+		d.normalize();
+		const Vector3 shoulder(side_x * shoulder_offset, neck_y, 0.0f);
+		_add_sphere_blob(geo, shoulder, limb_r * 1.1f, 3, 6);
+		const Vector3 hand = shoulder + d * arm_len;
+		_add_tube(geo, shoulder, hand, limb_r, 6);
+		_add_sphere_blob(geo, hand, limb_r * 1.1f, 3, 6);
+	};
+	add_arm(-1.0f, _figure_left_arm_dir);
+	add_arm( 1.0f, _figure_right_arm_dir);
+
+	// --- Legs — straight rods from hip; pose enum tilts them at the hip ---
+	// Step angle is small so the silhouette reads as "stepping" without
+	// looking acrobatic. Forward leg tilts ~+25°, back leg ~-15°.
+	auto add_leg = [&](float side_x, float tilt_z) {
+		const Vector3 hip(side_x * hip_offset, waist_y, 0.0f);
+		_add_sphere_blob(geo, hip, limb_r * 1.1f, 3, 6);
+		// Tilt is around the X axis (forward/back motion), so a positive
+		// tilt rotates -Y toward +Z.
+		const float c = std::cos(tilt_z), s = std::sin(tilt_z);
+		const Vector3 down(0.0f, -leg_len, 0.0f);
+		const Vector3 rotated(0.0f, c * down.y - s * 0.0f, s * down.y + c * 0.0f);
+		const Vector3 foot = hip + rotated;
+		_add_tube(geo, hip, foot, limb_r, 6);
+		_add_sphere_blob(geo, foot, limb_r * 1.1f, 3, 6);
+	};
+	float left_tilt = 0.0f, right_tilt = 0.0f;
+	switch (_figure_leg_pose) {
+		case LEGS_LEFT_FWD:  left_tilt =  0.43f; right_tilt = -0.26f; break; // ~+25° / -15°
+		case LEGS_RIGHT_FWD: left_tilt = -0.26f; right_tilt =  0.43f; break;
+		case LEGS_TOGETHER:
+		default: break;
+	}
+	add_leg(-1.0f, left_tilt);
+	add_leg( 1.0f, right_tilt);
 }
 
 // ---------------------------------------------------------------------------
