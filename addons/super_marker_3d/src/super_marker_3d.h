@@ -23,15 +23,57 @@ class SuperMarker3D : public Node3D {
 	GDCLASS(SuperMarker3D, Node3D)
 
 public:
+	/// Shape category + variant in a single enum, prefixed by category
+	/// so the inspector's dropdown reads in groups (Axis / Mesh /
+	/// Shape / Curve / Arrow / Figure).
+	///
+	/// Numeric values are FROZEN for scene-file compatibility. The
+	/// pre-1.0 flat enum (SHAPE_CROSS=0, SHAPE_DIAMOND=1, …) keeps its
+	/// values; the prefixed names alias the same numbers. New shapes
+	/// added after the original 8 take fresh slots starting at 8.
+	///
+	/// **API stability**: from 1.0 forward, no renames, no reordering,
+	/// no removals without a deprecation cycle.
 	enum MarkerShape {
+		// Shape — flat-billboarded 2D iconography.
 		SHAPE_CROSS = 0,
-		SHAPE_DIAMOND = 1,
-		SHAPE_SPHERE = 2,
-		SHAPE_AXIS = 3,
-		SHAPE_CUBE = 4,
-		SHAPE_ARROW = 5,
-		SHAPE_FLAT_ARROW = 6,
-		SHAPE_CURVE = 7,
+
+		// Mesh — closed 3D primitives.
+		MESH_DIAMOND = 1,
+		MESH_SPHERE = 2,
+		MESH_BOX = 4,           // value 4 retained from old SHAPE_CUBE
+
+		// Axis — line clusters through the origin.
+		AXIS_PLAIN = 3,         // 6 ±X ±Y ±Z lines, single outline_color and
+		                        // marker_size. With axis_burr=true, adds 6
+		                        // more diagonal lines (12-axis "burr").
+		AXIS_XYZ = 8,           // Per-direction independent length
+		                        // (axis_length_*_pos / *_neg). 0 disables
+		                        // that direction. Per-axis colors via
+		                        // axis_x/y/z_color.
+
+		// Arrow — directional pointer.
+		ARROW_EXTRUDED = 5,     // 3D shaft + head (was SHAPE_ARROW)
+		ARROW_FLAT = 6,         // 2D arrow with billboarding
+
+		// Curve — geometry stamped along a Curve3D resource.
+		CURVE_FLAT = 7,         // billboarded flat ribbon with caps
+		CURVE_LINE_3D = 9,      // tube extrusion (3D), no billboarding
+
+		// Figure — humanoid; head / arms / leg-pose props.
+		FIGURE = 10,
+
+		// --- Deprecated aliases (1.x), removed in 2.0 ---
+		// The old flat names. Existing scripts referencing these by name
+		// keep compiling; existing scenes that stored integer values
+		// load unchanged because the integers haven't moved.
+		SHAPE_DIAMOND = MESH_DIAMOND,
+		SHAPE_SPHERE = MESH_SPHERE,
+		SHAPE_AXIS = AXIS_PLAIN,
+		SHAPE_CUBE = MESH_BOX,
+		SHAPE_ARROW = ARROW_EXTRUDED,
+		SHAPE_FLAT_ARROW = ARROW_FLAT,
+		SHAPE_CURVE = CURVE_FLAT,
 	};
 
 	enum DetailMode {
@@ -86,6 +128,22 @@ public:
 	void set_axis_y_color(const Color &p); Color get_axis_y_color() const;
 	void set_axis_z_color(const Color &p); Color get_axis_z_color() const;
 
+	// AXIS_PLAIN extra: when true, render 6 additional diagonal axes
+	// (along ±x±y, ±x±z, ±y±z normalized) for a 12-axis "burr" pattern.
+	void set_axis_burr(bool p);   bool get_axis_burr() const;
+
+	// AXIS_XYZ per-direction lengths. Each is the absolute length from
+	// the origin in that direction. Setting any to 0 hides that arm,
+	// which is how AXIS_XYZ degrades to a 3-axis (default) or 1-/2-axis
+	// indicator. Per-axis colors are shared between the +/- directions
+	// of the same axis (axis_x_color, axis_y_color, axis_z_color).
+	void set_axis_length_x_pos(float p); float get_axis_length_x_pos() const;
+	void set_axis_length_x_neg(float p); float get_axis_length_x_neg() const;
+	void set_axis_length_y_pos(float p); float get_axis_length_y_pos() const;
+	void set_axis_length_y_neg(float p); float get_axis_length_y_neg() const;
+	void set_axis_length_z_pos(float p); float get_axis_length_z_pos() const;
+	void set_axis_length_z_neg(float p); float get_axis_length_z_neg() const;
+
 	void set_head_length(float p);  float get_head_length() const;
 	void set_head_width(float p);   float get_head_width() const;
 	void set_arrowhead_style(int p); int get_arrowhead_style() const;
@@ -127,6 +185,20 @@ private:
 	Color _axis_x_color = Color(1.0f, 0.3f, 0.3f, 1.0f);
 	Color _axis_y_color = Color(0.3f, 1.0f, 0.3f, 1.0f);
 	Color _axis_z_color = Color(0.3f, 0.3f, 1.0f, 1.0f);
+
+	// AXIS_PLAIN extra.
+	bool _axis_burr = false;
+
+	// AXIS_XYZ per-direction lengths. Defaults: positive axes show at
+	// marker_size, negatives off — so a fresh AXIS_XYZ marker starts as
+	// the classic 3-axis red/green/blue indicator and the user opts in
+	// to the negative arms by setting their lengths.
+	float _axis_length_x_pos = 0.5f;
+	float _axis_length_x_neg = 0.0f;
+	float _axis_length_y_pos = 0.5f;
+	float _axis_length_y_neg = 0.0f;
+	float _axis_length_z_pos = 0.5f;
+	float _axis_length_z_neg = 0.0f;
 
 	float _head_length = 0.3f;
 	float _head_width  = 0.15f;
@@ -206,15 +278,18 @@ private:
 	void _update_visibility();
 	void _update_transform();
 
-	// Shape generators.
+	// Shape generators. One per Shape enum value.
 	void _gen_cross(GeoBuf &geo) const;
 	void _gen_diamond(GeoBuf &geo) const;
 	void _gen_sphere(GeoBuf &geo) const;
 	void _gen_cube(GeoBuf &geo) const;
-	void _gen_axis(GeoBuf &geo) const;
+	void _gen_axis_plain(GeoBuf &geo) const;
+	void _gen_axis_xyz(GeoBuf &geo) const;
 	void _gen_arrow(GeoBuf &geo) const;
 	void _gen_flat_arrow(GeoBuf &geo) const;
 	void _gen_curve(GeoBuf &geo) const;
+	void _gen_curve_line_3d(GeoBuf &geo) const;
+	void _gen_figure(GeoBuf &geo) const;
 
 	void _on_curve_changed();
 
