@@ -1,0 +1,38 @@
+[gd_scene load_steps=6 format=3 uid="uid://showcase00"]
+
+[ext_resource type="Script" path="res://demos/showcase/showcase.gd" id="1_showcase"]
+[ext_resource type="Script" path="res://demos/showcase/flying_camera.gd" id="2_camera"]
+
+[sub_resource type="ProceduralSkyMaterial" id="Sky_1"]
+sky_top_color = Color(0.03, 0.05, 0.08, 1)
+sky_horizon_color = Color(0.1, 0.12, 0.15, 1)
+ground_horizon_color = Color(0.08, 0.08, 0.08, 1)
+ground_bottom_color = Color(0.02, 0.02, 0.02, 1)
+
+[sub_resource type="Sky" id="Sky_2"]
+sky_material = SubResource("Sky_1")
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 2
+sky = SubResource("Sky_2")
+ambient_light_source = 2
+ambient_light_color = Color(0.6, 0.65, 0.7, 1)
+ambient_light_energy = 0.35
+glow_enabled = true
+glow_intensity = 0.6
+glow_strength = 0.9
+
+[node name="Showcase" type="Node3D"]
+script = ExtResource("1_showcase")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.7, 0.4, -0.6, -0.3, 0.9, 0.3, 0.65, 0.0, 0.76, 0, 5, 0)
+light_energy = 0.8
+
+[node name="Camera" type="Camera3D" parent="."]
+transform = Transform3D(0.985, -0.04, 0.16, 0, 0.97, 0.24, -0.17, -0.24, 0.96, 0, 2.5, 7.0)
+script = ExtResource("2_camera")
+speed = 6.0
