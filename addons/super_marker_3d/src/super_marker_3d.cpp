@@ -910,7 +910,13 @@ void SuperMarker3D::_build_axis_per_arm(const Vector<Vector3> &dirs,
 			_add_axis_arrowhead(geo, dirs[i], L, c, p_use_color);
 		}
 
-		// Outline surface — only thing axis arms use.
+		// Add BOTH surfaces when both have content. The previous
+		// if/else-if priority dropped the line surface whenever the
+		// outline surface was non-empty — which is exactly what
+		// happens at thickness=0 with arrows on (arm in line_verts,
+		// cone in outline_verts). The arm's pixel line vanished. Now
+		// they coexist; both share `_outline_material`.
+		int surf_idx = 0;
 		if (geo.outline_verts.size() > 0) {
 			Array a; a.resize(Mesh::ARRAY_MAX);
 			a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
@@ -922,13 +928,16 @@ void SuperMarker3D::_build_axis_per_arm(const Vector<Vector3> &dirs,
 				a[Mesh::ARRAY_COLOR] = geo.outline_colors;
 			}
 			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
-			if (_outline_material.is_valid()) mesh->surface_set_material(0, _outline_material);
-		} else if (geo.line_verts.size() > 0) {
+			if (_outline_material.is_valid()) mesh->surface_set_material(surf_idx, _outline_material);
+			surf_idx++;
+		}
+		if (geo.line_verts.size() > 0) {
 			Array a; a.resize(Mesh::ARRAY_MAX);
 			a[Mesh::ARRAY_VERTEX] = geo.line_verts;
 			if (geo.use_line_colors) a[Mesh::ARRAY_COLOR] = geo.line_colors;
 			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, a);
-			if (_outline_material.is_valid()) mesh->surface_set_material(0, _outline_material);
+			if (_outline_material.is_valid()) mesh->surface_set_material(surf_idx, _outline_material);
+			surf_idx++;
 		}
 
 		rs->instance_set_base(_arm_instances[i], mesh->get_rid());
@@ -1034,11 +1043,35 @@ void SuperMarker3D::_build_materials() {
 			? BaseMaterial3D::BILLBOARD_ENABLED
 			: BaseMaterial3D::BILLBOARD_DISABLED);
 
-	// Apply to surfaces
+	// Apply to surfaces. Outline + line surfaces (when both present)
+	// share `_outline_material`; the fill surface (always last) gets
+	// `_fill_material`. The fill surface is identified by being the
+	// last surface AND only present when fill is enabled, which is
+	// always after the outline/line group.
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
-		if (sc >= 1) _mesh->surface_set_material(0, _outline_material);
-		if (sc >= 2) _mesh->surface_set_material(1, _fill_material);
+		// Determine if a fill surface exists by checking whether fill
+		// content was generated this rebuild; the simpler proxy is
+		// just count: any non-fill subtype has 1 outline + maybe 1
+		// line; only Mesh / Arrow / Curve generators add a fill on
+		// top. With fill enabled we get one extra surface at the end.
+		// Apply outline_material to all but last when there's a fill
+		// surface (same heuristic as before).
+		for (int i = 0; i < sc; i++) {
+			_mesh->surface_set_material(i, _outline_material);
+		}
+		// Last surface is the fill if it exists — but the only way to
+		// tell here is shape-specific. Use the existing fill flag plus
+		// the assumption that the final surface for fill-capable shapes
+		// is the fill. Keep the old behavior: surface 1 = fill if there
+		// are exactly 2 surfaces, surface 2 = fill if there are 3.
+		// Cleaner long-term, but keeps the visual pre-refactor for now.
+		const bool any_fill_capable = (_shape == MESH_DIAMOND || _shape == MESH_SPHERE
+				|| _shape == MESH_BOX || _shape == ARROW_EXTRUDED || _shape == ARROW_FLAT
+				|| _shape == CURVE_FLAT);
+		if (any_fill_capable && _fill_enabled && sc > 0) {
+			_mesh->surface_set_material(sc - 1, _fill_material);
+		}
 	}
 }
 
@@ -1063,31 +1096,49 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 	else             geo.add_line(a, b);
 }
 
-// Round 3D cone arrowhead at the tip of an axis arm. Apex sits at
-// `tip`, base ring sits `_axis_arrow_length` back from the tip with
-// radius `_axis_arrow_width` — so length and width are fully
-// independent (chunky stub: short length + wide width; skinny dart:
-// long length + small width). 12-segment side surface, no base disk
-// (the base would press flush against the arm tube and stay hidden).
-// p_use_color piggybacks `_add_tube_colored`'s color-array bookkeeping
-// so AXIS_XYZ keeps its per-arm color on the cone.
+// Round 3D arrowhead at the tip of an axis arm. Geometry is a frustum
+// (truncated cone): base ring of radius `_axis_arrow_width` sits
+// `_axis_arrow_length` back from the tip; apex ring of radius
+// `_outline_thickness * 0.5` sits at the tip. So at thickness 0 the
+// apex collapses to a point (classic cone); at thickness > 0 the apex
+// matches the arm tube exactly so the tip carries the line's
+// thickness rather than pinching to a sharp dot.
+//
+// Closed front and back: an apex disk (visible when thickness > 0) and
+// a base disk (visible from behind so the arrowhead doesn't read as
+// hollow when the camera circles around).
+//
+// At width = 0 we fall back to a single line from base to tip in the
+// arm color — the user's "pixel length" indicator so the arm doesn't
+// visually vanish past the body.
+//
+// `p_use_color` piggybacks `_add_tube_colored`'s color-array
+// bookkeeping so AXIS_XYZ keeps its per-arm color on the cone.
 void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		float p_arm_len, const Color &p_color, bool p_use_color) const {
-	if (_axis_arrow_length <= 0.0f || _axis_arrow_width <= 0.0f || p_arm_len <= 0.0f) return;
+	if (_axis_arrow_length <= 0.0f || p_arm_len <= 0.0f) return;
 	const float head = MIN(_axis_arrow_length, p_arm_len * 0.9f);
-	const float radius = _axis_arrow_width;
-	const int segs = 12;
 	const Vector3 d = dir.normalized();
 	const Vector3 tip = d * p_arm_len;
 	const Vector3 base_center = d * (p_arm_len - head);
+
+	// Width = 0 → degenerate cone. Render a single line indicator so
+	// the arrow region stays visible even with no splay.
+	if (_axis_arrow_width <= 0.0f) {
+		if (p_use_color) geo.add_line_colored(base_center, tip, p_color);
+		else             geo.add_line(base_center, tip);
+		return;
+	}
+
+	const float base_r = _axis_arrow_width;
+	const float apex_r = (_outline_thickness > 0.0f) ? _outline_thickness * 0.5f : 0.0f;
+	const int segs = 12;
 	Vector3 up    = Math::abs(d.dot(Vector3(0, 1, 0))) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	Vector3 right = d.cross(up).normalized();
 	Vector3 up_p  = right.cross(d).normalized();
 
 	const int start = geo.outline_verts.size();
 	if (p_use_color) {
-		// Pad outline_colors so it stays parallel after we push side
-		// triangles. `_add_tube_colored` does the same dance.
 		if (!geo.use_outline_colors) {
 			for (int i = 0; i < start; i++) geo.outline_colors.push_back(Color(1, 1, 1, 1));
 			geo.use_outline_colors = true;
@@ -1097,22 +1148,53 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 			}
 		}
 	}
+
 	for (int i = 0; i < segs; i++) {
 		float t0 = SM_TAU * (float)i / segs;
 		float t1 = SM_TAU * (float)(i + 1) / segs;
-		Vector3 r0 = std::cos(t0) * right + std::sin(t0) * up_p;
-		Vector3 r1 = std::cos(t1) * right + std::sin(t1) * up_p;
-		Vector3 v0 = base_center + r0 * radius;
-		Vector3 v1 = base_center + r1 * radius;
-		// Per-face normal — perpendicular to the cone's slant. Same
-		// for all three vertices of one face (flat shading); fine for
-		// unshaded markers, looks good even when `in_game_object` lit
-		// because the cone is a small accent.
-		Vector3 n = ((v1 - v0).cross(tip - v0)).normalized();
-		if (n.dot(d) < 0.0f) n = -n; // ensure outward
-		geo.outline_verts.push_back(v0);  geo.outline_normals.push_back(n);
-		geo.outline_verts.push_back(v1);  geo.outline_normals.push_back(n);
-		geo.outline_verts.push_back(tip); geo.outline_normals.push_back(n);
+		Vector3 dir0 = std::cos(t0) * right + std::sin(t0) * up_p;
+		Vector3 dir1 = std::cos(t1) * right + std::sin(t1) * up_p;
+		Vector3 b0 = base_center + dir0 * base_r;
+		Vector3 b1 = base_center + dir1 * base_r;
+		Vector3 a0 = tip + dir0 * apex_r;
+		Vector3 a1 = tip + dir1 * apex_r;
+
+		// Slant face normal — outward radial + slight axial component
+		// because the surface tilts inward toward apex. Cross product
+		// of two edges gives the geometric face normal; orient outward
+		// using the segment midpoint's radial direction.
+		Vector3 mid_radial = ((dir0 + dir1) * 0.5f);
+		Vector3 face_n = ((a1 - b0).cross(b1 - b0)).normalized();
+		if (face_n.dot(mid_radial) < 0.0f) face_n = -face_n;
+
+		// Side: two triangles per segment. Winding (b0, a1, b1) and
+		// (b0, a0, a1) — both CCW from outside.
+		geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
+		geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
+		geo.outline_verts.push_back(b1); geo.outline_normals.push_back(face_n);
+		// Skip the second triangle when apex collapses to a point — it
+		// would be degenerate (zero area).
+		if (apex_r > 0.0f) {
+			geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
+			geo.outline_verts.push_back(a0); geo.outline_normals.push_back(face_n);
+			geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
+		}
+
+		// Apex disk — only when the apex is a real ring (thickness > 0).
+		// Faces +d, CCW from there.
+		if (apex_r > 0.0f) {
+			geo.outline_verts.push_back(tip); geo.outline_normals.push_back(d);
+			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
+			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
+		}
+
+		// Base disk — closes the back of the arrowhead so the cone
+		// reads as solid when viewed from behind. Faces -d, CCW from
+		// that side, so winding is (base_center, b0, b1).
+		Vector3 back_n = -d;
+		geo.outline_verts.push_back(base_center); geo.outline_normals.push_back(back_n);
+		geo.outline_verts.push_back(b0);          geo.outline_normals.push_back(back_n);
+		geo.outline_verts.push_back(b1);          geo.outline_normals.push_back(back_n);
 	}
 	if (p_use_color) {
 		const int end = geo.outline_verts.size();
@@ -2095,22 +2177,24 @@ void SuperMarker3D::_rebuild_mesh() {
 	}
 
 
-	// --- Surface 0: outline ---
-	// Priority: outline_verts (face-normal edge quads / tubes) > line_verts (PRIMITIVE_LINES)
+	// Outline (triangles) and lines coexist when a generator emits both
+	// — e.g. ARROW_EXTRUDED's shaft is lines, its arrowhead disk is
+	// triangles. The previous if/else-if dropped the line surface
+	// whenever the outline was non-empty, making mixed shapes lose
+	// their line content.
 	if (geo.outline_verts.size() > 0) {
 		Array a; a.resize(Mesh::ARRAY_MAX);
 		a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
 		a[Mesh::ARRAY_NORMAL] = geo.outline_normals;
 		if (geo.use_outline_colors) {
-			// Pad with white for any prior outline geometry that didn't
-			// push a color — keeps ARRAY_COLOR parallel to ARRAY_VERTEX.
 			while (geo.outline_colors.size() < geo.outline_verts.size()) {
 				geo.outline_colors.push_back(Color(1, 1, 1, 1));
 			}
 			a[Mesh::ARRAY_COLOR] = geo.outline_colors;
 		}
 		_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
-	} else if (geo.line_verts.size() > 0) {
+	}
+	if (geo.line_verts.size() > 0) {
 		Array a; a.resize(Mesh::ARRAY_MAX);
 		a[Mesh::ARRAY_VERTEX] = geo.line_verts;
 		if (geo.use_line_colors) a[Mesh::ARRAY_COLOR] = geo.line_colors;
