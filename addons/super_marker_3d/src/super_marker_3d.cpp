@@ -1181,11 +1181,16 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		}
 
 		// Apex disk — only when the apex is a real ring (thickness > 0).
-		// Faces +d, CCW from there.
+		// Faces +d. Winding `(tip, a1, a0)` so the geometric face
+		// normal aligns with +d (the naive `(tip, a0, a1)` ordering
+		// produced face normals pointing back at -d, getting culled
+		// from the front view; with the back-disk added that bug
+		// became obvious because both disks rendered "wrong-side-out"
+		// at once).
 		if (apex_r > 0.0f) {
 			geo.outline_verts.push_back(tip); geo.outline_normals.push_back(d);
-			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
 			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
+			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
 		}
 
 		// Base disk — closes the back of the arrowhead so the cone
