@@ -459,14 +459,21 @@ private:
 	void _gen_silhouette_cube(GeoBuf &geo) const;
 
 	// 3D tube / sphere-blob / silhouette helpers
-	static void _add_tube(GeoBuf &geo, const Vector3 &a, const Vector3 &b, float radius, int segs);
-	/// Same as `_add_tube` but tags every appended vertex with `c` in
-	/// `outline_colors`. Backfills with white for any prior outline
-	/// geometry that didn't push colors so the array stays parallel.
-	/// Used by AXIS_XYZ when `outline_thickness > 0` so per-arm colors
-	/// survive the line→tube switch.
+	/// Tube body between two endpoints with optional hemisphere caps at
+	/// either end. Defaults to capped on both ends (legacy behavior);
+	/// pass `cap_a=false` for axis arms whose `a` end sits at the
+	/// origin where multiple arms converge — opposite arms' caps would
+	/// otherwise overlap each other's tube bodies and z-fight.
+	static void _add_tube(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
+			float radius, int segs, bool cap_a = true, bool cap_b = true);
+	/// Colored variant — see `_add_tube`. Tags every appended outline
+	/// vertex with `c`; backfills white for any prior outline geometry
+	/// that didn't push colors so the parallel arrays stay aligned.
+	/// Used by AXIS_XYZ at thickness > 0 so per-arm colors survive
+	/// the line→tube switch.
 	static void _add_tube_colored(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
-			float radius, int segs, const Color &c);
+			float radius, int segs, const Color &c,
+			bool cap_a = true, bool cap_b = true);
 	static void _add_sphere_blob(GeoBuf &geo, const Vector3 &center, float radius, int lat, int lon);
 	/// Hemisphere cap oriented along `axis_dir` (which must be unit
 	/// length). The equator (lat=0) sits perpendicular to `axis_dir`

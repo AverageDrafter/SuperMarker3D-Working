@@ -872,6 +872,18 @@ void SuperMarker3D::_build_axis_per_arm(const Vector<Vector3> &dirs,
 	RenderingServer *rs = RenderingServer::get_singleton();
 	const int n = dirs.size();
 
+	// Make sure the outline material exists before per-arm meshes ask
+	// for it. On the very first rebuild after enter_tree, _build_materials
+	// hasn't run yet, so without this the per-arm surfaces would be
+	// attached with a null material and Godot would fall back to the
+	// default lit-gray fallback — that's the "axis colors missing on
+	// load" report. _build_materials() will run again later in
+	// SM_REBUILD to apply the per-shape flag set, but the Ref<> we
+	// attach here will pick up those updates automatically.
+	if (_outline_material.is_null()) {
+		_build_materials();
+	}
+
 	// Resize the arm pool to match current arm count, freeing extras.
 	while (_arm_instances.size() > n) {
 		int last = _arm_instances.size() - 1;
@@ -1084,12 +1096,16 @@ void SuperMarker3D::_build_materials() {
 // scale with the world and read as proper 3D geometry. Tubes carry
 // per-vertex color when `p_use_color` is set, so AXIS_XYZ keeps its
 // per-arm rainbow at any thickness.
+//
+// Skip the start cap on tubes — the start sits at the origin where
+// every other arm also converges, so opposite arms' caps would
+// overlap each other's tube bodies and z-fight. Tip cap stays.
 void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
 		const Color &p_color, bool p_use_color) const {
 	if (_outline_thickness > 0.0f) {
 		const float r = _outline_thickness * 0.5f;
-		if (p_use_color) _add_tube_colored(geo, a, b, r, 6, p_color);
-		else             _add_tube(geo, a, b, r, 6);
+		if (p_use_color) _add_tube_colored(geo, a, b, r, 6, p_color, /*cap_a=*/false, /*cap_b=*/true);
+		else             _add_tube(geo, a, b, r, 6, /*cap_a=*/false, /*cap_b=*/true);
 		return;
 	}
 	if (p_use_color) geo.add_line_colored(a, b, p_color);
@@ -1869,7 +1885,8 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 // Tube normals are radially outward — CULL_BACK provides correct fill-assisted
 // occlusion of back-facing edges for filled meshes.
 void SuperMarker3D::_add_tube(GeoBuf &geo,
-		const Vector3 &a, const Vector3 &b, float radius, int segs) {
+		const Vector3 &a, const Vector3 &b, float radius, int segs,
+		bool cap_a, bool cap_b) {
 	Vector3 dir = b - a;
 	float len = dir.length();
 	if (len < 0.0001f) return;
@@ -1902,8 +1919,8 @@ void SuperMarker3D::_add_tube(GeoBuf &geo,
 	// the cylinder's endpoint ring exactly — no peeking-through where
 	// a full sphere blob's equator pokes past the cylinder's flat
 	// sides at midpoints between vertex angles.
-	_add_hemisphere_cap(geo, a, -dir, radius, segs, 3);
-	_add_hemisphere_cap(geo, b,  dir, radius, segs, 3);
+	if (cap_a) _add_hemisphere_cap(geo, a, -dir, radius, segs, 3);
+	if (cap_b) _add_hemisphere_cap(geo, b,  dir, radius, segs, 3);
 }
 
 // Oriented hemisphere — pole sits at center + axis_dir * radius;
@@ -1960,7 +1977,8 @@ void SuperMarker3D::_add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
 // white for any pre-existing outline geometry that didn't push colors,
 // so the final array stays parallel to outline_verts.
 void SuperMarker3D::_add_tube_colored(GeoBuf &geo,
-		const Vector3 &a, const Vector3 &b, float radius, int segs, const Color &c) {
+		const Vector3 &a, const Vector3 &b, float radius, int segs, const Color &c,
+		bool cap_a, bool cap_b) {
 	const int start = geo.outline_verts.size();
 	if (!geo.use_outline_colors) {
 		// First colored push — pad existing entries with white.
@@ -1971,7 +1989,7 @@ void SuperMarker3D::_add_tube_colored(GeoBuf &geo,
 			geo.outline_colors.push_back(Color(1, 1, 1, 1));
 		}
 	}
-	_add_tube(geo, a, b, radius, segs);
+	_add_tube(geo, a, b, radius, segs, cap_a, cap_b);
 	const int end = geo.outline_verts.size();
 	for (int i = start; i < end; i++) geo.outline_colors.push_back(c);
 }
