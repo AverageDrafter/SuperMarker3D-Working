@@ -144,6 +144,11 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_arrow_length",
 			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
 			"set_axis_arrow_length", "get_axis_arrow_length");
+	ClassDB::bind_method(D_METHOD("set_axis_arrow_width", "width"), &SuperMarker3D::set_axis_arrow_width);
+	ClassDB::bind_method(D_METHOD("get_axis_arrow_width"), &SuperMarker3D::get_axis_arrow_width);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_arrow_width",
+			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
+			"set_axis_arrow_width", "get_axis_arrow_width");
 
 	// Outline color + thickness apply to every shape that has an
 	// outline (which is all of them in some form). Thickness > 0 turns
@@ -459,8 +464,10 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// inside Axis, hidden on Burr (no-arrow rule). Arrow length is
 	// further hidden when the flag is off, so the inspector doesn't
 	// dangle a dead control.
-	if ((name == "axis_arrows" || name == "axis_arrow_length") && (!is_axis || is_axis_burr)) hide();
-	if (name == "axis_arrow_length" && is_axis && !is_axis_burr && !_axis_arrows) hide();
+	if ((name == "axis_arrows" || name == "axis_arrow_length"
+			|| name == "axis_arrow_width") && (!is_axis || is_axis_burr)) hide();
+	if ((name == "axis_arrow_length" || name == "axis_arrow_width")
+			&& is_axis && !is_axis_burr && !_axis_arrows) hide();
 	// Axis type drives marker_size out of the picture — lengths run
 	// the show; outline_color drives the bare-line variants but is
 	// hidden on the per-axis-color XYZ variant.
@@ -642,6 +649,11 @@ void SuperMarker3D::set_axis_arrow_length(float p) {
 	if (get_type() == TYPE_AXIS && _axis_arrows) SM_REBUILD();
 }
 float SuperMarker3D::get_axis_arrow_length() const { return _axis_arrow_length; }
+void SuperMarker3D::set_axis_arrow_width(float p) {
+	_axis_arrow_width = MAX(0.0f, p);
+	if (get_type() == TYPE_AXIS && _axis_arrows) SM_REBUILD();
+}
+float SuperMarker3D::get_axis_arrow_width() const { return _axis_arrow_width; }
 
 void SuperMarker3D::set_axis_link_mode(int p) {
 	_axis_link_mode = p;
@@ -888,17 +900,18 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 	else             geo.add_line(a, b);
 }
 
-// 4-spoke 2D arrowhead at the tip of an axis arm. Pointed along `dir`,
-// extends `axis_arrow_length` back from the tip; spokes splay out by
-// (axis_arrow_length / 4) on each perpendicular axis (so the arrowhead
-// diameter is half its length). p_use_color routes through
-// add_line_colored vs add_line so AXIS_XYZ and AXIS_PLAIN can share
-// this helper.
+// 4-spoke arrowhead at the tip of an axis arm. `axis_arrow_length`
+// controls how far back from the tip the spokes start; `axis_arrow_width`
+// is the splay radius perpendicular to the arm (independent of length so
+// users can author chunky stubs or skinny darts). When
+// `outline_thickness > 0` the spokes render as tubes — same dispatcher
+// as the arms themselves (`_add_axis_segment`) so the arrowhead matches
+// the arm's thickness and color treatment automatically.
 void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		float p_arm_len, const Color &p_color, bool p_use_color) const {
-	if (_axis_arrow_length <= 0.0f || p_arm_len <= 0.0f) return;
+	if (_axis_arrow_length <= 0.0f || _axis_arrow_width <= 0.0f || p_arm_len <= 0.0f) return;
 	const float head = MIN(_axis_arrow_length, p_arm_len * 0.9f);
-	const float radius = head * 0.25f; // diameter = head/2 → radius = head/4
+	const float radius = _axis_arrow_width;
 	const Vector3 tip = dir * p_arm_len;
 	const Vector3 base = dir * (p_arm_len - head);
 	// Build two perpendiculars to `dir` for the arrowhead spokes.
@@ -906,17 +919,10 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 	if (p1.length_squared() < 1e-6f) p1 = Vector3(1, 0, 0);
 	p1 = p1.normalized() * radius;
 	Vector3 p2 = dir.cross(p1).normalized() * radius;
-	if (p_use_color) {
-		geo.add_line_colored(base + p1, tip, p_color);
-		geo.add_line_colored(base - p1, tip, p_color);
-		geo.add_line_colored(base + p2, tip, p_color);
-		geo.add_line_colored(base - p2, tip, p_color);
-	} else {
-		geo.add_line(base + p1, tip);
-		geo.add_line(base - p1, tip);
-		geo.add_line(base + p2, tip);
-		geo.add_line(base - p2, tip);
-	}
+	_add_axis_segment(geo, base + p1, tip, p_color, p_use_color);
+	_add_axis_segment(geo, base - p1, tip, p_color, p_use_color);
+	_add_axis_segment(geo, base + p2, tip, p_color, p_use_color);
+	_add_axis_segment(geo, base - p2, tip, p_color, p_use_color);
 }
 
 // AXIS_CROSS — 4 arms on the X/Y plane only (Z disabled). Uses the
@@ -1690,12 +1696,56 @@ void SuperMarker3D::_add_tube(GeoBuf &geo,
 		geo.outline_verts.push_back(va1); geo.outline_normals.push_back(n1);
 	}
 
-	// Hemisphere caps — drop a sphere blob at each end. The interior
-	// half is hidden inside the cylinder, the visible half closes the
-	// otherwise-open ring. Cheap and matches what `_gen_curve_line_3d`
-	// does at curve joints.
-	_add_sphere_blob(geo, a, radius, 4, segs);
-	_add_sphere_blob(geo, b, radius, 4, segs);
+	// Hemisphere caps oriented along the tube's axis. Equator vertex
+	// count matches `segs` so the cap's outermost ring lines up with
+	// the cylinder's endpoint ring exactly — no peeking-through where
+	// a full sphere blob's equator pokes past the cylinder's flat
+	// sides at midpoints between vertex angles.
+	_add_hemisphere_cap(geo, a, -dir, radius, segs, 3);
+	_add_hemisphere_cap(geo, b,  dir, radius, segs, 3);
+}
+
+// Oriented hemisphere — pole sits at center + axis_dir * radius;
+// equator lies in the plane through center perpendicular to axis_dir.
+// Topology: lat_segs latitude bands × segs longitude wedges → triangles
+// pushed into outline_verts/normals. The pole convergence band still
+// emits a quad-as-2-triangles pair; one of the two is degenerate but
+// it costs nothing visible and keeps the loop tidy.
+void SuperMarker3D::_add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
+		const Vector3 &axis_dir, float radius, int segs, int lat_segs) {
+	Vector3 dir = axis_dir.normalized();
+	Vector3 up    = Math::abs(dir.dot(Vector3(0, 1, 0))) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+	Vector3 right = dir.cross(up).normalized();
+	Vector3 up_p  = right.cross(dir).normalized();
+
+	for (int i = 0; i < lat_segs; i++) {
+		float a0 = (SM_PI * 0.5f) * (float)i / lat_segs;
+		float a1 = (SM_PI * 0.5f) * (float)(i + 1) / lat_segs;
+		float r0 = std::cos(a0), h0 = std::sin(a0);
+		float r1 = std::cos(a1), h1 = std::sin(a1);
+		for (int j = 0; j < segs; j++) {
+			float t0 = SM_TAU * (float)j / segs;
+			float t1 = SM_TAU * (float)(j + 1) / segs;
+			Vector3 d0 = std::cos(t0) * right + std::sin(t0) * up_p;
+			Vector3 d1 = std::cos(t1) * right + std::sin(t1) * up_p;
+			Vector3 v00 = center + (d0 * r0 + dir * h0) * radius;
+			Vector3 v01 = center + (d1 * r0 + dir * h0) * radius;
+			Vector3 v10 = center + (d0 * r1 + dir * h1) * radius;
+			Vector3 v11 = center + (d1 * r1 + dir * h1) * radius;
+			Vector3 n00 = (v00 - center).normalized();
+			Vector3 n01 = (v01 - center).normalized();
+			Vector3 n10 = (v10 - center).normalized();
+			Vector3 n11 = (v11 - center).normalized();
+
+			geo.outline_verts.push_back(v00); geo.outline_normals.push_back(n00);
+			geo.outline_verts.push_back(v01); geo.outline_normals.push_back(n01);
+			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
+
+			geo.outline_verts.push_back(v00); geo.outline_normals.push_back(n00);
+			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
+			geo.outline_verts.push_back(v10); geo.outline_normals.push_back(n10);
+		}
+	}
 }
 
 // Colored variant — same geometry, but every appended outline vertex

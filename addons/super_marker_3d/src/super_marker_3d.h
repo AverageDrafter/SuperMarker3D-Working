@@ -168,12 +168,16 @@ public:
 	void set_axis_color_z_neg(const Color &p); Color get_axis_color_z_neg() const;
 
 	// Universal arrow flag for the Axis category. ON: every axis arm in
-	// Cross / Plain / XYZ gets an arrowhead at its tip — single sizer
-	// across all arms, diameter = length / 2. Burr ignores the flag
-	// (too much visual noise with the diagonals). An arm with length
-	// 0 never gets an arrow regardless of the flag.
+	// Cross / Plain / XYZ gets an arrowhead at its tip — `length`
+	// controls how far back from the tip the arrowhead extends, `width`
+	// is the splay radius (perpendicular to the arm). Burr ignores the
+	// flag (too much visual noise with the diagonals). An arm with
+	// length 0 never gets an arrow regardless of the flag. With
+	// outline_thickness > 0 the arrowhead spokes also render as tubes
+	// (and AXIS_XYZ keeps its per-arm color at any thickness).
 	void set_axis_arrows(bool p);          bool get_axis_arrows() const;
 	void set_axis_arrow_length(float p);   float get_axis_arrow_length() const;
+	void set_axis_arrow_width(float p);    float get_axis_arrow_width() const;
 
 	/// Linkage between the per-direction axis-length fields. See
 	/// AxisLinkMode. Shared across every Axis subtype so switching
@@ -257,6 +261,7 @@ private:
 
 	bool _axis_arrows = false;
 	float _axis_arrow_length = 0.15f;
+	float _axis_arrow_width = 0.075f; // splay radius — half of length default
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -440,6 +445,15 @@ private:
 	static void _add_tube_colored(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
 			float radius, int segs, const Color &c);
 	static void _add_sphere_blob(GeoBuf &geo, const Vector3 &center, float radius, int lat, int lon);
+	/// Hemisphere cap oriented along `axis_dir` (which must be unit
+	/// length). The equator (lat=0) sits perpendicular to `axis_dir`
+	/// at `center` with the same `segs` segment count as a tube of
+	/// matching radius — so a tube whose endpoint is `center` with
+	/// outward direction `axis_dir` gets a flush-fit cap with no gap
+	/// or overlap. `lat_segs` is the latitudinal subdivision (3-4 is
+	/// enough for a small visual blob).
+	static void _add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
+			const Vector3 &axis_dir, float radius, int segs, int lat_segs);
 	static void _add_disc_blob(GeoBuf &geo, const Vector3 &center, float radius, int segs);
 	static void _add_sil_edge_quad(GeoBuf &geo, const Vector3 &a, const Vector3 &b, float w);
 	static void _add_sil_disc(GeoBuf &geo, const Vector3 &center, float radius, int segs);
