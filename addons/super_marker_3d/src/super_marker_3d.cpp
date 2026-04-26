@@ -1183,39 +1183,34 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		Vector3 face_n = ((a1 - b0).cross(b1 - b0)).normalized();
 		if (face_n.dot(mid_radial) < 0.0f) face_n = -face_n;
 
-		// Side: two triangles per segment. Winding (b0, a1, b1) and
-		// (b0, a0, a1) — both CCW from outside.
+		// Side: two triangles per segment. Wind (b0, b1, a1) and
+		// (b0, a1, a0) — CCW from OUTSIDE the cone, matching the
+		// flipped tube/hemisphere convention.
 		geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-		geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
 		geo.outline_verts.push_back(b1); geo.outline_normals.push_back(face_n);
+		geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
 		// Skip the second triangle when apex collapses to a point — it
 		// would be degenerate (zero area).
 		if (apex_r > 0.0f) {
 			geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-			geo.outline_verts.push_back(a0); geo.outline_normals.push_back(face_n);
 			geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
+			geo.outline_verts.push_back(a0); geo.outline_normals.push_back(face_n);
 		}
 
-		// Apex disk — only when the apex is a real ring (thickness > 0).
-		// Faces +d. Winding `(tip, a1, a0)` so the geometric face
-		// normal aligns with +d (the naive `(tip, a0, a1)` ordering
-		// produced face normals pointing back at -d, getting culled
-		// from the front view; with the back-disk added that bug
-		// became obvious because both disks rendered "wrong-side-out"
-		// at once).
+		// Apex disk — faces +d. Wind (tip, a0, a1) so the disk shows
+		// from the front under the flipped winding convention.
 		if (apex_r > 0.0f) {
 			geo.outline_verts.push_back(tip); geo.outline_normals.push_back(d);
-			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
 			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
+			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
 		}
 
-		// Base disk — closes the back of the arrowhead so the cone
-		// reads as solid when viewed from behind. Faces -d, CCW from
-		// that side, so winding is (base_center, b0, b1).
+		// Base disk — closes the back of the arrowhead, faces -d.
+		// Winding (base_center, b1, b0) under the flipped convention.
 		Vector3 back_n = -d;
 		geo.outline_verts.push_back(base_center); geo.outline_normals.push_back(back_n);
-		geo.outline_verts.push_back(b0);          geo.outline_normals.push_back(back_n);
 		geo.outline_verts.push_back(b1);          geo.outline_normals.push_back(back_n);
+		geo.outline_verts.push_back(b0);          geo.outline_normals.push_back(back_n);
 	}
 	if (p_use_color) {
 		const int end = geo.outline_verts.size();
@@ -1905,13 +1900,19 @@ void SuperMarker3D::_add_tube(GeoBuf &geo,
 		Vector3 va0 = a + n0 * radius, va1 = a + n1 * radius;
 		Vector3 vb0 = b + n0 * radius, vb1 = b + n1 * radius;
 
+		// Tube side panels — winding (va0, vb1, vb0) and (va0, va1, vb1)
+		// so the triangles wind CCW when viewed from OUTSIDE the
+		// cylinder (the side that CULL_BACK keeps). The earlier
+		// (va0, vb0, vb1) variant was inverted — every tube body
+		// surface rendered as its inside face, which read as the
+		// "tubes are backwards" report from the user.
 		geo.outline_verts.push_back(va0); geo.outline_normals.push_back(n0);
-		geo.outline_verts.push_back(vb0); geo.outline_normals.push_back(n0);
 		geo.outline_verts.push_back(vb1); geo.outline_normals.push_back(n1);
+		geo.outline_verts.push_back(vb0); geo.outline_normals.push_back(n0);
 
 		geo.outline_verts.push_back(va0); geo.outline_normals.push_back(n0);
-		geo.outline_verts.push_back(vb1); geo.outline_normals.push_back(n1);
 		geo.outline_verts.push_back(va1); geo.outline_normals.push_back(n1);
+		geo.outline_verts.push_back(vb1); geo.outline_normals.push_back(n1);
 	}
 
 	// Hemisphere caps oriented along the tube's axis. Equator vertex
@@ -1955,19 +1956,20 @@ void SuperMarker3D::_add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
 			Vector3 n10 = (v10 - center).normalized();
 			Vector3 n11 = (v11 - center).normalized();
 
-			// Wind v00 → v11 → v01 (and v00 → v10 → v11) so the geometric
-			// face normal aligns with the outward sphere normal at every
-			// quad. The naive ordering ends up reversed once the right /
-			// up_p basis flips with `axis_dir`, so both caps would have
-			// opposite winding and one would render its inside face. This
-			// keeps both caps consistently CCW from the cap's outside.
+			// Wind (v00, v01, v11) and (v00, v11, v10) so the
+			// geometric face normal aligns with the outward sphere
+			// normal at every quad — CCW from the cap's outside,
+			// front-facing under CULL_BACK. The earlier reversed
+			// ordering rendered every cap inside-out (most visible
+			// once the back disk on the cone made it impossible to
+			// hide).
 			geo.outline_verts.push_back(v00); geo.outline_normals.push_back(n00);
-			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
 			geo.outline_verts.push_back(v01); geo.outline_normals.push_back(n01);
+			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
 
 			geo.outline_verts.push_back(v00); geo.outline_normals.push_back(n00);
-			geo.outline_verts.push_back(v10); geo.outline_normals.push_back(n10);
 			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
+			geo.outline_verts.push_back(v10); geo.outline_normals.push_back(n10);
 		}
 	}
 }
