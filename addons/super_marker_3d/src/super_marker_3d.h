@@ -57,6 +57,7 @@ public:
 		MESH_SPHERE = 2,
 		MESH_BOX = 4,           // value 4 retained from old SHAPE_CUBE
 		MESH_DIAMOND = 1,
+		MESH_PYRAMID = 13,      // 4-sided pyramid (square base + apex)
 
 		// Shape category — reserved for future flat 2D iconography.
 		// (Cross used to live here pre-1.0; it migrated to Axis.)
@@ -167,6 +168,13 @@ public:
 	void set_axis_color_z_pos(const Color &p); Color get_axis_color_z_pos() const;
 	void set_axis_color_z_neg(const Color &p); Color get_axis_color_z_neg() const;
 
+	// Universal wireframe flag for the Mesh category. ON: a thick
+	// outline-color wireframe is drawn on top of the lit fill mesh
+	// (tubes when `outline_thickness > 0`, 1px lines at 0). OFF:
+	// just the fill (with the outline-color backing silhouette still
+	// poking out around the screen-space edges if thickness > 0).
+	void set_mesh_wireframe(bool p);  bool get_mesh_wireframe() const;
+
 	// Universal arrow flag for the Axis category. ON: every axis arm in
 	// Cross / Plain / XYZ gets an arrowhead at its tip — `length`
 	// controls how far back from the tip the arrowhead extends, `width`
@@ -272,6 +280,10 @@ private:
 	float _axis_arrow_length = 0.15f;
 	float _axis_arrow_width = 0.075f; // splay radius — half of length default
 
+	// Mesh category overlay toggle. Default ON — thick wireframe gives
+	// the bold "travel-agent globe" look out of the box.
+	bool _mesh_wireframe = true;
+
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
 	// Per-direction lengths. Defaults: every direction at 0.5 — so a
@@ -339,6 +351,11 @@ private:
 	Ref<ArrayMesh>         _mesh;
 	Ref<StandardMaterial3D> _outline_material;
 	Ref<StandardMaterial3D> _fill_material;
+	/// Inverted-hull material for the Mesh category — same `outline_color`
+	/// as the wireframe but with `CULL_FRONT` so only back-faces of the
+	/// inflated mesh show, producing a uniform-thickness outline halo
+	/// around the screen-space silhouette.
+	Ref<StandardMaterial3D> _hull_material;
 	RID _instance;
 
 	// Per-arm renderables for Axis subtypes. Each arm (and each Burr
@@ -374,9 +391,16 @@ private:
 		PackedColorArray   outline_colors;
 		bool use_outline_colors = false;
 
-		// Fill triangles.
+		// Fill triangles — solid 3D mesh body.
 		PackedVector3Array tri_verts;
 		PackedVector3Array tri_normals;
+
+		// Backing-hull triangles — same fill geometry inflated outward
+		// by `outline_thickness`. Rendered behind the fill with
+		// CULL_FRONT in `outline_color` to give the strong cartoon
+		// outline halo around the screen-space silhouette.
+		PackedVector3Array hull_verts;
+		PackedVector3Array hull_normals;
 
 		// --- Helpers ---
 		void add_line(const Vector3 &a, const Vector3 &b);
@@ -419,6 +443,14 @@ private:
 	void _gen_diamond(GeoBuf &geo) const;
 	void _gen_sphere(GeoBuf &geo) const;
 	void _gen_cube(GeoBuf &geo) const;
+	void _gen_pyramid(GeoBuf &geo) const;
+	/// Helper used by every Mesh subtype's generator: emits one fill
+	/// triangle plus one inflated hull triangle scaled outward from
+	/// the marker's origin by `outline_thickness`. Centralizes the
+	/// "always-on hull, always-on fill" pattern so each subtype's
+	/// generator is just a list of triangle vertices.
+	void _add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
+			const Vector3 &v2) const;
 	void _gen_arrow(GeoBuf &geo) const;
 	void _gen_flat_arrow(GeoBuf &geo) const;
 	void _gen_curve(GeoBuf &geo) const;

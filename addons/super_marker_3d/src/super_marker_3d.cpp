@@ -150,6 +150,13 @@ void SuperMarker3D::_bind_methods() {
 			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
 			"set_axis_arrow_width", "get_axis_arrow_width");
 
+	// Mesh-category overlay flag — sits right under Subtype on the Mesh
+	// type, same role as `axis_arrows` does on Axis.
+	ClassDB::bind_method(D_METHOD("set_mesh_wireframe", "enabled"), &SuperMarker3D::set_mesh_wireframe);
+	ClassDB::bind_method(D_METHOD("get_mesh_wireframe"), &SuperMarker3D::get_mesh_wireframe);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mesh_wireframe"),
+			"set_mesh_wireframe", "get_mesh_wireframe");
+
 	// Outline color + thickness apply to every shape that has an
 	// outline (which is all of them in some form). Thickness > 0 turns
 	// axis lines into thin tubes; at 0 they stay 1px.
@@ -420,7 +427,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Cross:0,Axis:3,Burr:11,XYZ:8";
 				break;
 			case TYPE_MESH:
-				p_property.hint_string = "Sphere:2,Box:4,Diamond:1";
+				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Pyramid:13";
 				break;
 			case TYPE_SHAPE:
 				// No subtypes yet — placeholder slot for future flat 2D
@@ -441,8 +448,20 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 		}
 	}
 
-	if (name == "detail_mode" && !is_mesh) hide();
-	if ((name == "fill_enabled" || name == "fill_color") && !(is_mesh || is_arrow || _shape == CURVE_FLAT)) hide();
+	// Detail Mode is gone in 1.0-beta — Mesh now uses the 3-layer
+	// hull/fill/wireframe pipeline instead of the old wireframe-vs-
+	// silhouette toggle. Hide it everywhere; kept in the binding only
+	// for back-compat with serialized scenes.
+	if (name == "detail_mode") hide();
+	// Fill Enabled is also gone for Mesh (fill is always on now). Keep
+	// it visible only on Arrow / Curve Flat where the user still
+	// chooses whether to fill.
+	if (name == "fill_enabled" && !(is_arrow || _shape == CURVE_FLAT)) hide();
+	// Fill Color stays visible on Mesh (drives the fill body) and on
+	// Arrow / Curve Flat (when their fill_enabled toggle is on).
+	if (name == "fill_color" && !(is_mesh || is_arrow || _shape == CURVE_FLAT)) hide();
+	// Mesh-category wireframe toggle.
+	if (name == "mesh_wireframe" && !is_mesh) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
 	// is editable depends on the link mode; whether it's visible at all
@@ -578,7 +597,7 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 	switch (p_subtype) {
 		case AXIS_CROSS: case AXIS_PLAIN: case AXIS_BURR: case AXIS_XYZ:
 			return TYPE_AXIS;
-		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND:
+		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND: case MESH_PYRAMID:
 			return TYPE_MESH;
 		case CURVE_FLAT: case CURVE_LINE_3D:
 			return TYPE_CURVE;
@@ -664,6 +683,12 @@ void SuperMarker3D::set_axis_arrow_width(float p) {
 	if (get_type() == TYPE_AXIS && _axis_arrows) SM_REBUILD();
 }
 float SuperMarker3D::get_axis_arrow_width() const { return _axis_arrow_width; }
+
+void SuperMarker3D::set_mesh_wireframe(bool p) {
+	_mesh_wireframe = p;
+	if (get_type() == TYPE_MESH) SM_REBUILD();
+}
+bool SuperMarker3D::get_mesh_wireframe() const { return _mesh_wireframe; }
 
 void SuperMarker3D::set_axis_link_mode(int p) {
 	_axis_link_mode = p;
@@ -1055,35 +1080,85 @@ void SuperMarker3D::_build_materials() {
 			? BaseMaterial3D::BILLBOARD_ENABLED
 			: BaseMaterial3D::BILLBOARD_DISABLED);
 
-	// Apply to surfaces. Outline + line surfaces (when both present)
-	// share `_outline_material`; the fill surface (always last) gets
-	// `_fill_material`. The fill surface is identified by being the
-	// last surface AND only present when fill is enabled, which is
-	// always after the outline/line group.
+	// --- Backing-hull material (Mesh category only) ---
+	// Inverted-hull outline technique: same `outline_color` as the
+	// wireframe, but with CULL_FRONT so only the back-faces of the
+	// inflated mesh show, painting a uniform-thickness halo around
+	// the screen-space silhouette. Always unshaded; depth tests
+	// against the fill so the fill occludes the hull where it covers.
+	if (_hull_material.is_null()) _hull_material.instantiate();
+	_hull_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	_hull_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
+	_hull_material->set_cull_mode(BaseMaterial3D::CULL_FRONT);
+	_hull_material->set_albedo(_outline_color);
+	_hull_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
+	_hull_material->set_transparency(_outline_color.a < 1.0f
+			? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
+	_hull_material->set_render_priority(-1); // draw before fill so depth test orders cleanly
+	_hull_material->set_billboard_mode(BaseMaterial3D::BILLBOARD_DISABLED);
+
+	// Apply to surfaces. The Mesh path uses a fixed 3-surface layout
+	// (hull / fill / wireframe); other types still keep the previous
+	// outline → optional fill ordering.
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
-		// Determine if a fill surface exists by checking whether fill
-		// content was generated this rebuild; the simpler proxy is
-		// just count: any non-fill subtype has 1 outline + maybe 1
-		// line; only Mesh / Arrow / Curve generators add a fill on
-		// top. With fill enabled we get one extra surface at the end.
-		// Apply outline_material to all but last when there's a fill
-		// surface (same heuristic as before).
-		for (int i = 0; i < sc; i++) {
-			_mesh->surface_set_material(i, _outline_material);
+		const bool is_mesh = (get_type() == TYPE_MESH);
+		if (is_mesh) {
+			// Surface 0: hull, Surface 1: fill, Surface 2: wireframe.
+			// Either of hull / wireframe can be absent depending on
+			// `outline_thickness` and `mesh_wireframe`, so we set
+			// materials by index range and tolerate the missing ones.
+			// `_rebuild_mesh` sets the surfaces in this order so the
+			// indices line up.
+			int idx = 0;
+			if (_mesh->get_meta("_sm_has_hull", false)) {
+				if (idx < sc) _mesh->surface_set_material(idx++, _hull_material);
+			}
+			if (_mesh->get_meta("_sm_has_fill", false)) {
+				if (idx < sc) _mesh->surface_set_material(idx++, _fill_material);
+			}
+			if (_mesh->get_meta("_sm_has_wire", false)) {
+				if (idx < sc) _mesh->surface_set_material(idx++, _outline_material);
+			}
+		} else {
+			// Non-mesh subtypes — previous heuristic (outline_material
+			// to all surfaces, fill_material to the final surface for
+			// fill-capable shapes).
+			for (int i = 0; i < sc; i++) {
+				_mesh->surface_set_material(i, _outline_material);
+			}
+			const bool any_fill_capable = (_shape == ARROW_EXTRUDED || _shape == ARROW_FLAT
+					|| _shape == CURVE_FLAT);
+			if (any_fill_capable && _fill_enabled && sc > 0) {
+				_mesh->surface_set_material(sc - 1, _fill_material);
+			}
 		}
-		// Last surface is the fill if it exists — but the only way to
-		// tell here is shape-specific. Use the existing fill flag plus
-		// the assumption that the final surface for fill-capable shapes
-		// is the fill. Keep the old behavior: surface 1 = fill if there
-		// are exactly 2 surfaces, surface 2 = fill if there are 3.
-		// Cleaner long-term, but keeps the visual pre-refactor for now.
-		const bool any_fill_capable = (_shape == MESH_DIAMOND || _shape == MESH_SPHERE
-				|| _shape == MESH_BOX || _shape == ARROW_EXTRUDED || _shape == ARROW_FLAT
-				|| _shape == CURVE_FLAT);
-		if (any_fill_capable && _fill_enabled && sc > 0) {
-			_mesh->surface_set_material(sc - 1, _fill_material);
-		}
+	}
+}
+
+// Helper used by every Mesh subtype generator. For each face triangle
+// the caller emits, we push the same triangle into `tri_verts` (the
+// fill mesh) AND a hull-side copy scaled outward from the marker's
+// origin into `hull_verts`. Hull face normals are the same as fill
+// (geometric face normal), but rendered with CULL_FRONT in the hull
+// material so only the back-faces show.
+void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
+		const Vector3 &v2) const {
+	const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
+	geo.tri_verts.push_back(v0); geo.tri_normals.push_back(face_n);
+	geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
+	geo.tri_verts.push_back(v2); geo.tri_normals.push_back(face_n);
+
+	if (_outline_thickness > 0.0f && _marker_size > 0.0001f) {
+		const float scale = (_marker_size + _outline_thickness) / _marker_size;
+		const Vector3 h0 = v0 * scale;
+		const Vector3 h1 = v1 * scale;
+		const Vector3 h2 = v2 * scale;
+		// Same triangle order — CULL_FRONT in the material flips the
+		// visible face to the back side of the inflated geometry.
+		geo.hull_verts.push_back(h0); geo.hull_normals.push_back(face_n);
+		geo.hull_verts.push_back(h1); geo.hull_normals.push_back(face_n);
+		geo.hull_verts.push_back(h2); geo.hull_normals.push_back(face_n);
 	}
 }
 
@@ -1232,39 +1307,32 @@ void SuperMarker3D::_gen_axis_cross(GeoBuf &/*geo*/) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
-	if (_detail_mode == DETAIL_SILHOUETTE) { _gen_silhouette_diamond(geo); return; }
-
 	const float s  = _marker_size;
-	const float tr = (_outline_thickness > 0 ? _outline_thickness : 0.018f * s) * 0.5f;
+	const Vector3 top(0, s, 0), btm(0, -s, 0);
+	const Vector3 px(s, 0, 0), nx(-s, 0, 0), pz(0, 0, s), nz(0, 0, -s);
 
-	Vector3 top(0, s, 0), btm(0, -s, 0);
-	Vector3 px(s, 0, 0), nx(-s, 0, 0), pz(0, 0, s), nz(0, 0, -s);
+	// Fill (always) + backing hull (when outline_thickness > 0) — 8
+	// octahedron faces. _add_mesh_face emits both layers.
+	struct Face { Vector3 a, b, c; };
+	const Face faces[8] = {
+		{ top,pz,px }, { top,px,nz }, { top,nz,nx }, { top,nx,pz },
+		{ btm,px,pz }, { btm,pz,nx }, { btm,nx,nz }, { btm,nz,px },
+	};
+	for (int i = 0; i < 8; i++) _add_mesh_face(geo, faces[i].a, faces[i].b, faces[i].c);
 
-	// Fill — 8 octahedron faces
-	if (_fill_enabled) {
-		struct Face { Vector3 a, b, c; };
-		const Face faces[8] = {
-			{ top,pz,px }, { top,px,nz }, { top,nz,nx }, { top,nx,pz },
-			{ btm,px,pz }, { btm,pz,nx }, { btm,nx,nz }, { btm,nz,px },
-		};
-		for (int i = 0; i < 8; i++) {
-			Vector3 n = (faces[i].b - faces[i].a).cross(faces[i].c - faces[i].a).normalized();
-			geo.tri_verts.push_back(faces[i].a); geo.tri_verts.push_back(faces[i].b); geo.tri_verts.push_back(faces[i].c);
-			geo.tri_normals.push_back(n); geo.tri_normals.push_back(n); geo.tri_normals.push_back(n);
-		}
-	}
-
-	// 12 unique edges — cylinder tubes (back-facing tubes hidden by fill z-buffer)
-	_add_tube(geo, top, px, tr, 6); _add_tube(geo, top, nx, tr, 6);
-	_add_tube(geo, top, pz, tr, 6); _add_tube(geo, top, nz, tr, 6);
-	_add_tube(geo, btm, px, tr, 6); _add_tube(geo, btm, nx, tr, 6);
-	_add_tube(geo, btm, pz, tr, 6); _add_tube(geo, btm, nz, tr, 6);
-	_add_tube(geo, px, pz, tr, 6);  _add_tube(geo, pz, nx, tr, 6);
-	_add_tube(geo, nx, nz, tr, 6);  _add_tube(geo, nz, px, tr, 6);
-
-	// Sphere blobs at each vertex for smooth corner joins
+	if (!_mesh_wireframe) return;
 	const Vector3 corners[6] = { top, btm, px, nx, pz, nz };
-	for (int i = 0; i < 6; i++) _add_sphere_blob(geo, corners[i], tr, 4, 6);
+	const int edges[12][2] = {
+		{0,2},{0,3},{0,4},{0,5}, {1,2},{1,3},{1,4},{1,5},
+		{2,4},{4,3},{3,5},{5,2},
+	};
+	if (_outline_thickness > 0.0f) {
+		const float tr = _outline_thickness * 0.5f;
+		for (int i = 0; i < 12; i++) _add_tube(geo, corners[edges[i][0]], corners[edges[i][1]], tr, 6);
+		for (int i = 0; i < 6; i++) _add_sphere_blob(geo, corners[i], tr, 4, 6);
+	} else {
+		for (int i = 0; i < 12; i++) geo.add_line(corners[edges[i][0]], corners[edges[i][1]]);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1275,47 +1343,11 @@ void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
-	if (_detail_mode == DETAIL_SILHOUETTE) { _gen_silhouette_sphere(geo); return; }
-
 	const float r  = _marker_size;
-	const int N    = SPHERE_ARC_SEGS;
-	const float tr = (_outline_thickness > 0 ? _outline_thickness : 0.018f * r) * 0.5f;
 
-	// 3 FULL latitude circles at y = -r/2, 0, +r/2.
-	// Each arc segment becomes a tube.  The tube's own outward normals (radially
-	// from tube axis, which ≈ sphere surface normal) cause CULL_BACK to hide
-	// the back side of each tube.  The fill sphere provides z-occlusion for
-	// the back-facing arc tubes when fill is enabled.
-	float lats[3] = { -r * 0.5f, 0.0f, r * 0.5f };
-	for (int k = 0; k < 3; k++) {
-		float y = lats[k];
-		float rr = std::sqrt(r * r - y * y);
-		if (rr < 0.0001f) continue;
-		for (int i = 0; i < N; i++) {
-			float a0 = SM_TAU * (float)i / N;
-			float a1 = SM_TAU * (float)(i + 1) / N;
-			Vector3 p0(rr * std::cos(a0), y, rr * std::sin(a0));
-			Vector3 p1(rr * std::cos(a1), y, rr * std::sin(a1));
-			_add_tube(geo, p0, p1, tr, 5);
-		}
-	}
-
-	// 3 full longitude great-circles at φ = 0°, 60°, 120°.
-	float longs[3] = { 0.0f, SM_TAU / 6.0f, SM_TAU / 3.0f };
-	for (int k = 0; k < 3; k++) {
-		float phi = longs[k];
-		float sp = std::sin(phi), cp = std::cos(phi);
-		for (int i = 0; i < N; i++) {
-			float psi0 = SM_TAU * (float)i / N;
-			float psi1 = SM_TAU * (float)(i + 1) / N;
-			Vector3 p0(std::sin(psi0) * sp * r, std::cos(psi0) * r, std::sin(psi0) * cp * r);
-			Vector3 p1(std::sin(psi1) * sp * r, std::cos(psi1) * r, std::sin(psi1) * cp * r);
-			_add_tube(geo, p0, p1, tr, 5);
-		}
-	}
-
-	// Fill: full UV sphere.
-	if (_fill_enabled) {
+	// Fill (always) + backing hull (when outline_thickness > 0) — UV
+	// sphere triangles. _add_mesh_face per triangle emits both layers.
+	{
 		PackedVector3Array verts;
 		verts.resize((SPHERE_FILL_LAT + 1) * (SPHERE_FILL_LON + 1));
 		for (int i = 0; i <= SPHERE_FILL_LAT; i++) {
@@ -1330,10 +1362,47 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 		for (int i = 0; i < SPHERE_FILL_LAT; i++) {
 			for (int j = 0; j < SPHERE_FILL_LON; j++) {
 				int a = i * (SPHERE_FILL_LON + 1) + j;
-				int b = a + 1, c = a + (SPHERE_FILL_LON + 1), d = c + 1;
-				geo.add_triangle(verts[a], verts[b], verts[d]);
-				geo.add_triangle(verts[a], verts[d], verts[c]);
+				int b = a + 1;
+				int c = a + (SPHERE_FILL_LON + 1);
+				int d = c + 1;
+				_add_mesh_face(geo, verts[a], verts[b], verts[d]);
+				_add_mesh_face(geo, verts[a], verts[d], verts[c]);
 			}
+		}
+	}
+
+	if (!_mesh_wireframe) return;
+	const int N = SPHERE_ARC_SEGS;
+	const float tr = (_outline_thickness > 0.0f) ? _outline_thickness * 0.5f : 0.0f;
+
+	// 3 latitude rings at y = -r/2, 0, +r/2 — smooth circular arcs.
+	const float lats[3] = { -r * 0.5f, 0.0f, r * 0.5f };
+	for (int k = 0; k < 3; k++) {
+		float y = lats[k];
+		float rr = std::sqrt(r * r - y * y);
+		if (rr < 0.0001f) continue;
+		for (int i = 0; i < N; i++) {
+			float a0 = SM_TAU * (float)i / N;
+			float a1 = SM_TAU * (float)(i + 1) / N;
+			Vector3 p0(rr * std::cos(a0), y, rr * std::sin(a0));
+			Vector3 p1(rr * std::cos(a1), y, rr * std::sin(a1));
+			if (tr > 0.0f) _add_tube(geo, p0, p1, tr, 5);
+			else           geo.add_line(p0, p1);
+		}
+	}
+
+	// 3 full longitude great-circles at φ = 0°, 60°, 120°.
+	const float longs[3] = { 0.0f, SM_TAU / 6.0f, SM_TAU / 3.0f };
+	for (int k = 0; k < 3; k++) {
+		float phi = longs[k];
+		float sp = std::sin(phi), cp = std::cos(phi);
+		for (int i = 0; i < N; i++) {
+			float psi0 = SM_TAU * (float)i / N;
+			float psi1 = SM_TAU * (float)(i + 1) / N;
+			Vector3 p0(std::sin(psi0) * sp * r, std::cos(psi0) * r, std::sin(psi0) * cp * r);
+			Vector3 p1(std::sin(psi1) * sp * r, std::cos(psi1) * r, std::sin(psi1) * cp * r);
+			if (tr > 0.0f) _add_tube(geo, p0, p1, tr, 5);
+			else           geo.add_line(p0, p1);
 		}
 	}
 }
@@ -1345,42 +1414,70 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_cube(GeoBuf &geo) const {
-	if (_detail_mode == DETAIL_SILHOUETTE) { _gen_silhouette_cube(geo); return; }
-
 	const float s  = _marker_size;
-	const float tr = (_outline_thickness > 0 ? _outline_thickness : 0.018f * s) * 0.5f;
-
-	Vector3 c[8] = {
+	const Vector3 c[8] = {
 		Vector3(-s,-s,-s), Vector3(s,-s,-s), Vector3(s,s,-s), Vector3(-s,s,-s),
 		Vector3(-s,-s, s), Vector3(s,-s, s), Vector3(s,s, s), Vector3(-s,s, s),
 	};
-
-	// Fill — 6 faces, each as 2 triangles
-	if (_fill_enabled) {
-		struct QuadFace { int i0,i1,i2,i3; };
-		const QuadFace faces[6] = {
-			{0,3,2,1}, {4,5,6,7}, {0,4,7,3}, {1,2,6,5}, {3,7,6,2}, {0,1,5,4},
-		};
-		for (int f = 0; f < 6; f++) {
-			Vector3 v0=c[faces[f].i0], v1=c[faces[f].i1], v2=c[faces[f].i2], v3=c[faces[f].i3];
-			Vector3 n = (v1-v0).cross(v2-v0).normalized();
-			geo.tri_verts.push_back(v0); geo.tri_verts.push_back(v1); geo.tri_verts.push_back(v2);
-			geo.tri_normals.push_back(n); geo.tri_normals.push_back(n); geo.tri_normals.push_back(n);
-			geo.tri_verts.push_back(v0); geo.tri_verts.push_back(v2); geo.tri_verts.push_back(v3);
-			geo.tri_normals.push_back(n); geo.tri_normals.push_back(n); geo.tri_normals.push_back(n);
-		}
+	// Fill (always) + backing hull (when outline_thickness > 0) — 6
+	// faces, 2 triangles each. _add_mesh_face takes care of both.
+	struct QuadFace { int i0,i1,i2,i3; };
+	const QuadFace faces[6] = {
+		{0,3,2,1}, {4,5,6,7}, {0,4,7,3}, {1,2,6,5}, {3,7,6,2}, {0,1,5,4},
+	};
+	for (int f = 0; f < 6; f++) {
+		_add_mesh_face(geo, c[faces[f].i0], c[faces[f].i1], c[faces[f].i2]);
+		_add_mesh_face(geo, c[faces[f].i0], c[faces[f].i2], c[faces[f].i3]);
 	}
 
-	// 12 unique edges — cylinder tubes
-	int edges[12][2] = {
+	if (!_mesh_wireframe) return;
+	const int edges[12][2] = {
 		{0,1},{1,2},{2,3},{3,0},
 		{4,5},{5,6},{6,7},{7,4},
 		{0,4},{1,5},{2,6},{3,7},
 	};
-	for (int i = 0; i < 12; i++) _add_tube(geo, c[edges[i][0]], c[edges[i][1]], tr, 6);
+	if (_outline_thickness > 0.0f) {
+		const float tr = _outline_thickness * 0.5f;
+		for (int i = 0; i < 12; i++) _add_tube(geo, c[edges[i][0]], c[edges[i][1]], tr, 6);
+		for (int i = 0; i < 8; i++) _add_sphere_blob(geo, c[i], tr, 4, 6);
+	} else {
+		for (int i = 0; i < 12; i++) geo.add_line(c[edges[i][0]], c[edges[i][1]]);
+	}
+}
 
-	// Sphere blobs at all 8 corners
-	for (int i = 0; i < 8; i++) _add_sphere_blob(geo, c[i], tr, 4, 6);
+// ---------------------------------------------------------------------------
+// Pyramid — square base + apex. 5 vertices, 6 fill triangles (4 lateral
+// sides + 2 base), 8 wireframe edges (4 base + 4 lateral). Base sits at
+// y=-marker_size, apex at y=+marker_size, base spans 2·marker_size.
+// ---------------------------------------------------------------------------
+
+void SuperMarker3D::_gen_pyramid(GeoBuf &geo) const {
+	const float s = _marker_size;
+	const Vector3 b0(-s, -s, -s), b1(s, -s, -s), b2(s, -s, s), b3(-s, -s, s);
+	const Vector3 ap(0, s, 0);
+
+	// Lateral sides (apex on top, going CCW around base).
+	_add_mesh_face(geo, ap, b0, b1);
+	_add_mesh_face(geo, ap, b1, b2);
+	_add_mesh_face(geo, ap, b2, b3);
+	_add_mesh_face(geo, ap, b3, b0);
+	// Base — two triangles facing -Y (CCW from below).
+	_add_mesh_face(geo, b0, b3, b2);
+	_add_mesh_face(geo, b0, b2, b1);
+
+	if (!_mesh_wireframe) return;
+	const Vector3 corners[5] = { b0, b1, b2, b3, ap };
+	const int edges[8][2] = {
+		{0,1},{1,2},{2,3},{3,0}, // base
+		{4,0},{4,1},{4,2},{4,3}, // lateral
+	};
+	if (_outline_thickness > 0.0f) {
+		const float tr = _outline_thickness * 0.5f;
+		for (int i = 0; i < 8; i++) _add_tube(geo, corners[edges[i][0]], corners[edges[i][1]], tr, 6);
+		for (int i = 0; i < 5; i++) _add_sphere_blob(geo, corners[i], tr, 4, 6);
+	} else {
+		for (int i = 0; i < 8; i++) geo.add_line(corners[edges[i][0]], corners[edges[i][1]]);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2184,6 +2281,7 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_DIAMOND:    _gen_diamond(geo);     break;
 		case MESH_SPHERE:     _gen_sphere(geo);      break;
 		case MESH_BOX:        _gen_cube(geo);        break;
+		case MESH_PYRAMID:    _gen_pyramid(geo);     break;
 		case ARROW_EXTRUDED:  _gen_arrow(geo);       break;
 		case ARROW_FLAT:      _gen_flat_arrow(geo);  break;
 		case CURVE_FLAT:      _gen_curve(geo);       break;
@@ -2201,12 +2299,56 @@ void SuperMarker3D::_rebuild_mesh() {
 		_mesh->clear_surfaces();
 	}
 
+	const bool is_mesh = (get_type() == TYPE_MESH);
+	const bool has_hull = is_mesh && geo.hull_verts.size() > 0;
+	const bool has_fill = is_mesh && geo.tri_verts.size() > 0;
+	const bool has_wire = is_mesh && (geo.outline_verts.size() > 0 || geo.line_verts.size() > 0);
 
-	// Outline (triangles) and lines coexist when a generator emits both
-	// — e.g. ARROW_EXTRUDED's shaft is lines, its arrowhead disk is
-	// triangles. The previous if/else-if dropped the line surface
-	// whenever the outline was non-empty, making mixed shapes lose
-	// their line content.
+	if (is_mesh) {
+		// Mesh subtypes: fixed 3-surface order (hull → fill → wireframe)
+		// so `_build_materials` can apply the right material per index.
+		// `_build_materials` reads these flags off the mesh metadata.
+		_mesh->set_meta("_sm_has_hull", has_hull);
+		_mesh->set_meta("_sm_has_fill", has_fill);
+		_mesh->set_meta("_sm_has_wire", has_wire);
+
+		if (has_hull) {
+			Array a; a.resize(Mesh::ARRAY_MAX);
+			a[Mesh::ARRAY_VERTEX] = geo.hull_verts;
+			a[Mesh::ARRAY_NORMAL] = geo.hull_normals;
+			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+		}
+		if (has_fill) {
+			Array a; a.resize(Mesh::ARRAY_MAX);
+			a[Mesh::ARRAY_VERTEX] = geo.tri_verts;
+			a[Mesh::ARRAY_NORMAL] = geo.tri_normals;
+			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+		}
+		if (has_wire) {
+			// Wireframe — outline triangles (tubes) at thickness > 0,
+			// or line primitives at thickness 0. Same outline_material.
+			if (geo.outline_verts.size() > 0) {
+				Array a; a.resize(Mesh::ARRAY_MAX);
+				a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
+				a[Mesh::ARRAY_NORMAL] = geo.outline_normals;
+				if (geo.use_outline_colors) {
+					while (geo.outline_colors.size() < geo.outline_verts.size()) {
+						geo.outline_colors.push_back(Color(1, 1, 1, 1));
+					}
+					a[Mesh::ARRAY_COLOR] = geo.outline_colors;
+				}
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			} else {
+				Array a; a.resize(Mesh::ARRAY_MAX);
+				a[Mesh::ARRAY_VERTEX] = geo.line_verts;
+				if (geo.use_line_colors) a[Mesh::ARRAY_COLOR] = geo.line_colors;
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, a);
+			}
+		}
+		return;
+	}
+
+	// Non-mesh subtypes — keep the previous outline → line → fill order.
 	if (geo.outline_verts.size() > 0) {
 		Array a; a.resize(Mesh::ARRAY_MAX);
 		a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
@@ -2225,8 +2367,6 @@ void SuperMarker3D::_rebuild_mesh() {
 		if (geo.use_line_colors) a[Mesh::ARRAY_COLOR] = geo.line_colors;
 		_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, a);
 	}
-
-	// --- Surface 1: fill ---
 	if (geo.tri_verts.size() > 0) {
 		Array a; a.resize(Mesh::ARRAY_MAX);
 		a[Mesh::ARRAY_VERTEX] = geo.tri_verts;
