@@ -1,11 +1,12 @@
 [gd_scene format=3 uid="uid://bxg8uyr2ef1g1"]
 
 [node name="SuperMarker3D" type="SuperMarker3D" unique_id=29451092]
-subtype = 8
+type = 1
+subtype = 2
 axis_arrows = true
 axis_arrow_length = 1.293
 axis_arrow_width = 0.485
-outline_thickness = 0.168
+outline_color = Color(0.9842554, 0.85738975, 0.021370053, 1)
 axis_length_x_pos = 8.04
 axis_length_x_neg = 8.04
 axis_length_y_pos = 8.04

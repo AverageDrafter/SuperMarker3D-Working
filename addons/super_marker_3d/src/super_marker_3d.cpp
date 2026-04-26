@@ -19,7 +19,10 @@ static const float SM_TAU = 6.28318530718f;
 static const float SM_PI  = 3.14159265359f;
 
 // Sphere wireframe arcs
-static const int SPHERE_ARC_SEGS = 20;
+// Sphere wireframe arc subdivision. Bumped from 20 → 48 for smooth
+// curves at any close-up zoom; with 6-segment tubes that's ~1700
+// triangles per sphere wireframe — still trivial.
+static const int SPHERE_ARC_SEGS = 48;
 
 // Sphere fill tessellation
 static const int SPHERE_FILL_LAT = 12;
@@ -1138,27 +1141,43 @@ void SuperMarker3D::_build_materials() {
 
 // Helper used by every Mesh subtype generator. For each face triangle
 // the caller emits, we push the same triangle into `tri_verts` (the
-// fill mesh) AND a hull-side copy scaled outward from the marker's
-// origin into `hull_verts`. Hull face normals are the same as fill
-// (geometric face normal), but rendered with CULL_FRONT in the hull
-// material so only the back-faces show.
+// fill mesh) AND an inflated copy into `hull_verts` (the backing
+// silhouette). Triangles wind (v0, v2, v1) — flipped from the
+// natural (v0, v1, v2) order so that CCW screen-space winding from
+// outside matches Godot's CULL_BACK convention. Same flip as the
+// tube body / hemisphere / cone — empirical, established earlier.
+//
+// Hull inflation is an ABSOLUTE push along each vertex's direction-
+// from-origin by `outline_thickness` (constant halo width), not a
+// proportional scale. The proportional approach made small markers
+// blow out (`thickness=0.05` on a `marker_size=0.1` marker = 50%
+// inflation) — out of usable range. Now `thickness=0.05` always
+// means a 0.05m halo regardless of marker size.
 void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
 		const Vector3 &v2) const {
-	const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
-	geo.tri_verts.push_back(v0); geo.tri_normals.push_back(face_n);
-	geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
-	geo.tri_verts.push_back(v2); geo.tri_normals.push_back(face_n);
+	// Recompute face normal under the flipped winding so it still
+	// points outward (matches the geometric normal of (v0, v2, v1)).
+	const Vector3 face_n = ((v2 - v0).cross(v1 - v0)).normalized();
 
-	if (_outline_thickness > 0.0f && _marker_size > 0.0001f) {
-		const float scale = (_marker_size + _outline_thickness) / _marker_size;
-		const Vector3 h0 = v0 * scale;
-		const Vector3 h1 = v1 * scale;
-		const Vector3 h2 = v2 * scale;
-		// Same triangle order — CULL_FRONT in the material flips the
-		// visible face to the back side of the inflated geometry.
+	geo.tri_verts.push_back(v0); geo.tri_normals.push_back(face_n);
+	geo.tri_verts.push_back(v2); geo.tri_normals.push_back(face_n);
+	geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
+
+	if (_outline_thickness > 0.0f) {
+		auto push_out = [&](const Vector3 &v) -> Vector3 {
+			float len_sq = v.length_squared();
+			if (len_sq < 1e-8f) return v;
+			return v + v / Math::sqrt(len_sq) * _outline_thickness;
+		};
+		const Vector3 h0 = push_out(v0);
+		const Vector3 h1 = push_out(v1);
+		const Vector3 h2 = push_out(v2);
+		// Same flipped winding as fill. CULL_FRONT in the hull material
+		// keeps only the back-faces, which from any camera angle paint
+		// the halo around the silhouette.
 		geo.hull_verts.push_back(h0); geo.hull_normals.push_back(face_n);
-		geo.hull_verts.push_back(h1); geo.hull_normals.push_back(face_n);
 		geo.hull_verts.push_back(h2); geo.hull_normals.push_back(face_n);
+		geo.hull_verts.push_back(h1); geo.hull_normals.push_back(face_n);
 	}
 }
 
