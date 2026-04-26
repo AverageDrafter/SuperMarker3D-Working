@@ -161,9 +161,17 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_axis_z_color"), &SuperMarker3D::get_axis_z_color);
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "axis_z_color"), "set_axis_z_color", "get_axis_z_color");
 
-	ClassDB::bind_method(D_METHOD("set_axis_burr", "enabled"), &SuperMarker3D::set_axis_burr);
-	ClassDB::bind_method(D_METHOD("get_axis_burr"), &SuperMarker3D::get_axis_burr);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "axis_burr"), "set_axis_burr", "get_axis_burr");
+	ClassDB::bind_method(D_METHOD("set_category", "category"), &SuperMarker3D::set_category);
+	ClassDB::bind_method(D_METHOD("get_category"), &SuperMarker3D::get_category);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "category", PROPERTY_HINT_ENUM,
+			"Axis,Mesh,Shape,Curve,Arrow,Figure"),
+			"set_category", "get_category");
+
+	ClassDB::bind_method(D_METHOD("set_axis_link_mode", "mode"), &SuperMarker3D::set_axis_link_mode);
+	ClassDB::bind_method(D_METHOD("get_axis_link_mode"), &SuperMarker3D::get_axis_link_mode);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "axis_link_mode", PROPERTY_HINT_ENUM,
+			"Link All,Mirrored,Free"),
+			"set_axis_link_mode", "get_axis_link_mode");
 
 	ClassDB::bind_method(D_METHOD("set_axis_length_x_pos", "length"), &SuperMarker3D::set_axis_length_x_pos);
 	ClassDB::bind_method(D_METHOD("get_axis_length_x_pos"), &SuperMarker3D::get_axis_length_x_pos);
@@ -298,20 +306,34 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_template_mode"), &SuperMarker3D::is_template_mode);
 	ClassDB::bind_method(D_METHOD("get_mesh_rid"), &SuperMarker3D::get_mesh_rid);
 
-	// New 1.0 names — expose only these to script. Old aliases stay
-	// usable from C++ (deprecated); GDScript users always see the
-	// prefixed enum constants.
-	BIND_ENUM_CONSTANT(SHAPE_CROSS);
-	BIND_ENUM_CONSTANT(MESH_DIAMOND);
+	// Categories
+	BIND_ENUM_CONSTANT(CATEGORY_AXIS);
+	BIND_ENUM_CONSTANT(CATEGORY_MESH);
+	BIND_ENUM_CONSTANT(CATEGORY_SHAPE);
+	BIND_ENUM_CONSTANT(CATEGORY_CURVE);
+	BIND_ENUM_CONSTANT(CATEGORY_ARROW);
+	BIND_ENUM_CONSTANT(CATEGORY_FIGURE);
+
+	// Shape variants — only the new prefixed names are exposed to
+	// script. C++ aliases (SHAPE_CROSS, SHAPE_AXIS, etc.) keep old
+	// references working but don't appear in the GDScript namespace.
+	BIND_ENUM_CONSTANT(AXIS_CROSS);
+	BIND_ENUM_CONSTANT(AXIS_PLAIN);
+	BIND_ENUM_CONSTANT(AXIS_BURR);
+	BIND_ENUM_CONSTANT(AXIS_XYZ);
 	BIND_ENUM_CONSTANT(MESH_SPHERE);
 	BIND_ENUM_CONSTANT(MESH_BOX);
-	BIND_ENUM_CONSTANT(AXIS_PLAIN);
-	BIND_ENUM_CONSTANT(AXIS_XYZ);
-	BIND_ENUM_CONSTANT(ARROW_EXTRUDED);
-	BIND_ENUM_CONSTANT(ARROW_FLAT);
+	BIND_ENUM_CONSTANT(MESH_DIAMOND);
 	BIND_ENUM_CONSTANT(CURVE_FLAT);
 	BIND_ENUM_CONSTANT(CURVE_LINE_3D);
+	BIND_ENUM_CONSTANT(ARROW_EXTRUDED);
+	BIND_ENUM_CONSTANT(ARROW_FLAT);
 	BIND_ENUM_CONSTANT(FIGURE);
+
+	// Axis linkage
+	BIND_ENUM_CONSTANT(LINK_ALL);
+	BIND_ENUM_CONSTANT(LINK_MIRRORED);
+	BIND_ENUM_CONSTANT(LINK_FREE);
 	BIND_ENUM_CONSTANT(DETAIL_WIREFRAME); BIND_ENUM_CONSTANT(DETAIL_SILHOUETTE);
 	BIND_ENUM_CONSTANT(ARROWHEAD_TRIANGLE); BIND_ENUM_CONSTANT(ARROWHEAD_DIAMOND);
 	BIND_ENUM_CONSTANT(ARROWHEAD_CHEVRON);
@@ -327,29 +349,80 @@ void SuperMarker3D::_bind_methods() {
 
 void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	const String name = p_property.name;
-	const bool is_mesh   = (_shape == MESH_DIAMOND || _shape == MESH_SPHERE || _shape == MESH_BOX);
-	const bool is_arrow  = (_shape == ARROW_EXTRUDED || _shape == ARROW_FLAT);
-	const bool is_axis_plain = (_shape == AXIS_PLAIN);
-	const bool is_axis_xyz   = (_shape == AXIS_XYZ);
-	const bool is_axis   = (is_axis_plain || is_axis_xyz);
-	const bool is_curve  = (_shape == CURVE_FLAT || _shape == CURVE_LINE_3D);
+	const int cat = get_category();
+	const bool is_axis = (cat == CATEGORY_AXIS);
+	const bool is_mesh = (cat == CATEGORY_MESH);
+	const bool is_curve = (cat == CATEGORY_CURVE);
+	const bool is_arrow = (cat == CATEGORY_ARROW);
+	const bool is_axis_xyz = (_shape == AXIS_XYZ);
+	const bool is_axis_2d  = (_shape == AXIS_CROSS); // 4 arms, no Z
 	auto hide = [&]() { p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_STORAGE; };
+	auto read_only = [&]() { p_property.usage |= PROPERTY_USAGE_READ_ONLY; };
+
+	// `shape` is now a sub-dropdown; its enum hint depends on `category`
+	// so the user only sees the variants that belong to it. Numeric
+	// values are explicit so the dropdown order doesn't have to match
+	// the underlying enum's value order.
+	if (name == "shape") {
+		p_property.hint = PROPERTY_HINT_ENUM;
+		switch (cat) {
+			case CATEGORY_AXIS:
+				p_property.hint_string = "Cross:0,Axis:3,Burr:11,XYZ:8";
+				break;
+			case CATEGORY_MESH:
+				p_property.hint_string = "Sphere:2,Box:4,Diamond:1";
+				break;
+			case CATEGORY_SHAPE:
+				// No subtypes yet — placeholder slot for future flat 2D
+				// iconography. Keep the property visible but empty so
+				// the user sees the category exists.
+				p_property.hint_string = "(none yet)";
+				read_only();
+				break;
+			case CATEGORY_CURVE:
+				p_property.hint_string = "Flat Ribbon:7,3D Line:9";
+				break;
+			case CATEGORY_ARROW:
+				p_property.hint_string = "Extruded:5,Flat:6";
+				break;
+			case CATEGORY_FIGURE:
+				p_property.hint_string = "Figure:10";
+				break;
+		}
+	}
 
 	if (name == "detail_mode" && !is_mesh) hide();
 	if ((name == "fill_enabled" || name == "fill_color") && !(is_mesh || is_arrow || _shape == CURVE_FLAT)) hide();
 
-	// Axis colors: only on AXIS_XYZ (per-axis override). AXIS_PLAIN uses
-	// outline_color for all 6 directions.
+	// Axis category — link mode + 6 length fields. Whether each length
+	// is editable depends on the link mode; whether it's visible at all
+	// depends on the subtype (Cross hides Z).
+	if (name == "axis_link_mode" && !is_axis) hide();
 	if ((name == "axis_x_color" || name == "axis_y_color" || name == "axis_z_color") && !is_axis_xyz) hide();
-	// Burr is an AXIS_PLAIN-only flag.
-	if (name == "axis_burr" && !is_axis_plain) hide();
-	// Per-direction lengths only on AXIS_XYZ.
-	if ((name == "axis_length_x_pos" || name == "axis_length_x_neg"
+	const bool is_axis_len = (name == "axis_length_x_pos" || name == "axis_length_x_neg"
 			|| name == "axis_length_y_pos" || name == "axis_length_y_neg"
-			|| name == "axis_length_z_pos" || name == "axis_length_z_neg") && !is_axis_xyz) hide();
-	// AXIS_XYZ uses per-direction lengths, not the shared marker_size.
-	if (name == "marker_size" && is_axis_xyz) hide();
-	// outline_color hidden on AXIS_XYZ — colors are per-axis there.
+			|| name == "axis_length_z_pos" || name == "axis_length_z_neg");
+	if (is_axis_len && !is_axis) hide();
+	// AXIS_CROSS hides all Z lengths — 2D only.
+	if (is_axis_2d && (name == "axis_length_z_pos" || name == "axis_length_z_neg")) hide();
+	// Apply linkage greying. LINK_ALL: every length except X+ is slaved.
+	// LINK_MIRRORED: every neg is slaved to its pos.
+	if (is_axis_len && is_axis) {
+		switch (_axis_link_mode) {
+			case LINK_ALL:
+				if (name != "axis_length_x_pos") read_only();
+				break;
+			case LINK_MIRRORED:
+				if (name == "axis_length_x_neg" || name == "axis_length_y_neg"
+						|| name == "axis_length_z_neg") read_only();
+				break;
+			case LINK_FREE: default: break;
+		}
+	}
+	// Axis category drives marker_size out of the picture — lengths run
+	// the show; outline_color drives the bare-line variants but is
+	// hidden on the per-axis-color XYZ variant.
+	if (name == "marker_size" && is_axis) hide();
 	if (name == "outline_color" && is_axis_xyz) hide();
 
 	if ((name == "head_length" || name == "head_width") && !(is_arrow || is_axis_xyz)) hide();
@@ -418,8 +491,66 @@ void SuperMarker3D::_notification(int p_what) {
 
 #define SM_REBUILD() if (is_inside_tree()) { _rebuild_mesh(); _build_materials(); _ensure_instance(); }
 
-void SuperMarker3D::set_shape(int p) { _shape = p; notify_property_list_changed(); SM_REBUILD(); }
+void SuperMarker3D::set_shape(int p) {
+	_shape = p;
+	// Keep the stored category in sync with the shape so the inspector's
+	// category dropdown always reflects what the user just picked. This
+	// is important when a script writes `shape` directly without going
+	// through `set_category`.
+	_category = _shape_to_category(p);
+	notify_property_list_changed();
+	SM_REBUILD();
+}
 int  SuperMarker3D::get_shape() const { return _shape; }
+
+void SuperMarker3D::set_category(int p) {
+	if (_category == p && _shape_to_category(_shape) == p) return;
+	_category = p;
+	// If the current shape doesn't belong to the new category, snap to
+	// that category's first variant so the marker stays renderable.
+	if (_shape_to_category(_shape) != p) {
+		_shape = _category_first_shape(p);
+	}
+	notify_property_list_changed();
+	SM_REBUILD();
+}
+int SuperMarker3D::get_category() const {
+	// Trust the stored category in the typical case, but fall back to
+	// the shape-derived value if they've drifted (e.g. legacy scenes
+	// where `_category` was never set).
+	int c = _shape_to_category(_shape);
+	return (_category == c) ? _category : c;
+}
+
+int SuperMarker3D::_shape_to_category(int p_shape) {
+	switch (p_shape) {
+		case AXIS_CROSS: case AXIS_PLAIN: case AXIS_BURR: case AXIS_XYZ:
+			return CATEGORY_AXIS;
+		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND:
+			return CATEGORY_MESH;
+		case CURVE_FLAT: case CURVE_LINE_3D:
+			return CATEGORY_CURVE;
+		case ARROW_EXTRUDED: case ARROW_FLAT:
+			return CATEGORY_ARROW;
+		case FIGURE:
+			return CATEGORY_FIGURE;
+		default:
+			return CATEGORY_AXIS;
+	}
+}
+
+int SuperMarker3D::_category_first_shape(int p_cat) {
+	switch (p_cat) {
+		case CATEGORY_AXIS:   return AXIS_CROSS;
+		case CATEGORY_MESH:   return MESH_SPHERE;
+		case CATEGORY_SHAPE:  return AXIS_CROSS; // SHAPE category is empty in 1.0-beta;
+		                                          // fall back to Axis Cross visually.
+		case CATEGORY_CURVE:  return CURVE_FLAT;
+		case CATEGORY_ARROW:  return ARROW_EXTRUDED;
+		case CATEGORY_FIGURE: return FIGURE;
+		default:              return AXIS_CROSS;
+	}
+}
 void SuperMarker3D::set_marker_size(float p) { _marker_size = p; SM_REBUILD(); }
 float SuperMarker3D::get_marker_size() const { return _marker_size; }
 void SuperMarker3D::set_detail_mode(int p) { _detail_mode = p; SM_REBUILD(); }
@@ -457,21 +588,51 @@ Color SuperMarker3D::get_axis_y_color() const { return _axis_y_color; }
 void SuperMarker3D::set_axis_z_color(const Color &p) { _axis_z_color = p; if (_shape == AXIS_XYZ) SM_REBUILD(); }
 Color SuperMarker3D::get_axis_z_color() const { return _axis_z_color; }
 
-void SuperMarker3D::set_axis_burr(bool p) { _axis_burr = p; if (_shape == AXIS_PLAIN) SM_REBUILD(); }
-bool SuperMarker3D::get_axis_burr() const { return _axis_burr; }
+void SuperMarker3D::set_axis_link_mode(int p) {
+	_axis_link_mode = p;
+	notify_property_list_changed(); // refreshes READ_ONLY flags on slaved fields
+	if (get_category() == CATEGORY_AXIS) SM_REBUILD();
+}
+int SuperMarker3D::get_axis_link_mode() const { return _axis_link_mode; }
 
-void SuperMarker3D::set_axis_length_x_pos(float p) { _axis_length_x_pos = MAX(0.0f, p); if (_shape == AXIS_XYZ) SM_REBUILD(); }
-float SuperMarker3D::get_axis_length_x_pos() const { return _axis_length_x_pos; }
-void SuperMarker3D::set_axis_length_x_neg(float p) { _axis_length_x_neg = MAX(0.0f, p); if (_shape == AXIS_XYZ) SM_REBUILD(); }
-float SuperMarker3D::get_axis_length_x_neg() const { return _axis_length_x_neg; }
-void SuperMarker3D::set_axis_length_y_pos(float p) { _axis_length_y_pos = MAX(0.0f, p); if (_shape == AXIS_XYZ) SM_REBUILD(); }
-float SuperMarker3D::get_axis_length_y_pos() const { return _axis_length_y_pos; }
-void SuperMarker3D::set_axis_length_y_neg(float p) { _axis_length_y_neg = MAX(0.0f, p); if (_shape == AXIS_XYZ) SM_REBUILD(); }
-float SuperMarker3D::get_axis_length_y_neg() const { return _axis_length_y_neg; }
-void SuperMarker3D::set_axis_length_z_pos(float p) { _axis_length_z_pos = MAX(0.0f, p); if (_shape == AXIS_XYZ) SM_REBUILD(); }
-float SuperMarker3D::get_axis_length_z_pos() const { return _axis_length_z_pos; }
-void SuperMarker3D::set_axis_length_z_neg(float p) { _axis_length_z_neg = MAX(0.0f, p); if (_shape == AXIS_XYZ) SM_REBUILD(); }
-float SuperMarker3D::get_axis_length_z_neg() const { return _axis_length_z_neg; }
+#define AXIS_LEN_SETTER(name, field) \
+	void SuperMarker3D::set_##name(float p) { \
+		field = MAX(0.0f, p); \
+		if (get_category() == CATEGORY_AXIS) SM_REBUILD(); \
+	} \
+	float SuperMarker3D::get_##name() const { return field; }
+
+AXIS_LEN_SETTER(axis_length_x_pos, _axis_length_x_pos)
+AXIS_LEN_SETTER(axis_length_x_neg, _axis_length_x_neg)
+AXIS_LEN_SETTER(axis_length_y_pos, _axis_length_y_pos)
+AXIS_LEN_SETTER(axis_length_y_neg, _axis_length_y_neg)
+AXIS_LEN_SETTER(axis_length_z_pos, _axis_length_z_pos)
+AXIS_LEN_SETTER(axis_length_z_neg, _axis_length_z_neg)
+#undef AXIS_LEN_SETTER
+
+// Resolve the 6 raw fields through the active link mode so every Axis
+// generator sees the same expanded list. Output: [X+, X-, Y+, Y-, Z+, Z-].
+void SuperMarker3D::_resolved_axis_lengths(float p_out[6]) const {
+	switch (_axis_link_mode) {
+		case LINK_ALL: {
+			// Every direction follows X+. The "first value" the user
+			// touches drives the rest.
+			float v = _axis_length_x_pos;
+			p_out[0] = p_out[1] = p_out[2] = p_out[3] = p_out[4] = p_out[5] = v;
+		} break;
+		case LINK_MIRRORED: {
+			p_out[0] = _axis_length_x_pos; p_out[1] = _axis_length_x_pos;
+			p_out[2] = _axis_length_y_pos; p_out[3] = _axis_length_y_pos;
+			p_out[4] = _axis_length_z_pos; p_out[5] = _axis_length_z_pos;
+		} break;
+		case LINK_FREE:
+		default: {
+			p_out[0] = _axis_length_x_pos; p_out[1] = _axis_length_x_neg;
+			p_out[2] = _axis_length_y_pos; p_out[3] = _axis_length_y_neg;
+			p_out[4] = _axis_length_z_pos; p_out[5] = _axis_length_z_neg;
+		} break;
+	}
+}
 
 void SuperMarker3D::set_figure_height(float p) { _figure_height = MAX(0.01f, p); if (_shape == FIGURE) SM_REBUILD(); }
 float SuperMarker3D::get_figure_height() const { return _figure_height; }
@@ -655,11 +816,14 @@ void SuperMarker3D::_build_materials() {
 // Shape generators
 // ---------------------------------------------------------------------------
 
-void SuperMarker3D::_gen_cross(GeoBuf &geo) const {
-	const float s = _marker_size;
-	geo.add_line(Vector3(-s, 0, 0), Vector3(s, 0, 0));
-	geo.add_line(Vector3(0, -s, 0), Vector3(0, s, 0));
-	geo.add_line(Vector3(0, 0, -s), Vector3(0, 0, s));
+// AXIS_CROSS — 4 arms on the X/Y plane only (Z disabled). Uses the
+// shared per-direction length values; Z+ / Z- are simply ignored.
+void SuperMarker3D::_gen_axis_cross(GeoBuf &geo) const {
+	float L[6]; _resolved_axis_lengths(L);
+	if (L[0] > 0.0f) geo.add_line(Vector3(),         Vector3( L[0], 0, 0)); // X+
+	if (L[1] > 0.0f) geo.add_line(Vector3(),         Vector3(-L[1], 0, 0)); // X-
+	if (L[2] > 0.0f) geo.add_line(Vector3(),         Vector3(0,  L[2], 0)); // Y+
+	if (L[3] > 0.0f) geo.add_line(Vector3(),         Vector3(0, -L[3], 0)); // Y-
 }
 
 // ---------------------------------------------------------------------------
@@ -891,55 +1055,85 @@ void SuperMarker3D::_gen_silhouette_cube(GeoBuf &geo) const {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Axis Plain — 6 lines through the origin (±X ±Y ±Z) in outline_color,
-// length = marker_size. Optional `axis_burr` adds 6 more diagonal lines
-// in the (±1,±1,0)/(±1,0,±1)/(0,±1,±1) directions for a 12-axis pattern.
-// Diagonal lines use the same length so the burr is symmetric.
-// ---------------------------------------------------------------------------
-
+// AXIS_PLAIN — 6 cardinal axes (±X ±Y ±Z) in outline_color, lengths
+// from the shared per-direction values.
 void SuperMarker3D::_gen_axis_plain(GeoBuf &geo) const {
-	const float len = _marker_size;
-	const Vector3 cardinals[3] = {
-		Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1)
+	float L[6]; _resolved_axis_lengths(L);
+	if (L[0] > 0.0f) geo.add_line(Vector3(), Vector3( L[0], 0, 0));
+	if (L[1] > 0.0f) geo.add_line(Vector3(), Vector3(-L[1], 0, 0));
+	if (L[2] > 0.0f) geo.add_line(Vector3(), Vector3(0,  L[2], 0));
+	if (L[3] > 0.0f) geo.add_line(Vector3(), Vector3(0, -L[3], 0));
+	if (L[4] > 0.0f) geo.add_line(Vector3(), Vector3(0, 0,  L[4]));
+	if (L[5] > 0.0f) geo.add_line(Vector3(), Vector3(0, 0, -L[5]));
+}
+
+// AXIS_BURR — Plain + 6 face-diagonal axes (12 lines total). Each
+// diagonal's length is the average of the two cardinal arms it
+// bisects, so Mirrored / Link-All modes still produce symmetric
+// burrs naturally.
+void SuperMarker3D::_gen_axis_burr(GeoBuf &geo) const {
+	float L[6]; _resolved_axis_lengths(L);
+	if (L[0] > 0.0f) geo.add_line(Vector3(), Vector3( L[0], 0, 0));
+	if (L[1] > 0.0f) geo.add_line(Vector3(), Vector3(-L[1], 0, 0));
+	if (L[2] > 0.0f) geo.add_line(Vector3(), Vector3(0,  L[2], 0));
+	if (L[3] > 0.0f) geo.add_line(Vector3(), Vector3(0, -L[3], 0));
+	if (L[4] > 0.0f) geo.add_line(Vector3(), Vector3(0, 0,  L[4]));
+	if (L[5] > 0.0f) geo.add_line(Vector3(), Vector3(0, 0, -L[5]));
+
+	const float k = 0.70710678f; // 1/√2
+	// 12 face-diagonals as 6 line segments through origin: each diagonal's
+	// "endpoint length" comes from the average of the two cardinals at
+	// either end so an asymmetric setup (e.g. long X+, short X-) still
+	// reads correctly.
+	struct Diag { int a, b; float ax, bx; }; // indices into L[]
+	const Diag diags[12] = {
+		// (+X+Y), (+X-Y), (-X+Y), (-X-Y) face diagonals
+		{ 0, 2,  k,  k }, { 0, 3,  k, -k },
+		{ 1, 2, -k,  k }, { 1, 3, -k, -k },
+		// (+X+Z), (+X-Z), (-X+Z), (-X-Z)
+		{ 0, 4,  k,  k }, { 0, 5,  k, -k },
+		{ 1, 4, -k,  k }, { 1, 5, -k, -k },
+		// (+Y+Z), (+Y-Z), (-Y+Z), (-Y-Z)
+		{ 2, 4,  k,  k }, { 2, 5,  k, -k },
+		{ 3, 4, -k,  k }, { 3, 5, -k, -k },
 	};
-	for (int i = 0; i < 3; i++) {
-		geo.add_line(-cardinals[i] * len, cardinals[i] * len);
-	}
-	if (_axis_burr) {
-		const float k = 0.70710678f; // 1 / sqrt(2)
-		const Vector3 diag[6] = {
-			Vector3( k,  k,  0), Vector3( k, -k,  0),
-			Vector3( k,  0,  k), Vector3( k,  0, -k),
-			Vector3( 0,  k,  k), Vector3( 0,  k, -k),
-		};
-		for (int i = 0; i < 6; i++) {
-			geo.add_line(-diag[i] * len, diag[i] * len);
-		}
+	for (int i = 0; i < 12; i++) {
+		const Diag &d = diags[i];
+		float len = 0.5f * (L[d.a] + L[d.b]);
+		if (len <= 0.0f) continue;
+		// Compose a 3D direction from the two unit components. ax/bx are
+		// already √2/2-scaled so the magnitude is 1.
+		Vector3 dir;
+		if (d.a < 2) dir.x = d.ax;
+		else if (d.a < 4) dir.y = d.ax;
+		else dir.z = d.ax;
+		if (d.b < 2) dir.x = d.bx;
+		else if (d.b < 4) dir.y = d.bx;
+		else dir.z = d.bx;
+		geo.add_line(Vector3(), dir * len);
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Axis XYZ — up to 6 independently-sized arrows, one per direction. Setting
-// a direction's length to 0 hides that arm — so the default
-// (pos = marker_size, neg = 0) is the classic 3-axis red/green/blue
-// indicator. Per-axis colors are shared between + and - of the same axis.
-// ---------------------------------------------------------------------------
-
+// AXIS_XYZ — colored arrowed axes. Per-axis colors with bright on +
+// and dark on - directions (negative is auto-darkened to half
+// brightness, alpha preserved) so the user only authors three colors
+// for the most informative variant.
 void SuperMarker3D::_gen_axis_xyz(GeoBuf &geo) const {
-	const float hw  = _head_width;
+	float L[6]; _resolved_axis_lengths(L);
+	const float hw = _head_width;
+	auto darken = [](Color c) -> Color { return Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, c.a); };
 	struct ArmDef { Vector3 dir; float length; Vector3 pa, pb; Color color; };
 	const ArmDef arms[6] = {
-		{ Vector3( 1, 0, 0), _axis_length_x_pos, Vector3(0, hw, 0), Vector3(0, 0, hw), _axis_x_color },
-		{ Vector3(-1, 0, 0), _axis_length_x_neg, Vector3(0, hw, 0), Vector3(0, 0, hw), _axis_x_color },
-		{ Vector3( 0, 1, 0), _axis_length_y_pos, Vector3(hw, 0, 0), Vector3(0, 0, hw), _axis_y_color },
-		{ Vector3( 0,-1, 0), _axis_length_y_neg, Vector3(hw, 0, 0), Vector3(0, 0, hw), _axis_y_color },
-		{ Vector3( 0, 0, 1), _axis_length_z_pos, Vector3(hw, 0, 0), Vector3(0, hw, 0), _axis_z_color },
-		{ Vector3( 0, 0,-1), _axis_length_z_neg, Vector3(hw, 0, 0), Vector3(0, hw, 0), _axis_z_color },
+		{ Vector3( 1, 0, 0), L[0], Vector3(0, hw, 0), Vector3(0, 0, hw),          _axis_x_color  },
+		{ Vector3(-1, 0, 0), L[1], Vector3(0, hw, 0), Vector3(0, 0, hw), darken(_axis_x_color) },
+		{ Vector3( 0, 1, 0), L[2], Vector3(hw, 0, 0), Vector3(0, 0, hw),          _axis_y_color  },
+		{ Vector3( 0,-1, 0), L[3], Vector3(hw, 0, 0), Vector3(0, 0, hw), darken(_axis_y_color) },
+		{ Vector3( 0, 0, 1), L[4], Vector3(hw, 0, 0), Vector3(0, hw, 0),          _axis_z_color  },
+		{ Vector3( 0, 0,-1), L[5], Vector3(hw, 0, 0), Vector3(0, hw, 0), darken(_axis_z_color) },
 	};
 	for (int a = 0; a < 6; a++) {
 		const float len = arms[a].length;
-		if (len <= 0.0f) continue; // length-0 hides this arm
+		if (len <= 0.0f) continue;
 		const float hl = MIN(_head_length, len * 0.9f);
 		const float se = len - hl;
 		const Vector3 tip = arms[a].dir * len;
@@ -1494,12 +1688,13 @@ void SuperMarker3D::_cone_fill(GeoBuf &geo, const Vector3 &apex, const Vector3 &
 void SuperMarker3D::_rebuild_mesh() {
 	GeoBuf geo;
 	switch (_shape) {
-		case SHAPE_CROSS:     _gen_cross(geo);       break;
+		case AXIS_CROSS:      _gen_axis_cross(geo);  break;
+		case AXIS_PLAIN:      _gen_axis_plain(geo);  break;
+		case AXIS_BURR:       _gen_axis_burr(geo);   break;
+		case AXIS_XYZ:        _gen_axis_xyz(geo);    break;
 		case MESH_DIAMOND:    _gen_diamond(geo);     break;
 		case MESH_SPHERE:     _gen_sphere(geo);      break;
 		case MESH_BOX:        _gen_cube(geo);        break;
-		case AXIS_PLAIN:      _gen_axis_plain(geo);  break;
-		case AXIS_XYZ:        _gen_axis_xyz(geo);    break;
 		case ARROW_EXTRUDED:  _gen_arrow(geo);       break;
 		case ARROW_FLAT:      _gen_flat_arrow(geo);  break;
 		case CURVE_FLAT:      _gen_curve(geo);       break;

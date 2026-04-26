@@ -85,7 +85,7 @@ figure_height = 1.4
 [node name="Pickups" type="Node3D" parent="." unique_id=1570846471]
 
 [node name="Pickup0" type="SuperMarker3D" parent="Pickups" unique_id=633676993]
-shape = 2
+shape = 6
 marker_size = 0.45
 outline_color = Color(0.4, 1, 0.6, 1)
 outline_thickness = 0.06

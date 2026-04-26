@@ -64,14 +64,15 @@ func _spawn_at(entry: Dictionary, origin: Vector3) -> void:
 func _build_entries() -> Array:
 	return [
 		{
-			"label": "SHAPE_CROSS",
+			"label": "AXIS_CROSS",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.SHAPE_CROSS
-				m.marker_size = 0.6
+				m.shape = SuperMarker3D.AXIS_CROSS
+				m.axis_link_mode = SuperMarker3D.LINK_ALL
+				m.axis_length_x_pos = 0.6
 				return m,
 			"animate": func(m: SuperMarker3D, t: float) -> void:
-				m.marker_size = 0.5 + sin(t * 1.5) * 0.2,
+				m.axis_length_x_pos = 0.5 + sin(t * 1.5) * 0.2,
 		},
 		{
 			"label": "MESH_DIAMOND",
@@ -110,33 +111,48 @@ func _build_entries() -> Array:
 				m.rotation = Vector3(t * 0.4, t * 0.6, 0.0),
 		},
 		{
-			"label": "AXIS_PLAIN (burr toggles)",
+			"label": "AXIS_PLAIN",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
 				m.shape = SuperMarker3D.AXIS_PLAIN
-				m.marker_size = 0.7
+				m.axis_link_mode = SuperMarker3D.LINK_ALL
+				m.axis_length_x_pos = 0.7
 				m.outline_color = Color(0.9, 0.9, 0.4, 1.0)
 				return m,
 			"animate": func(m: SuperMarker3D, t: float) -> void:
-				m.axis_burr = (fmod(t, 4.0) > 2.0),
+				m.axis_length_x_pos = 0.6 + sin(t * 1.0) * 0.2,
 		},
 		{
-			"label": "AXIS_XYZ",
+			"label": "AXIS_BURR",
+			"build": func() -> SuperMarker3D:
+				var m: SuperMarker3D = SuperMarker3D.new()
+				m.shape = SuperMarker3D.AXIS_BURR
+				m.axis_link_mode = SuperMarker3D.LINK_ALL
+				m.axis_length_x_pos = 0.7
+				m.outline_color = Color(0.7, 0.95, 0.5, 1.0)
+				return m,
+			"animate": func(m: SuperMarker3D, t: float) -> void:
+				m.rotation = Vector3(t * 0.3, t * 0.45, t * 0.2),
+		},
+		{
+			"label": "AXIS_XYZ (mirrored)",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
 				m.shape = SuperMarker3D.AXIS_XYZ
+				m.axis_link_mode = SuperMarker3D.LINK_MIRRORED
+				m.axis_length_x_pos = 0.7
+				m.axis_length_y_pos = 0.7
+				m.axis_length_z_pos = 0.7
 				m.head_length = 0.18
 				m.head_width = 0.08
 				return m,
 			"animate": func(m: SuperMarker3D, t: float) -> void:
-				# Sweep the negative arms in/out so users see how 0 disables.
-				var pulse: float = max(0.0, sin(t * 1.0))
-				m.axis_length_x_pos = 0.7
-				m.axis_length_y_pos = 0.7
-				m.axis_length_z_pos = 0.7
-				m.axis_length_x_neg = pulse * 0.7
-				m.axis_length_y_neg = pulse * 0.7
-				m.axis_length_z_neg = pulse * 0.7,
+				# Pump each axis length independently so the mirrored
+				# linkage is visible — neg arms grow with their pos
+				# counterparts automatically.
+				m.axis_length_x_pos = 0.5 + sin(t * 1.0)         * 0.3
+				m.axis_length_y_pos = 0.5 + sin(t * 1.0 + 2.094) * 0.3
+				m.axis_length_z_pos = 0.5 + sin(t * 1.0 + 4.188) * 0.3,
 		},
 		{
 			"label": "ARROW_EXTRUDED",

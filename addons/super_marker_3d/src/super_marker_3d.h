@@ -23,50 +23,61 @@ class SuperMarker3D : public Node3D {
 	GDCLASS(SuperMarker3D, Node3D)
 
 public:
-	/// Shape category + variant in a single enum, prefixed by category
-	/// so the inspector's dropdown reads in groups (Axis / Mesh /
-	/// Shape / Curve / Arrow / Figure).
-	///
-	/// Numeric values are FROZEN for scene-file compatibility. The
-	/// pre-1.0 flat enum (SHAPE_CROSS=0, SHAPE_DIAMOND=1, …) keeps its
-	/// values; the prefixed names alias the same numbers. New shapes
-	/// added after the original 8 take fresh slots starting at 8.
+	/// Top-level category. The inspector's `category` dropdown uses these
+	/// directly; selecting a category narrows the `shape` dropdown to
+	/// the subtypes that belong to it.
+	enum ShapeCategory {
+		CATEGORY_AXIS = 0,
+		CATEGORY_MESH = 1,
+		CATEGORY_SHAPE = 2,   // reserved for future flat / billboarded iconography
+		CATEGORY_CURVE = 3,
+		CATEGORY_ARROW = 4,
+		CATEGORY_FIGURE = 5,
+	};
+
+	/// Shape variants. Each value belongs to exactly one category. Numeric
+	/// values are FROZEN for scene-file compatibility — pre-1.0 scenes
+	/// stored values 0..7 directly, so those slots keep their meaning.
+	/// Cross moved into the Axis category in 1.0-beta but the value (0)
+	/// is unchanged: AXIS_CROSS *is* the old SHAPE_CROSS.
 	///
 	/// **API stability**: from 1.0 forward, no renames, no reordering,
 	/// no removals without a deprecation cycle.
 	enum MarkerShape {
-		// Shape — flat-billboarded 2D iconography.
-		SHAPE_CROSS = 0,
+		// Axis category — line clusters through the origin. All four
+		// share the per-direction length values
+		// (`axis_length_{x,y,z}_{pos,neg}`); each variant renders only
+		// the axes it cares about.
+		AXIS_CROSS = 0,         // 4 arms on the X/Y plane (Z disabled)
+		AXIS_PLAIN = 3,         // 6 axes (±X ±Y ±Z), outline_color
+		AXIS_BURR = 11,         // 6 cardinal + 6 face-diagonal axes (12 lines)
+		AXIS_XYZ = 8,           // 6 axes, per-axis colors (bright +, dark -)
 
-		// Mesh — closed 3D primitives.
-		MESH_DIAMOND = 1,
+		// Mesh category — closed 3D primitives.
 		MESH_SPHERE = 2,
 		MESH_BOX = 4,           // value 4 retained from old SHAPE_CUBE
+		MESH_DIAMOND = 1,
 
-		// Axis — line clusters through the origin.
-		AXIS_PLAIN = 3,         // 6 ±X ±Y ±Z lines, single outline_color and
-		                        // marker_size. With axis_burr=true, adds 6
-		                        // more diagonal lines (12-axis "burr").
-		AXIS_XYZ = 8,           // Per-direction independent length
-		                        // (axis_length_*_pos / *_neg). 0 disables
-		                        // that direction. Per-axis colors via
-		                        // axis_x/y/z_color.
+		// Shape category — reserved for future flat 2D iconography.
+		// (Cross used to live here pre-1.0; it migrated to Axis.)
 
-		// Arrow — directional pointer.
-		ARROW_EXTRUDED = 5,     // 3D shaft + head (was SHAPE_ARROW)
-		ARROW_FLAT = 6,         // 2D arrow with billboarding
-
-		// Curve — geometry stamped along a Curve3D resource.
+		// Curve category — geometry stamped along a Curve3D resource.
 		CURVE_FLAT = 7,         // billboarded flat ribbon with caps
-		CURVE_LINE_3D = 9,      // tube extrusion (3D), no billboarding
+		CURVE_LINE_3D = 9,      // tube extrusion (3D)
 
-		// Figure — humanoid; head / arms / leg-pose props.
+		// Arrow category — directional pointer.
+		ARROW_EXTRUDED = 5,     // 3D shaft + head
+		ARROW_FLAT = 6,         // 2D arrow, billboarded
+
+		// Figure category — humanoid mock-up.
 		FIGURE = 10,
 
 		// --- Deprecated aliases (1.x), removed in 2.0 ---
-		// The old flat names. Existing scripts referencing these by name
-		// keep compiling; existing scenes that stored integer values
-		// load unchanged because the integers haven't moved.
+		// Old flat-enum names from pre-1.0 development. Existing scripts
+		// referencing these by name keep compiling; existing scenes
+		// stored integer values load unchanged because the integers
+		// haven't moved.
+		SHAPE_CROSS = AXIS_CROSS,
 		SHAPE_DIAMOND = MESH_DIAMOND,
 		SHAPE_SPHERE = MESH_SPHERE,
 		SHAPE_AXIS = AXIS_PLAIN,
@@ -74,6 +85,16 @@ public:
 		SHAPE_ARROW = ARROW_EXTRUDED,
 		SHAPE_FLAT_ARROW = ARROW_FLAT,
 		SHAPE_CURVE = CURVE_FLAT,
+	};
+
+	/// Per-direction-length linkage for the Axis category. Picks how
+	/// many of the 6 length values (axis_length_{x,y,z}_{pos,neg}) the
+	/// user actually has to set; the rest are slaved and grey out in
+	/// the inspector.
+	enum AxisLinkMode {
+		LINK_ALL = 0,       // single value drives all 6 (uniform marker)
+		LINK_MIRRORED = 1,  // pos & neg of same axis share a value
+		LINK_FREE = 2,      // every direction independent
 	};
 
 	enum DetailMode {
@@ -121,6 +142,12 @@ public:
 	~SuperMarker3D();
 
 	void set_shape(int p_shape);    int get_shape() const;
+	/// Top-level category. Setter resets `shape` to the first variant
+	/// in the new category if the current value isn't valid there;
+	/// getter derives from the current `shape`. Stored as a separate
+	/// field so the inspector dropdown remembers which category the
+	/// user selected even between identical-shape transitions.
+	void set_category(int p_cat); int get_category() const;
 	void set_marker_size(float p);  float get_marker_size() const;
 	void set_detail_mode(int p);    int get_detail_mode() const;
 
@@ -134,15 +161,18 @@ public:
 	void set_axis_y_color(const Color &p); Color get_axis_y_color() const;
 	void set_axis_z_color(const Color &p); Color get_axis_z_color() const;
 
-	// AXIS_PLAIN extra: when true, render 6 additional diagonal axes
-	// (along ±x±y, ±x±z, ±y±z normalized) for a 12-axis "burr" pattern.
-	void set_axis_burr(bool p);   bool get_axis_burr() const;
+	/// Linkage between the per-direction axis-length fields. See
+	/// AxisLinkMode. Shared across every Axis subtype so switching
+	/// between Cross / Plain / Burr / XYZ keeps the user's authored
+	/// values intact and the same constraint behavior carries over.
+	void set_axis_link_mode(int p); int get_axis_link_mode() const;
 
-	// AXIS_XYZ per-direction lengths. Each is the absolute length from
-	// the origin in that direction. Setting any to 0 hides that arm,
-	// which is how AXIS_XYZ degrades to a 3-axis (default) or 1-/2-axis
-	// indicator. Per-axis colors are shared between the +/- directions
-	// of the same axis (axis_x_color, axis_y_color, axis_z_color).
+	// Per-direction lengths shared by every Axis subtype. Each is the
+	// absolute distance from the origin in that direction. Setting any
+	// to 0 hides that arm — used by AXIS_XYZ to "degrade" to fewer
+	// directions, and by the renderer in general to skip empty arms.
+	// Linkage rules in `axis_link_mode` decide which fields the user
+	// can edit and which are slaved.
 	void set_axis_length_x_pos(float p); float get_axis_length_x_pos() const;
 	void set_axis_length_x_neg(float p); float get_axis_length_x_neg() const;
 	void set_axis_length_y_pos(float p); float get_axis_length_y_pos() const;
@@ -205,19 +235,25 @@ private:
 	Color _axis_y_color = Color(0.3f, 1.0f, 0.3f, 1.0f);
 	Color _axis_z_color = Color(0.3f, 0.3f, 1.0f, 1.0f);
 
-	// AXIS_PLAIN extra.
-	bool _axis_burr = false;
-
-	// AXIS_XYZ per-direction lengths. Defaults: positive axes show at
-	// marker_size, negatives off — so a fresh AXIS_XYZ marker starts as
-	// the classic 3-axis red/green/blue indicator and the user opts in
-	// to the negative arms by setting their lengths.
+	// Axis-category state.
+	int _axis_link_mode = LINK_ALL;
+	// Per-direction lengths. Defaults: every direction at 0.5 — so a
+	// fresh marker in any Axis subtype starts as a uniform indicator
+	// and the user only has to change the value if they want
+	// asymmetry. Link mode decides at render time which of these the
+	// other directions follow.
 	float _axis_length_x_pos = 0.5f;
-	float _axis_length_x_neg = 0.0f;
+	float _axis_length_x_neg = 0.5f;
 	float _axis_length_y_pos = 0.5f;
-	float _axis_length_y_neg = 0.0f;
+	float _axis_length_y_neg = 0.5f;
 	float _axis_length_z_pos = 0.5f;
-	float _axis_length_z_neg = 0.0f;
+	float _axis_length_z_neg = 0.5f;
+	// Stored category — persisted alongside `_shape` so a fresh
+	// inspector load shows the right category dropdown without having
+	// to derive it from the shape value (which would lose the user's
+	// "I picked Shape but it's empty so it stays on Cross visually"
+	// kind of edge cases).
+	int _category = CATEGORY_AXIS;
 
 	// FIGURE shape. Total standing height in meters; body / limb /
 	// head sizes derive proportionally inside _gen_figure.
@@ -318,18 +354,30 @@ private:
 	void _update_visibility();
 	void _update_transform();
 
-	// Shape generators. One per Shape enum value.
-	void _gen_cross(GeoBuf &geo) const;
+	// Shape generators. One per Shape enum value. Axis variants share
+	// `_resolved_axis_lengths` to apply axis_link_mode uniformly.
+	void _gen_axis_cross(GeoBuf &geo) const;
+	void _gen_axis_plain(GeoBuf &geo) const;
+	void _gen_axis_burr(GeoBuf &geo) const;
+	void _gen_axis_xyz(GeoBuf &geo) const;
 	void _gen_diamond(GeoBuf &geo) const;
 	void _gen_sphere(GeoBuf &geo) const;
 	void _gen_cube(GeoBuf &geo) const;
-	void _gen_axis_plain(GeoBuf &geo) const;
-	void _gen_axis_xyz(GeoBuf &geo) const;
 	void _gen_arrow(GeoBuf &geo) const;
 	void _gen_flat_arrow(GeoBuf &geo) const;
 	void _gen_curve(GeoBuf &geo) const;
 	void _gen_curve_line_3d(GeoBuf &geo) const;
 	void _gen_figure(GeoBuf &geo) const;
+
+	/// Resolve the 6 axis lengths through the active link mode. Output
+	/// order: X+, X-, Y+, Y-, Z+, Z-.
+	void _resolved_axis_lengths(float p_out[6]) const;
+	/// Map a shape value to its category. Used by `get_category` and the
+	/// inspector property hint logic.
+	static int _shape_to_category(int p_shape);
+	/// First subtype of a category — used when `set_category` needs to
+	/// pick a sensible default `shape` value.
+	static int _category_first_shape(int p_cat);
 
 	void _on_curve_changed();
 
@@ -352,7 +400,9 @@ private:
 
 } // namespace godot
 
+VARIANT_ENUM_CAST(SuperMarker3D::ShapeCategory);
 VARIANT_ENUM_CAST(SuperMarker3D::MarkerShape);
+VARIANT_ENUM_CAST(SuperMarker3D::AxisLinkMode);
 VARIANT_ENUM_CAST(SuperMarker3D::DetailMode);
 VARIANT_ENUM_CAST(SuperMarker3D::ArrowheadStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::TailStyle);
