@@ -158,7 +158,11 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "outline_color"), "set_outline_color", "get_outline_color");
 	ClassDB::bind_method(D_METHOD("set_outline_thickness", "thickness"), &SuperMarker3D::set_outline_thickness);
 	ClassDB::bind_method(D_METHOD("get_outline_thickness"), &SuperMarker3D::get_outline_thickness);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outline_thickness", PROPERTY_HINT_RANGE, "0.0,1.0,0.001,suffix:m"),
+	// Range goes "or_greater" so users can crank thickness past 1m for
+	// dramatic stand-ins (overthick green burr = bush, etc.). Pixel
+	// line at 0; tube otherwise.
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outline_thickness",
+			PROPERTY_HINT_RANGE, "0.0,1.0,0.001,or_greater,suffix:m"),
 			"set_outline_thickness", "get_outline_thickness");
 
 	// ---- Type-specific groups below; ordering shows up in the
@@ -333,13 +337,19 @@ void SuperMarker3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("_on_curve_changed"), &SuperMarker3D::_on_curve_changed);
 
-	ADD_GROUP("Rendering", "");
-	ClassDB::bind_method(D_METHOD("set_editor_only", "editor_only"), &SuperMarker3D::set_editor_only);
-	ClassDB::bind_method(D_METHOD("get_editor_only"), &SuperMarker3D::get_editor_only);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "editor_only"), "set_editor_only", "get_editor_only");
-	ClassDB::bind_method(D_METHOD("set_always_on_top", "always_on_top"), &SuperMarker3D::set_always_on_top);
+	// Renderer triad — three orthogonal flags controlling where the
+	// marker sits between editor cue, HUD overlay, and shipped game
+	// asset. Defaults: visible at runtime, depth-tested, unshaded.
+	ADD_GROUP("Renderer", "");
+	ClassDB::bind_method(D_METHOD("set_shows_in_play", "enabled"), &SuperMarker3D::set_shows_in_play);
+	ClassDB::bind_method(D_METHOD("get_shows_in_play"), &SuperMarker3D::get_shows_in_play);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shows_in_play"), "set_shows_in_play", "get_shows_in_play");
+	ClassDB::bind_method(D_METHOD("set_always_on_top", "enabled"), &SuperMarker3D::set_always_on_top);
 	ClassDB::bind_method(D_METHOD("get_always_on_top"), &SuperMarker3D::get_always_on_top);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "always_on_top"), "set_always_on_top", "get_always_on_top");
+	ClassDB::bind_method(D_METHOD("set_in_game_object", "enabled"), &SuperMarker3D::set_in_game_object);
+	ClassDB::bind_method(D_METHOD("get_in_game_object"), &SuperMarker3D::get_in_game_object);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "in_game_object"), "set_in_game_object", "get_in_game_object");
 
 	ClassDB::bind_method(D_METHOD("set_template_mode", "template_mode"), &SuperMarker3D::set_template_mode);
 	ClassDB::bind_method(D_METHOD("is_template_mode"), &SuperMarker3D::is_template_mode);
@@ -662,12 +672,16 @@ void SuperMarker3D::set_axis_link_mode(int p) {
 }
 int SuperMarker3D::get_axis_link_mode() const { return _axis_link_mode; }
 
+// Setters always write to the underlying field (so a user's authored
+// values are preserved across link-mode toggles). Getters route through
+// `_resolved_axis_lengths` so the inspector shows the slaved values
+// the user actually sees on screen — pulling the master's value when
+// linked, the stored value otherwise.
 #define AXIS_LEN_SETTER(name, field) \
 	void SuperMarker3D::set_##name(float p) { \
 		field = MAX(0.0f, p); \
 		if (get_type() == TYPE_AXIS) SM_REBUILD(); \
-	} \
-	float SuperMarker3D::get_##name() const { return field; }
+	}
 
 AXIS_LEN_SETTER(axis_length_x_pos, _axis_length_x_pos)
 AXIS_LEN_SETTER(axis_length_x_neg, _axis_length_x_neg)
@@ -676,6 +690,20 @@ AXIS_LEN_SETTER(axis_length_y_neg, _axis_length_y_neg)
 AXIS_LEN_SETTER(axis_length_z_pos, _axis_length_z_pos)
 AXIS_LEN_SETTER(axis_length_z_neg, _axis_length_z_neg)
 #undef AXIS_LEN_SETTER
+
+// Length getters — resolve through link mode.
+#define AXIS_LEN_GETTER(name, idx) \
+	float SuperMarker3D::get_##name() const { \
+		float L[6]; _resolved_axis_lengths(L); \
+		return L[idx]; \
+	}
+AXIS_LEN_GETTER(axis_length_x_pos, 0)
+AXIS_LEN_GETTER(axis_length_x_neg, 1)
+AXIS_LEN_GETTER(axis_length_y_pos, 2)
+AXIS_LEN_GETTER(axis_length_y_neg, 3)
+AXIS_LEN_GETTER(axis_length_z_pos, 4)
+AXIS_LEN_GETTER(axis_length_z_neg, 5)
+#undef AXIS_LEN_GETTER
 
 // Resolve the 6 raw fields through the active link mode so every Axis
 // generator sees the same expanded list. Output: [X+, X-, Y+, Y-, Z+, Z-].
@@ -775,14 +803,30 @@ bool SuperMarker3D::get_end_cap_linked() const { return _end_cap_linked; }
 void SuperMarker3D::set_length_fraction(float p){ _length_fraction = CLAMP(p, 0.0f, 1.0f); SM_REBUILD(); }
 float SuperMarker3D::get_length_fraction() const{ return _length_fraction; }
 
-void SuperMarker3D::set_editor_only(bool p) { _editor_only = p; _update_visibility(); }
-bool SuperMarker3D::get_editor_only() const { return _editor_only; }
+void SuperMarker3D::set_shows_in_play(bool p) { _shows_in_play = p; _update_visibility(); }
+bool SuperMarker3D::get_shows_in_play() const { return _shows_in_play; }
 void SuperMarker3D::set_always_on_top(bool p) {
 	_always_on_top = p;
 	if (_outline_material.is_valid()) _outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, p);
 	if (_fill_material.is_valid()) _fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, p);
 }
 bool SuperMarker3D::get_always_on_top() const { return _always_on_top; }
+void SuperMarker3D::set_in_game_object(bool p) {
+	_in_game_object = p;
+	if (is_inside_tree()) {
+		_build_materials();
+		// Refresh shadow casting on the RS instance — only valid when
+		// the instance exists.
+		if (_instance.is_valid()) {
+			RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(
+					_instance,
+					_in_game_object
+							? RenderingServer::SHADOW_CASTING_SETTING_ON
+							: RenderingServer::SHADOW_CASTING_SETTING_OFF);
+		}
+	}
+}
+bool SuperMarker3D::get_in_game_object() const { return _in_game_object; }
 void SuperMarker3D::set_template_mode(bool p) { _template_mode = p; _update_visibility(); }
 RID  SuperMarker3D::get_mesh_rid() const { return _mesh.is_valid() ? _mesh->get_rid() : RID(); }
 
@@ -797,6 +841,13 @@ void SuperMarker3D::_ensure_instance() {
 	if (_mesh.is_valid()) rs->instance_set_base(_instance, _mesh->get_rid());
 	Ref<World3D> w = get_world_3d();
 	if (w.is_valid()) rs->instance_set_scenario(_instance, w->get_scenario());
+	// Honor `in_game_object` for shadow casting on every refresh —
+	// the flag toggle calls `_ensure_instance` indirectly via SM_REBUILD,
+	// so this is the single place that has to keep the RS state in sync.
+	rs->instance_geometry_set_cast_shadows_setting(_instance,
+			_in_game_object
+					? RenderingServer::SHADOW_CASTING_SETTING_ON
+					: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 }
 
 void SuperMarker3D::_cleanup_instance() {
@@ -807,7 +858,8 @@ void SuperMarker3D::_cleanup_instance() {
 void SuperMarker3D::_update_visibility() {
 	if (!_instance.is_valid()) return;
 	bool vis = is_visible_in_tree() && !_template_mode;
-	if (_editor_only && !Engine::get_singleton()->is_editor_hint()) vis = false;
+	// `_shows_in_play=false` hides at runtime; in-editor we always render.
+	if (!_shows_in_play && !Engine::get_singleton()->is_editor_hint()) vis = false;
 	RenderingServer::get_singleton()->instance_set_visible(_instance, vis);
 }
 
@@ -827,7 +879,9 @@ void SuperMarker3D::_build_materials() {
 
 	// --- Outline material ---
 	if (_outline_material.is_null()) _outline_material.instantiate();
-	_outline_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	_outline_material->set_shading_mode(_in_game_object
+			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
+			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
 	// Flat arrow + curve ribbons are two-sided (visible from both sides).
@@ -854,7 +908,9 @@ void SuperMarker3D::_build_materials() {
 
 	// --- Fill material ---
 	if (_fill_material.is_null()) _fill_material.instantiate();
-	_fill_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	_fill_material->set_shading_mode(_in_game_object
+			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
+			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
 	_fill_material->set_albedo(_fill_color);
@@ -1737,13 +1793,19 @@ void SuperMarker3D::_add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
 			Vector3 n10 = (v10 - center).normalized();
 			Vector3 n11 = (v11 - center).normalized();
 
+			// Wind v00 → v11 → v01 (and v00 → v10 → v11) so the geometric
+			// face normal aligns with the outward sphere normal at every
+			// quad. The naive ordering ends up reversed once the right /
+			// up_p basis flips with `axis_dir`, so both caps would have
+			// opposite winding and one would render its inside face. This
+			// keeps both caps consistently CCW from the cap's outside.
 			geo.outline_verts.push_back(v00); geo.outline_normals.push_back(n00);
-			geo.outline_verts.push_back(v01); geo.outline_normals.push_back(n01);
 			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
+			geo.outline_verts.push_back(v01); geo.outline_normals.push_back(n01);
 
 			geo.outline_verts.push_back(v00); geo.outline_normals.push_back(n00);
-			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
 			geo.outline_verts.push_back(v10); geo.outline_normals.push_back(n10);
+			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
 		}
 	}
 }

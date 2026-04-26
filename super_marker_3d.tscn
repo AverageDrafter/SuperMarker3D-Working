@@ -2,13 +2,8 @@
 
 [node name="SuperMarker3D" type="SuperMarker3D" unique_id=29451092]
 subtype = 11
-outline_color = Color(0.42745098, 0.12156863, 0.8, 1)
-outline_thickness = 1.0
-axis_length_x_pos = 3.278
-editor_only = true
+outline_color = Color(0, 1, 0.1254902, 1)
+outline_thickness = 0.567
+axis_length_x_pos = 2.484
+shows_in_play = false
 always_on_top = true
-visible = false
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=2038052072]
-shadow_enabled = true
-sky_mode = 1

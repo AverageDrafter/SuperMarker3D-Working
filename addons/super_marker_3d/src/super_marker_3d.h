@@ -231,8 +231,17 @@ public:
 	void set_end_cap_linked(bool p);        bool get_end_cap_linked() const;
 	void set_length_fraction(float p);      float get_length_fraction() const;
 
-	void set_editor_only(bool p);    bool get_editor_only() const;
-	void set_always_on_top(bool p);  bool get_always_on_top() const;
+	// Renderer triad — three orthogonal flags that decide where the
+	// marker fits on the editor / overlay / game-object spectrum.
+	void set_shows_in_play(bool p);   bool get_shows_in_play() const;
+	void set_always_on_top(bool p);   bool get_always_on_top() const;
+	/// When true, the marker's materials switch to per-pixel lit
+	/// shading and the RS instance is configured to cast and receive
+	/// shadows like a normal MeshInstance3D — so a thick burr stands
+	/// in for a bush, a tall mesh box stands in for a building, etc.
+	/// Off (default): unshaded, no shadows — best for editor cues,
+	/// HUD overlays, and pure design markers.
+	void set_in_game_object(bool p);  bool get_in_game_object() const;
 
 	void set_template_mode(bool p);
 	bool is_template_mode() const { return _template_mode; }
@@ -317,22 +326,15 @@ private:
 	bool _end_cap_linked   = true;
 	float _length_fraction = 1.0f;
 
-	// Marker is visible at runtime by default. The pre-1.0 default was
-	// `true` (editor-preview-only), which made sense when SuperMarker3D
-	// was a debug-gizmo embedded in MultiNode but trips up anyone using
-	// it as game-visible iconography or for shipping debug overlays.
-	// Flip to `true` per-marker (or in scene metadata) when you want
-	// the old preview-only behavior.
-	bool _editor_only  = false;
-	// Depth-test is enabled by default. Pre-1.0 default was `true`
-	// (FLAG_DISABLE_DEPTH_TEST) so debug markers always poked through
-	// scene geometry — useful as overlays, but it makes complex shapes
-	// (especially FIGURE, where head + torso + limbs overlap) render
-	// without internal occlusion: the back of the head shows through
-	// the front, overlapping limbs draw in submission order. Flip back
-	// to `true` per-marker for the old "always visible" behavior.
-	bool _always_on_top = false;
-	bool _template_mode = false;
+	// Renderer state. Defaults: visible at runtime, depth-tested,
+	// unshaded (debug-marker behavior). `_in_game_object=true` flips
+	// it into "treat me like a real mesh" mode — lit shading, casts &
+	// receives shadows. `_shows_in_play` is the public name for the
+	// runtime-visibility flag (the old `editor_only`, inverted).
+	bool _shows_in_play  = true;
+	bool _always_on_top  = false;
+	bool _in_game_object = false;
+	bool _template_mode  = false;
 
 	Ref<ArrayMesh>         _mesh;
 	Ref<StandardMaterial3D> _outline_material;
