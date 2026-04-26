@@ -114,50 +114,28 @@ void SuperMarker3D::GeoBuf::add_flat_edge_quad(const Vector3 &a, const Vector3 &
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_marker_size", "size"), &SuperMarker3D::set_marker_size);
-	ClassDB::bind_method(D_METHOD("get_marker_size"), &SuperMarker3D::get_marker_size);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "marker_size", PROPERTY_HINT_RANGE, "0.01,50.0,0.01,suffix:m"),
-			"set_marker_size", "get_marker_size");
+	// ---- Universal top-of-inspector pinned controls ----
+	// Every marker, every type, every subtype reads the same first 4
+	// rows: Type, Subtype, then the universal Outline Color / Outline
+	// Thickness pair (color + line/edge thickness, applies to every
+	// shape that draws an outline).
+	ClassDB::bind_method(D_METHOD("set_type", "type"), &SuperMarker3D::set_type);
+	ClassDB::bind_method(D_METHOD("get_type"), &SuperMarker3D::get_type);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "type", PROPERTY_HINT_ENUM,
+			"Axis,Mesh,Shape,Curve,Arrow,Figure"),
+			"set_type", "get_type");
 
-	ClassDB::bind_method(D_METHOD("set_detail_mode", "mode"), &SuperMarker3D::set_detail_mode);
-	ClassDB::bind_method(D_METHOD("get_detail_mode"), &SuperMarker3D::get_detail_mode);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "detail_mode", PROPERTY_HINT_ENUM,
-					 "Wireframe,Silhouette"),
-			"set_detail_mode", "get_detail_mode");
+	ClassDB::bind_method(D_METHOD("set_subtype", "subtype"), &SuperMarker3D::set_subtype);
+	ClassDB::bind_method(D_METHOD("get_subtype"), &SuperMarker3D::get_subtype);
+	// Default hint covers Axis subtypes; `_validate_property` rewrites
+	// the hint string when `type` changes so the dropdown narrows
+	// per-type without the user touching anything else.
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "subtype", PROPERTY_HINT_ENUM,
+			"Cross:0,Axis:3,Burr:11,XYZ:8"),
+			"set_subtype", "get_subtype");
 
-	ADD_GROUP("Outline", "outline_");
-	ClassDB::bind_method(D_METHOD("set_outline_color", "color"), &SuperMarker3D::set_outline_color);
-	ClassDB::bind_method(D_METHOD("get_outline_color"), &SuperMarker3D::get_outline_color);
-	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "outline_color"), "set_outline_color", "get_outline_color");
-
-	ClassDB::bind_method(D_METHOD("set_outline_thickness", "thickness"), &SuperMarker3D::set_outline_thickness);
-	ClassDB::bind_method(D_METHOD("get_outline_thickness"), &SuperMarker3D::get_outline_thickness);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outline_thickness", PROPERTY_HINT_RANGE, "0.0,1.0,0.001,suffix:m"),
-			"set_outline_thickness", "get_outline_thickness");
-
-	ADD_GROUP("Fill", "fill_");
-	ClassDB::bind_method(D_METHOD("set_fill_enabled", "enabled"), &SuperMarker3D::set_fill_enabled);
-	ClassDB::bind_method(D_METHOD("get_fill_enabled"), &SuperMarker3D::get_fill_enabled);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fill_enabled"), "set_fill_enabled", "get_fill_enabled");
-
-	ClassDB::bind_method(D_METHOD("set_fill_color", "color"), &SuperMarker3D::set_fill_color);
-	ClassDB::bind_method(D_METHOD("get_fill_color"), &SuperMarker3D::get_fill_color);
-	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "fill_color"), "set_fill_color", "get_fill_color");
-
-	ADD_GROUP("Axis Colors", "axis_color_");
-#define AXIS_COLOR_BIND(name) \
-	ClassDB::bind_method(D_METHOD("set_" #name, "color"), &SuperMarker3D::set_##name); \
-	ClassDB::bind_method(D_METHOD("get_" #name), &SuperMarker3D::get_##name); \
-	ADD_PROPERTY(PropertyInfo(Variant::COLOR, #name), "set_" #name, "get_" #name);
-	AXIS_COLOR_BIND(axis_color_x_pos)
-	AXIS_COLOR_BIND(axis_color_x_neg)
-	AXIS_COLOR_BIND(axis_color_y_pos)
-	AXIS_COLOR_BIND(axis_color_y_neg)
-	AXIS_COLOR_BIND(axis_color_z_pos)
-	AXIS_COLOR_BIND(axis_color_z_neg)
-#undef AXIS_COLOR_BIND
-
-	ADD_GROUP("Axis Arrows", "axis_arrow");
+	// Axis Arrows — sit immediately under Subtype for the Axis type.
+	// `_validate_property` hides them outside Axis and on Burr.
 	ClassDB::bind_method(D_METHOD("set_axis_arrows", "enabled"), &SuperMarker3D::set_axis_arrows);
 	ClassDB::bind_method(D_METHOD("get_axis_arrows"), &SuperMarker3D::get_axis_arrows);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "axis_arrows"), "set_axis_arrows", "get_axis_arrows");
@@ -167,23 +145,45 @@ void SuperMarker3D::_bind_methods() {
 			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
 			"set_axis_arrow_length", "get_axis_arrow_length");
 
-	ClassDB::bind_method(D_METHOD("set_type", "type"), &SuperMarker3D::set_type);
-	ClassDB::bind_method(D_METHOD("get_type"), &SuperMarker3D::get_type);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "type", PROPERTY_HINT_ENUM,
-			"Axis,Mesh,Shape,Curve,Arrow,Figure"),
-			"set_type", "get_type");
+	// Outline color + thickness apply to every shape that has an
+	// outline (which is all of them in some form). Thickness > 0 turns
+	// axis lines into thin tubes; at 0 they stay 1px.
+	ClassDB::bind_method(D_METHOD("set_outline_color", "color"), &SuperMarker3D::set_outline_color);
+	ClassDB::bind_method(D_METHOD("get_outline_color"), &SuperMarker3D::get_outline_color);
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "outline_color"), "set_outline_color", "get_outline_color");
+	ClassDB::bind_method(D_METHOD("set_outline_thickness", "thickness"), &SuperMarker3D::set_outline_thickness);
+	ClassDB::bind_method(D_METHOD("get_outline_thickness"), &SuperMarker3D::get_outline_thickness);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outline_thickness", PROPERTY_HINT_RANGE, "0.0,1.0,0.001,suffix:m"),
+			"set_outline_thickness", "get_outline_thickness");
 
-	// Re-bind `shape` as `subtype`. The numeric values stay the same
-	// (the underlying enum is unchanged); only the public name changes
-	// — and the inspector shows it as a dropdown whose list is filtered
-	// per the current `type`, populated dynamically in
-	// `_validate_property`.
-	ClassDB::bind_method(D_METHOD("set_subtype", "subtype"), &SuperMarker3D::set_subtype);
-	ClassDB::bind_method(D_METHOD("get_subtype"), &SuperMarker3D::get_subtype);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "subtype", PROPERTY_HINT_ENUM,
-			"Cross:0,Axis:3,Burr:11,XYZ:8"),
-			"set_subtype", "get_subtype");
+	// ---- Type-specific groups below; ordering shows up in the
+	// inspector regardless of which type is currently selected, but
+	// `_validate_property` hides what doesn't apply.
 
+	// Marker Size + Detail Mode — used by Mesh / Arrow / Curve shapes.
+	ClassDB::bind_method(D_METHOD("set_marker_size", "size"), &SuperMarker3D::set_marker_size);
+	ClassDB::bind_method(D_METHOD("get_marker_size"), &SuperMarker3D::get_marker_size);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "marker_size", PROPERTY_HINT_RANGE, "0.01,50.0,0.01,suffix:m"),
+			"set_marker_size", "get_marker_size");
+	ClassDB::bind_method(D_METHOD("set_detail_mode", "mode"), &SuperMarker3D::set_detail_mode);
+	ClassDB::bind_method(D_METHOD("get_detail_mode"), &SuperMarker3D::get_detail_mode);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "detail_mode", PROPERTY_HINT_ENUM,
+					 "Wireframe,Silhouette"),
+			"set_detail_mode", "get_detail_mode");
+
+	// Fill — Mesh / Arrow / Curve Flat.
+	ADD_GROUP("Fill", "fill_");
+	ClassDB::bind_method(D_METHOD("set_fill_enabled", "enabled"), &SuperMarker3D::set_fill_enabled);
+	ClassDB::bind_method(D_METHOD("get_fill_enabled"), &SuperMarker3D::get_fill_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fill_enabled"), "set_fill_enabled", "get_fill_enabled");
+	ClassDB::bind_method(D_METHOD("set_fill_color", "color"), &SuperMarker3D::set_fill_color);
+	ClassDB::bind_method(D_METHOD("get_fill_color"), &SuperMarker3D::get_fill_color);
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "fill_color"), "set_fill_color", "get_fill_color");
+
+	// Axis — link mode + 6 lengths. Sits in its own group so the
+	// inspector can collapse it. Axis Colors (XYZ-only) follows
+	// directly underneath.
+	ADD_GROUP("Axis", "axis_");
 	ClassDB::bind_method(D_METHOD("set_axis_link_mode", "mode"), &SuperMarker3D::set_axis_link_mode);
 	ClassDB::bind_method(D_METHOD("get_axis_link_mode"), &SuperMarker3D::get_axis_link_mode);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "axis_link_mode", PROPERTY_HINT_ENUM,
@@ -215,6 +215,23 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_length_z_neg", PROPERTY_HINT_RANGE, "0.0,100.0,0.001,or_greater"),
 			"set_axis_length_z_neg", "get_axis_length_z_neg");
 
+	// Axis Colors — per-direction overrides for the XYZ subtype only.
+	// Inspector hides these for Cross / Plain / Burr (see
+	// _validate_property), so the group only renders when relevant.
+	ADD_GROUP("Axis Colors", "axis_color_");
+#define AXIS_COLOR_BIND(name) \
+	ClassDB::bind_method(D_METHOD("set_" #name, "color"), &SuperMarker3D::set_##name); \
+	ClassDB::bind_method(D_METHOD("get_" #name), &SuperMarker3D::get_##name); \
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, #name), "set_" #name, "get_" #name);
+	AXIS_COLOR_BIND(axis_color_x_pos)
+	AXIS_COLOR_BIND(axis_color_x_neg)
+	AXIS_COLOR_BIND(axis_color_y_pos)
+	AXIS_COLOR_BIND(axis_color_y_neg)
+	AXIS_COLOR_BIND(axis_color_z_pos)
+	AXIS_COLOR_BIND(axis_color_z_neg)
+#undef AXIS_COLOR_BIND
+
+	ADD_GROUP("Figure", "figure_");
 	ClassDB::bind_method(D_METHOD("set_figure_height", "height"), &SuperMarker3D::set_figure_height);
 	ClassDB::bind_method(D_METHOD("get_figure_height"), &SuperMarker3D::get_figure_height);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_height", PROPERTY_HINT_RANGE, "0.1,10.0,0.01,or_greater"),
@@ -854,6 +871,24 @@ void SuperMarker3D::_build_materials() {
 // Shape generators
 // ---------------------------------------------------------------------------
 
+// Axis segment dispatcher — line at thickness 0, tube otherwise. Lines
+// stay crisp at any camera distance (1px on screen); tubes scale with
+// the world and read as proper 3D geometry. AXIS_XYZ paths still go
+// through this with `p_use_color=true`; tubes don't yet carry vertex
+// colors so XYZ falls back to the outline_color when thickness > 0
+// — a known limitation we'll lift when we extend GeoBuf with
+// per-tube colors. For now picking thickness=0 keeps XYZ's per-arm
+// colors intact.
+void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
+		const Color &p_color, bool p_use_color) const {
+	if (_outline_thickness > 0.0f) {
+		_add_tube(geo, a, b, _outline_thickness * 0.5f, 6);
+		return;
+	}
+	if (p_use_color) geo.add_line_colored(a, b, p_color);
+	else             geo.add_line(a, b);
+}
+
 // 4-spoke 2D arrowhead at the tip of an axis arm. Pointed along `dir`,
 // extends `axis_arrow_length` back from the tip; spokes splay out by
 // (axis_arrow_length / 4) on each perpendicular axis (so the arrowhead
@@ -895,7 +930,7 @@ void SuperMarker3D::_gen_axis_cross(GeoBuf &geo) const {
 	};
 	for (int i = 0; i < 4; i++) {
 		if (L[i] <= 0.0f) continue;
-		geo.add_line(Vector3(), dirs[i] * L[i]);
+		_add_axis_segment(geo, Vector3(), dirs[i] * L[i], Color(), false);
 		if (_axis_arrows) {
 			_add_axis_arrowhead(geo, dirs[i], L[i], Color(), false);
 		}
@@ -1143,7 +1178,7 @@ void SuperMarker3D::_gen_axis_plain(GeoBuf &geo) const {
 	};
 	for (int i = 0; i < 6; i++) {
 		if (L[i] <= 0.0f) continue;
-		geo.add_line(Vector3(), dirs[i] * L[i]);
+		_add_axis_segment(geo, Vector3(), dirs[i] * L[i], Color(), false);
 		if (_axis_arrows) {
 			_add_axis_arrowhead(geo, dirs[i], L[i], Color(), false);
 		}
@@ -1156,12 +1191,12 @@ void SuperMarker3D::_gen_axis_plain(GeoBuf &geo) const {
 // burrs naturally.
 void SuperMarker3D::_gen_axis_burr(GeoBuf &geo) const {
 	float L[6]; _resolved_axis_lengths(L);
-	if (L[0] > 0.0f) geo.add_line(Vector3(), Vector3( L[0], 0, 0));
-	if (L[1] > 0.0f) geo.add_line(Vector3(), Vector3(-L[1], 0, 0));
-	if (L[2] > 0.0f) geo.add_line(Vector3(), Vector3(0,  L[2], 0));
-	if (L[3] > 0.0f) geo.add_line(Vector3(), Vector3(0, -L[3], 0));
-	if (L[4] > 0.0f) geo.add_line(Vector3(), Vector3(0, 0,  L[4]));
-	if (L[5] > 0.0f) geo.add_line(Vector3(), Vector3(0, 0, -L[5]));
+	if (L[0] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3( L[0], 0, 0), Color(), false);
+	if (L[1] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(-L[1], 0, 0), Color(), false);
+	if (L[2] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0,  L[2], 0), Color(), false);
+	if (L[3] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0, -L[3], 0), Color(), false);
+	if (L[4] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0, 0,  L[4]), Color(), false);
+	if (L[5] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0, 0, -L[5]), Color(), false);
 
 	const float k = 0.70710678f; // 1/√2
 	// 12 face-diagonals as 6 line segments through origin: each diagonal's
@@ -1193,7 +1228,7 @@ void SuperMarker3D::_gen_axis_burr(GeoBuf &geo) const {
 		if (d.b < 2) dir.x = d.bx;
 		else if (d.b < 4) dir.y = d.bx;
 		else dir.z = d.bx;
-		geo.add_line(Vector3(), dir * len);
+		_add_axis_segment(geo, Vector3(), dir * len, Color(), false);
 	}
 }
 
@@ -1214,7 +1249,7 @@ void SuperMarker3D::_gen_axis_xyz(GeoBuf &geo) const {
 	};
 	for (int i = 0; i < 6; i++) {
 		if (L[i] <= 0.0f) continue;
-		geo.add_line_colored(Vector3(), dirs[i] * L[i], cols[i]);
+		_add_axis_segment(geo, Vector3(), dirs[i] * L[i], cols[i], true);
 		if (_axis_arrows) {
 			_add_axis_arrowhead(geo, dirs[i], L[i], cols[i], true);
 		}

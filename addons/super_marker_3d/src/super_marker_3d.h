@@ -407,6 +407,15 @@ private:
 	void _add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir, float p_arm_len,
 			const Color &p_color, bool p_use_color) const;
 
+	/// Draw a single axis segment a→b. Picks PRIMITIVE_LINES (1px,
+	/// crisp at every camera distance) when `_outline_thickness == 0`,
+	/// otherwise builds a thin tube of radius = thickness/2 so the user
+	/// can dial up a beefy axis indicator that scales with the world.
+	/// `p_use_color` routes through add_line_colored vs add_line for
+	/// the line path; the tube path always uses outline_color.
+	void _add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
+			const Color &p_color, bool p_use_color) const;
+
 	void _on_curve_changed();
 
 	// Silhouette helpers (2D, billboarded via material).
