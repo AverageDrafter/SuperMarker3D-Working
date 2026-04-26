@@ -871,18 +871,17 @@ void SuperMarker3D::_build_materials() {
 // Shape generators
 // ---------------------------------------------------------------------------
 
-// Axis segment dispatcher — line at thickness 0, tube otherwise. Lines
-// stay crisp at any camera distance (1px on screen); tubes scale with
-// the world and read as proper 3D geometry. AXIS_XYZ paths still go
-// through this with `p_use_color=true`; tubes don't yet carry vertex
-// colors so XYZ falls back to the outline_color when thickness > 0
-// — a known limitation we'll lift when we extend GeoBuf with
-// per-tube colors. For now picking thickness=0 keeps XYZ's per-arm
-// colors intact.
+// Axis segment dispatcher — line at thickness 0, tube otherwise.
+// Lines stay crisp at any camera distance (1px on screen); tubes
+// scale with the world and read as proper 3D geometry. Tubes carry
+// per-vertex color when `p_use_color` is set, so AXIS_XYZ keeps its
+// per-arm rainbow at any thickness.
 void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
 		const Color &p_color, bool p_use_color) const {
 	if (_outline_thickness > 0.0f) {
-		_add_tube(geo, a, b, _outline_thickness * 0.5f, 6);
+		const float r = _outline_thickness * 0.5f;
+		if (p_use_color) _add_tube_colored(geo, a, b, r, 6, p_color);
+		else             _add_tube(geo, a, b, r, 6);
 		return;
 	}
 	if (p_use_color) geo.add_line_colored(a, b, p_color);
@@ -1690,6 +1689,34 @@ void SuperMarker3D::_add_tube(GeoBuf &geo,
 		geo.outline_verts.push_back(vb1); geo.outline_normals.push_back(n1);
 		geo.outline_verts.push_back(va1); geo.outline_normals.push_back(n1);
 	}
+
+	// Hemisphere caps — drop a sphere blob at each end. The interior
+	// half is hidden inside the cylinder, the visible half closes the
+	// otherwise-open ring. Cheap and matches what `_gen_curve_line_3d`
+	// does at curve joints.
+	_add_sphere_blob(geo, a, radius, 4, segs);
+	_add_sphere_blob(geo, b, radius, 4, segs);
+}
+
+// Colored variant — same geometry, but every appended outline vertex
+// gets tagged with `c` in `outline_colors`. Pads the color array with
+// white for any pre-existing outline geometry that didn't push colors,
+// so the final array stays parallel to outline_verts.
+void SuperMarker3D::_add_tube_colored(GeoBuf &geo,
+		const Vector3 &a, const Vector3 &b, float radius, int segs, const Color &c) {
+	const int start = geo.outline_verts.size();
+	if (!geo.use_outline_colors) {
+		// First colored push — pad existing entries with white.
+		for (int i = 0; i < start; i++) geo.outline_colors.push_back(Color(1, 1, 1, 1));
+		geo.use_outline_colors = true;
+	} else {
+		while (geo.outline_colors.size() < start) {
+			geo.outline_colors.push_back(Color(1, 1, 1, 1));
+		}
+	}
+	_add_tube(geo, a, b, radius, segs);
+	const int end = geo.outline_verts.size();
+	for (int i = start; i < end; i++) geo.outline_colors.push_back(c);
 }
 
 // Small UV sphere at center — used for corner joins and end caps on tube edges.
@@ -1822,11 +1849,19 @@ void SuperMarker3D::_rebuild_mesh() {
 
 
 	// --- Surface 0: outline ---
-	// Priority: outline_verts (face-normal edge quads) > line_verts (PRIMITIVE_LINES)
+	// Priority: outline_verts (face-normal edge quads / tubes) > line_verts (PRIMITIVE_LINES)
 	if (geo.outline_verts.size() > 0) {
 		Array a; a.resize(Mesh::ARRAY_MAX);
 		a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
 		a[Mesh::ARRAY_NORMAL] = geo.outline_normals;
+		if (geo.use_outline_colors) {
+			// Pad with white for any prior outline geometry that didn't
+			// push a color — keeps ARRAY_COLOR parallel to ARRAY_VERTEX.
+			while (geo.outline_colors.size() < geo.outline_verts.size()) {
+				geo.outline_colors.push_back(Color(1, 1, 1, 1));
+			}
+			a[Mesh::ARRAY_COLOR] = geo.outline_colors;
+		}
 		_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 	} else if (geo.line_verts.size() > 0) {
 		Array a; a.resize(Mesh::ARRAY_MAX);

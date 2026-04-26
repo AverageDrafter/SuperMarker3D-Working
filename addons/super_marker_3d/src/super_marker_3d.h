@@ -348,9 +348,16 @@ private:
 		PackedColorArray   line_colors;
 		bool use_line_colors = false;
 
-		// Face-normal edge quads (wireframe mode on 3D closed shapes).
+		// Face-normal edge quads (wireframe mode on 3D closed shapes)
+		// + tube triangles when axis lines render with thickness > 0.
+		// `outline_colors` is populated only when a generator pushes
+		// per-vertex tints (e.g. AXIS_XYZ thick tubes); the build path
+		// pads any missing entries with white at mesh-assembly time so
+		// the array stays parallel to outline_verts.
 		PackedVector3Array outline_verts;
 		PackedVector3Array outline_normals;
+		PackedColorArray   outline_colors;
+		bool use_outline_colors = false;
 
 		// Fill triangles.
 		PackedVector3Array tri_verts;
@@ -425,6 +432,13 @@ private:
 
 	// 3D tube / sphere-blob / silhouette helpers
 	static void _add_tube(GeoBuf &geo, const Vector3 &a, const Vector3 &b, float radius, int segs);
+	/// Same as `_add_tube` but tags every appended vertex with `c` in
+	/// `outline_colors`. Backfills with white for any prior outline
+	/// geometry that didn't push colors so the array stays parallel.
+	/// Used by AXIS_XYZ when `outline_thickness > 0` so per-arm colors
+	/// survive the line→tube switch.
+	static void _add_tube_colored(GeoBuf &geo, const Vector3 &a, const Vector3 &b,
+			float radius, int segs, const Color &c);
 	static void _add_sphere_blob(GeoBuf &geo, const Vector3 &center, float radius, int lat, int lon);
 	static void _add_disc_blob(GeoBuf &geo, const Vector3 &center, float radius, int segs);
 	static void _add_sil_edge_quad(GeoBuf &geo, const Vector3 &a, const Vector3 &b, float w);
