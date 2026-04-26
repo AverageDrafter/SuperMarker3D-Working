@@ -23,27 +23,27 @@ class SuperMarker3D : public Node3D {
 	GDCLASS(SuperMarker3D, Node3D)
 
 public:
-	/// Top-level category. The inspector's `category` dropdown uses these
-	/// directly; selecting a category narrows the `shape` dropdown to
-	/// the subtypes that belong to it.
-	enum ShapeCategory {
-		CATEGORY_AXIS = 0,
-		CATEGORY_MESH = 1,
-		CATEGORY_SHAPE = 2,   // reserved for future flat / billboarded iconography
-		CATEGORY_CURVE = 3,
-		CATEGORY_ARROW = 4,
-		CATEGORY_FIGURE = 5,
+	/// Top-level type. The inspector's `type` dropdown uses these
+	/// directly; picking a type narrows the `subtype` dropdown to the
+	/// variants that belong to it. (Note: "Shape" is one of the *types*
+	/// — it holds 2D flat-polygon variants, currently empty as a slot
+	/// for future content.)
+	enum MarkerType {
+		TYPE_AXIS = 0,
+		TYPE_MESH = 1,
+		TYPE_SHAPE = 2,
+		TYPE_CURVE = 3,
+		TYPE_ARROW = 4,
+		TYPE_FIGURE = 5,
 	};
 
-	/// Shape variants. Each value belongs to exactly one category. Numeric
+	/// Subtype variants. Each value belongs to exactly one type. Numeric
 	/// values are FROZEN for scene-file compatibility — pre-1.0 scenes
-	/// stored values 0..7 directly, so those slots keep their meaning.
-	/// Cross moved into the Axis category in 1.0-beta but the value (0)
-	/// is unchanged: AXIS_CROSS *is* the old SHAPE_CROSS.
+	/// stored these directly, so existing slots keep their meaning.
 	///
 	/// **API stability**: from 1.0 forward, no renames, no reordering,
 	/// no removals without a deprecation cycle.
-	enum MarkerShape {
+	enum Subtype {
 		// Axis category — line clusters through the origin. All four
 		// share the per-direction length values
 		// (`axis_length_{x,y,z}_{pos,neg}`); each variant renders only
@@ -141,13 +141,13 @@ public:
 	SuperMarker3D();
 	~SuperMarker3D();
 
-	void set_shape(int p_shape);    int get_shape() const;
-	/// Top-level category. Setter resets `shape` to the first variant
-	/// in the new category if the current value isn't valid there;
-	/// getter derives from the current `shape`. Stored as a separate
-	/// field so the inspector dropdown remembers which category the
-	/// user selected even between identical-shape transitions.
-	void set_category(int p_cat); int get_category() const;
+	void set_subtype(int p);  int get_subtype() const;
+	/// Top-level type. Setter snaps `subtype` to the first variant in
+	/// the new type if the current subtype doesn't belong there;
+	/// getter derives from the current `subtype`. Stored as a separate
+	/// field so the inspector dropdown stays consistent between equal-
+	/// value transitions.
+	void set_type(int p);     int get_type() const;
 	void set_marker_size(float p);  float get_marker_size() const;
 	void set_detail_mode(int p);    int get_detail_mode() const;
 
@@ -157,9 +157,23 @@ public:
 	void set_fill_enabled(bool p);  bool get_fill_enabled() const;
 	void set_fill_color(const Color &p); Color get_fill_color() const;
 
-	void set_axis_x_color(const Color &p); Color get_axis_x_color() const;
-	void set_axis_y_color(const Color &p); Color get_axis_y_color() const;
-	void set_axis_z_color(const Color &p); Color get_axis_z_color() const;
+	// Per-direction colors for AXIS_XYZ. Six explicit fields — bright
+	// on positive directions, darker on negatives by default. The user
+	// can re-color any of the six independently.
+	void set_axis_color_x_pos(const Color &p); Color get_axis_color_x_pos() const;
+	void set_axis_color_x_neg(const Color &p); Color get_axis_color_x_neg() const;
+	void set_axis_color_y_pos(const Color &p); Color get_axis_color_y_pos() const;
+	void set_axis_color_y_neg(const Color &p); Color get_axis_color_y_neg() const;
+	void set_axis_color_z_pos(const Color &p); Color get_axis_color_z_pos() const;
+	void set_axis_color_z_neg(const Color &p); Color get_axis_color_z_neg() const;
+
+	// Universal arrow flag for the Axis category. ON: every axis arm in
+	// Cross / Plain / XYZ gets an arrowhead at its tip — single sizer
+	// across all arms, diameter = length / 2. Burr ignores the flag
+	// (too much visual noise with the diagonals). An arm with length
+	// 0 never gets an arrow regardless of the flag.
+	void set_axis_arrows(bool p);          bool get_axis_arrows() const;
+	void set_axis_arrow_length(float p);   float get_axis_arrow_length() const;
 
 	/// Linkage between the per-direction axis-length fields. See
 	/// AxisLinkMode. Shared across every Axis subtype so switching
@@ -231,9 +245,18 @@ private:
 	bool  _fill_enabled = false;
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);
 
-	Color _axis_x_color = Color(1.0f, 0.3f, 0.3f, 1.0f);
-	Color _axis_y_color = Color(0.3f, 1.0f, 0.3f, 1.0f);
-	Color _axis_z_color = Color(0.3f, 0.3f, 1.0f, 1.0f);
+	// Six direction colors for AXIS_XYZ. Defaults: bright RGB on
+	// positives, darker on negatives. Stored explicitly (no
+	// auto-darken at render time) so the user has full control.
+	Color _axis_color_x_pos = Color(1.0f, 0.3f, 0.3f, 1.0f);
+	Color _axis_color_x_neg = Color(0.5f, 0.15f, 0.15f, 1.0f);
+	Color _axis_color_y_pos = Color(0.3f, 1.0f, 0.3f, 1.0f);
+	Color _axis_color_y_neg = Color(0.15f, 0.5f, 0.15f, 1.0f);
+	Color _axis_color_z_pos = Color(0.3f, 0.3f, 1.0f, 1.0f);
+	Color _axis_color_z_neg = Color(0.15f, 0.15f, 0.5f, 1.0f);
+
+	bool _axis_arrows = false;
+	float _axis_arrow_length = 0.15f;
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -248,12 +271,12 @@ private:
 	float _axis_length_y_neg = 0.5f;
 	float _axis_length_z_pos = 0.5f;
 	float _axis_length_z_neg = 0.5f;
-	// Stored category — persisted alongside `_shape` so a fresh
-	// inspector load shows the right category dropdown without having
-	// to derive it from the shape value (which would lose the user's
+	// Stored type — persisted alongside `_subtype` so a fresh
+	// inspector load shows the right Type dropdown without having to
+	// derive it from the subtype value (which would lose the user's
 	// "I picked Shape but it's empty so it stays on Cross visually"
 	// kind of edge cases).
-	int _category = CATEGORY_AXIS;
+	int _type = TYPE_AXIS;
 
 	// FIGURE shape. Total standing height in meters; body / limb /
 	// head sizes derive proportionally inside _gen_figure.
@@ -372,12 +395,17 @@ private:
 	/// Resolve the 6 axis lengths through the active link mode. Output
 	/// order: X+, X-, Y+, Y-, Z+, Z-.
 	void _resolved_axis_lengths(float p_out[6]) const;
-	/// Map a shape value to its category. Used by `get_category` and the
+	/// Map a subtype value to its type. Used by `get_type` and the
 	/// inspector property hint logic.
-	static int _shape_to_category(int p_shape);
-	/// First subtype of a category — used when `set_category` needs to
-	/// pick a sensible default `shape` value.
-	static int _category_first_shape(int p_cat);
+	static int _subtype_to_type(int p_subtype);
+	/// First subtype of a type — used when `set_type` needs to pick a
+	/// sensible default subtype value.
+	static int _type_first_subtype(int p_type);
+	/// Append a 4-spoke 2D arrowhead in `color` along axis direction
+	/// `dir`, sized to `axis_arrow_length`. Used by Cross / Plain / XYZ
+	/// when `_axis_arrows` is on.
+	void _add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir, float p_arm_len,
+			const Color &p_color, bool p_use_color) const;
 
 	void _on_curve_changed();
 
@@ -400,8 +428,8 @@ private:
 
 } // namespace godot
 
-VARIANT_ENUM_CAST(SuperMarker3D::ShapeCategory);
-VARIANT_ENUM_CAST(SuperMarker3D::MarkerShape);
+VARIANT_ENUM_CAST(SuperMarker3D::MarkerType);
+VARIANT_ENUM_CAST(SuperMarker3D::Subtype);
 VARIANT_ENUM_CAST(SuperMarker3D::AxisLinkMode);
 VARIANT_ENUM_CAST(SuperMarker3D::DetailMode);
 VARIANT_ENUM_CAST(SuperMarker3D::ArrowheadStyle);

@@ -67,7 +67,7 @@ func _build_entries() -> Array:
 			"label": "AXIS_CROSS",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.AXIS_CROSS
+				m.subtype = SuperMarker3D.AXIS_CROSS
 				m.axis_link_mode = SuperMarker3D.LINK_ALL
 				m.axis_length_x_pos = 0.6
 				return m,
@@ -78,7 +78,7 @@ func _build_entries() -> Array:
 			"label": "MESH_DIAMOND",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.MESH_DIAMOND
+				m.subtype = SuperMarker3D.MESH_DIAMOND
 				m.marker_size = 0.6
 				m.fill_enabled = true
 				m.fill_color = Color(0.0, 1.0, 0.8, 0.25)
@@ -90,7 +90,7 @@ func _build_entries() -> Array:
 			"label": "MESH_SPHERE",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.MESH_SPHERE
+				m.subtype = SuperMarker3D.MESH_SPHERE
 				m.marker_size = 0.5
 				m.fill_enabled = true
 				m.fill_color = Color(1.0, 0.4, 0.6, 0.2)
@@ -102,7 +102,7 @@ func _build_entries() -> Array:
 			"label": "MESH_BOX",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.MESH_BOX
+				m.subtype = SuperMarker3D.MESH_BOX
 				m.marker_size = 0.5
 				m.fill_enabled = true
 				m.fill_color = Color(0.4, 0.6, 1.0, 0.2)
@@ -114,7 +114,7 @@ func _build_entries() -> Array:
 			"label": "AXIS_PLAIN",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.AXIS_PLAIN
+				m.subtype = SuperMarker3D.AXIS_PLAIN
 				m.axis_link_mode = SuperMarker3D.LINK_ALL
 				m.axis_length_x_pos = 0.7
 				m.outline_color = Color(0.9, 0.9, 0.4, 1.0)
@@ -126,7 +126,7 @@ func _build_entries() -> Array:
 			"label": "AXIS_BURR",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.AXIS_BURR
+				m.subtype = SuperMarker3D.AXIS_BURR
 				m.axis_link_mode = SuperMarker3D.LINK_ALL
 				m.axis_length_x_pos = 0.7
 				m.outline_color = Color(0.7, 0.95, 0.5, 1.0)
@@ -138,7 +138,7 @@ func _build_entries() -> Array:
 			"label": "AXIS_XYZ (mirrored)",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.AXIS_XYZ
+				m.subtype = SuperMarker3D.AXIS_XYZ
 				m.axis_link_mode = SuperMarker3D.LINK_MIRRORED
 				m.axis_length_x_pos = 0.7
 				m.axis_length_y_pos = 0.7
@@ -158,7 +158,7 @@ func _build_entries() -> Array:
 			"label": "ARROW_EXTRUDED",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.ARROW_EXTRUDED
+				m.subtype = SuperMarker3D.ARROW_EXTRUDED
 				m.marker_size = 0.9
 				m.head_length = 0.32
 				m.head_width = 0.18
@@ -172,7 +172,7 @@ func _build_entries() -> Array:
 			"label": "ARROW_FLAT",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.ARROW_FLAT
+				m.subtype = SuperMarker3D.ARROW_FLAT
 				m.marker_size = 0.9
 				m.head_length = 0.32
 				m.head_width = 0.18
@@ -186,7 +186,7 @@ func _build_entries() -> Array:
 			"label": "CURVE_FLAT",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.CURVE_FLAT
+				m.subtype = SuperMarker3D.CURVE_FLAT
 				m.curve = _make_demo_curve()
 				m.curve_width = 0.18
 				m.curve_start_cap = SuperMarker3D.CURVE_CAP_DOT
@@ -199,7 +199,7 @@ func _build_entries() -> Array:
 			"label": "CURVE_LINE_3D",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.CURVE_LINE_3D
+				m.subtype = SuperMarker3D.CURVE_LINE_3D
 				m.curve = _make_demo_curve()
 				m.curve_width = 0.12
 				m.outline_color = Color(0.5, 0.85, 1.0, 1.0)
@@ -211,7 +211,7 @@ func _build_entries() -> Array:
 			"label": "FIGURE",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.shape = SuperMarker3D.FIGURE
+				m.subtype = SuperMarker3D.FIGURE
 				m.figure_height = 1.6
 				m.outline_color = Color(0.95, 0.85, 0.6, 1.0)
 				return m,

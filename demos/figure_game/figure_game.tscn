@@ -38,7 +38,7 @@ fov = 60.0
 [node name="Arena" type="Node3D" parent="." unique_id=1800183164]
 
 [node name="Ground" type="SuperMarker3D" parent="Arena" unique_id=800390891]
-shape = 4
+subtype = 4
 marker_size = 10.0
 outline_color = Color(0.25, 0.55, 0.75, 0.8)
 fill_enabled = true
@@ -46,7 +46,7 @@ fill_color = Color(0.07, 0.1, 0.14, 1)
 transform = Transform3D(1, 0, 0, 0, 0.04, 0, 0, 0, 1, 0, -0.4, 0)
 
 [node name="WallN" type="SuperMarker3D" parent="Arena" unique_id=1750537093]
-shape = 4
+subtype = 4
 marker_size = 10.0
 outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
@@ -54,7 +54,7 @@ fill_color = Color(0.1, 0.2, 0.3, 0.4)
 transform = Transform3D(1, 0, 0, 0, 0.06, 0, 0, 0, 0.02, 0, 0.6, -10)
 
 [node name="WallS" type="SuperMarker3D" parent="Arena" unique_id=1042276579]
-shape = 4
+subtype = 4
 marker_size = 10.0
 outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
@@ -62,7 +62,7 @@ fill_color = Color(0.1, 0.2, 0.3, 0.4)
 transform = Transform3D(1, 0, 0, 0, 0.06, 0, 0, 0, 0.02, 0, 0.6, 10)
 
 [node name="WallW" type="SuperMarker3D" parent="Arena" unique_id=146720331]
-shape = 4
+subtype = 4
 marker_size = 10.0
 outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
@@ -70,7 +70,7 @@ fill_color = Color(0.1, 0.2, 0.3, 0.4)
 transform = Transform3D(0.02, 0, 0, 0, 0.06, 0, 0, 0, 1, -10, 0.6, 0)
 
 [node name="WallE" type="SuperMarker3D" parent="Arena" unique_id=1551337255]
-shape = 4
+subtype = 4
 marker_size = 10.0
 outline_color = Color(0.5, 0.8, 1, 1)
 fill_enabled = true
@@ -78,14 +78,14 @@ fill_color = Color(0.1, 0.2, 0.3, 0.4)
 transform = Transform3D(0.02, 0, 0, 0, 0.06, 0, 0, 0, 1, 10, 0.6, 0)
 
 [node name="Player" type="SuperMarker3D" parent="." unique_id=1544003372]
-shape = 10
+subtype = 10
 outline_color = Color(0.95, 0.85, 0.4, 1)
 figure_height = 1.4
 
 [node name="Pickups" type="Node3D" parent="." unique_id=1570846471]
 
 [node name="Pickup0" type="SuperMarker3D" parent="Pickups" unique_id=633676993]
-shape = 6
+subtype = 6
 marker_size = 0.45
 outline_color = Color(0.4, 1, 0.6, 1)
 outline_thickness = 0.06
