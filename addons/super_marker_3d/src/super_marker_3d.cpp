@@ -853,19 +853,126 @@ void SuperMarker3D::_ensure_instance() {
 void SuperMarker3D::_cleanup_instance() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (rs && _instance.is_valid()) { rs->free_rid(_instance); _instance = RID(); }
+	_cleanup_arm_instances();
+}
+
+// Build one ArrayMesh + RS instance per axis arm. Each arm is its own
+// renderable so the renderer z-sorts them independently — no more
+// clustered overlap at the origin where six tubes would fight in a
+// single mesh. Arms share the marker's outline_material so they all
+// inherit the same shading mode / depth-test / billboard state.
+//
+// `dirs` is the unit direction per arm; `lens` is the matching length
+// (already through the link mode); `cols` is per-arm color when
+// `p_use_color` (AXIS_XYZ); `p_with_arrows` adds the cone arrowhead
+// at each tip.
+void SuperMarker3D::_build_axis_per_arm(const Vector<Vector3> &dirs,
+		const Vector<float> &lens, const Vector<Color> &cols,
+		bool p_use_color, bool p_with_arrows) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const int n = dirs.size();
+
+	// Resize the arm pool to match current arm count, freeing extras.
+	while (_arm_instances.size() > n) {
+		int last = _arm_instances.size() - 1;
+		if (_arm_instances[last].is_valid()) rs->free_rid(_arm_instances[last]);
+		_arm_instances.remove_at(last);
+		_arm_meshes.remove_at(last);
+	}
+	while (_arm_instances.size() < n) {
+		Ref<ArrayMesh> m;
+		m.instantiate();
+		_arm_meshes.push_back(m);
+		_arm_instances.push_back(rs->instance_create());
+	}
+
+	Ref<World3D> w = get_world_3d();
+	const RID scenario = w.is_valid() ? w->get_scenario() : RID();
+	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
+
+	for (int i = 0; i < n; i++) {
+		Ref<ArrayMesh> &mesh = _arm_meshes.write[i];
+		mesh->clear_surfaces();
+		const float L = lens[i];
+		if (L <= 0.0f) {
+			// Empty arm — keep the instance but hide it.
+			rs->instance_set_base(_arm_instances[i], mesh->get_rid());
+			rs->instance_set_visible(_arm_instances[i], false);
+			continue;
+		}
+
+		GeoBuf geo;
+		const Color c = p_use_color ? cols[i] : Color();
+		// Body segment: line at thickness 0, tube otherwise. Tubes
+		// auto-cap with hemispheres at both ends.
+		_add_axis_segment(geo, Vector3(), dirs[i] * L, c, p_use_color);
+		if (p_with_arrows) {
+			_add_axis_arrowhead(geo, dirs[i], L, c, p_use_color);
+		}
+
+		// Outline surface — only thing axis arms use.
+		if (geo.outline_verts.size() > 0) {
+			Array a; a.resize(Mesh::ARRAY_MAX);
+			a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
+			a[Mesh::ARRAY_NORMAL] = geo.outline_normals;
+			if (geo.use_outline_colors) {
+				while (geo.outline_colors.size() < geo.outline_verts.size()) {
+					geo.outline_colors.push_back(Color(1, 1, 1, 1));
+				}
+				a[Mesh::ARRAY_COLOR] = geo.outline_colors;
+			}
+			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			if (_outline_material.is_valid()) mesh->surface_set_material(0, _outline_material);
+		} else if (geo.line_verts.size() > 0) {
+			Array a; a.resize(Mesh::ARRAY_MAX);
+			a[Mesh::ARRAY_VERTEX] = geo.line_verts;
+			if (geo.use_line_colors) a[Mesh::ARRAY_COLOR] = geo.line_colors;
+			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, a);
+			if (_outline_material.is_valid()) mesh->surface_set_material(0, _outline_material);
+		}
+
+		rs->instance_set_base(_arm_instances[i], mesh->get_rid());
+		if (scenario.is_valid()) rs->instance_set_scenario(_arm_instances[i], scenario);
+		rs->instance_set_transform(_arm_instances[i], xf);
+		rs->instance_set_visible(_arm_instances[i],
+				is_visible_in_tree() && !_template_mode
+				&& (_shows_in_play || Engine::get_singleton()->is_editor_hint()));
+		rs->instance_geometry_set_cast_shadows_setting(_arm_instances[i],
+				_in_game_object
+						? RenderingServer::SHADOW_CASTING_SETTING_ON
+						: RenderingServer::SHADOW_CASTING_SETTING_OFF);
+	}
+}
+
+void SuperMarker3D::_cleanup_arm_instances() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (rs) {
+		for (int i = 0; i < _arm_instances.size(); i++) {
+			if (_arm_instances[i].is_valid()) rs->free_rid(_arm_instances[i]);
+		}
+	}
+	_arm_instances.clear();
+	_arm_meshes.clear();
 }
 
 void SuperMarker3D::_update_visibility() {
-	if (!_instance.is_valid()) return;
 	bool vis = is_visible_in_tree() && !_template_mode;
 	// `_shows_in_play=false` hides at runtime; in-editor we always render.
 	if (!_shows_in_play && !Engine::get_singleton()->is_editor_hint()) vis = false;
-	RenderingServer::get_singleton()->instance_set_visible(_instance, vis);
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (_instance.is_valid()) rs->instance_set_visible(_instance, vis);
+	for (int i = 0; i < _arm_instances.size(); i++) {
+		if (_arm_instances[i].is_valid()) rs->instance_set_visible(_arm_instances[i], vis);
+	}
 }
 
 void SuperMarker3D::_update_transform() {
-	if (!_instance.is_valid()) return;
-	RenderingServer::get_singleton()->instance_set_transform(_instance, get_global_transform());
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const Transform3D xf = get_global_transform();
+	if (_instance.is_valid()) rs->instance_set_transform(_instance, xf);
+	for (int i = 0; i < _arm_instances.size(); i++) {
+		if (_arm_instances[i].is_valid()) rs->instance_set_transform(_arm_instances[i], xf);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -956,46 +1063,68 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 	else             geo.add_line(a, b);
 }
 
-// 4-spoke arrowhead at the tip of an axis arm. `axis_arrow_length`
-// controls how far back from the tip the spokes start; `axis_arrow_width`
-// is the splay radius perpendicular to the arm (independent of length so
-// users can author chunky stubs or skinny darts). When
-// `outline_thickness > 0` the spokes render as tubes — same dispatcher
-// as the arms themselves (`_add_axis_segment`) so the arrowhead matches
-// the arm's thickness and color treatment automatically.
+// Round 3D cone arrowhead at the tip of an axis arm. Apex sits at
+// `tip`, base ring sits `_axis_arrow_length` back from the tip with
+// radius `_axis_arrow_width` — so length and width are fully
+// independent (chunky stub: short length + wide width; skinny dart:
+// long length + small width). 12-segment side surface, no base disk
+// (the base would press flush against the arm tube and stay hidden).
+// p_use_color piggybacks `_add_tube_colored`'s color-array bookkeeping
+// so AXIS_XYZ keeps its per-arm color on the cone.
 void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		float p_arm_len, const Color &p_color, bool p_use_color) const {
 	if (_axis_arrow_length <= 0.0f || _axis_arrow_width <= 0.0f || p_arm_len <= 0.0f) return;
 	const float head = MIN(_axis_arrow_length, p_arm_len * 0.9f);
 	const float radius = _axis_arrow_width;
-	const Vector3 tip = dir * p_arm_len;
-	const Vector3 base = dir * (p_arm_len - head);
-	// Build two perpendiculars to `dir` for the arrowhead spokes.
-	Vector3 p1 = (Math::abs(dir.x) < 0.9f) ? Vector3(1, 0, 0).cross(dir) : Vector3(0, 1, 0).cross(dir);
-	if (p1.length_squared() < 1e-6f) p1 = Vector3(1, 0, 0);
-	p1 = p1.normalized() * radius;
-	Vector3 p2 = dir.cross(p1).normalized() * radius;
-	_add_axis_segment(geo, base + p1, tip, p_color, p_use_color);
-	_add_axis_segment(geo, base - p1, tip, p_color, p_use_color);
-	_add_axis_segment(geo, base + p2, tip, p_color, p_use_color);
-	_add_axis_segment(geo, base - p2, tip, p_color, p_use_color);
-}
+	const int segs = 12;
+	const Vector3 d = dir.normalized();
+	const Vector3 tip = d * p_arm_len;
+	const Vector3 base_center = d * (p_arm_len - head);
+	Vector3 up    = Math::abs(d.dot(Vector3(0, 1, 0))) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+	Vector3 right = d.cross(up).normalized();
+	Vector3 up_p  = right.cross(d).normalized();
 
-// AXIS_CROSS — 4 arms on the X/Y plane only (Z disabled). Uses the
-// shared per-direction length values; Z+ / Z- are simply ignored.
-void SuperMarker3D::_gen_axis_cross(GeoBuf &geo) const {
-	float L[6]; _resolved_axis_lengths(L);
-	const Vector3 dirs[4] = {
-		Vector3(1, 0, 0), Vector3(-1, 0, 0),
-		Vector3(0, 1, 0), Vector3(0, -1, 0),
-	};
-	for (int i = 0; i < 4; i++) {
-		if (L[i] <= 0.0f) continue;
-		_add_axis_segment(geo, Vector3(), dirs[i] * L[i], Color(), false);
-		if (_axis_arrows) {
-			_add_axis_arrowhead(geo, dirs[i], L[i], Color(), false);
+	const int start = geo.outline_verts.size();
+	if (p_use_color) {
+		// Pad outline_colors so it stays parallel after we push side
+		// triangles. `_add_tube_colored` does the same dance.
+		if (!geo.use_outline_colors) {
+			for (int i = 0; i < start; i++) geo.outline_colors.push_back(Color(1, 1, 1, 1));
+			geo.use_outline_colors = true;
+		} else {
+			while (geo.outline_colors.size() < start) {
+				geo.outline_colors.push_back(Color(1, 1, 1, 1));
+			}
 		}
 	}
+	for (int i = 0; i < segs; i++) {
+		float t0 = SM_TAU * (float)i / segs;
+		float t1 = SM_TAU * (float)(i + 1) / segs;
+		Vector3 r0 = std::cos(t0) * right + std::sin(t0) * up_p;
+		Vector3 r1 = std::cos(t1) * right + std::sin(t1) * up_p;
+		Vector3 v0 = base_center + r0 * radius;
+		Vector3 v1 = base_center + r1 * radius;
+		// Per-face normal — perpendicular to the cone's slant. Same
+		// for all three vertices of one face (flat shading); fine for
+		// unshaded markers, looks good even when `in_game_object` lit
+		// because the cone is a small accent.
+		Vector3 n = ((v1 - v0).cross(tip - v0)).normalized();
+		if (n.dot(d) < 0.0f) n = -n; // ensure outward
+		geo.outline_verts.push_back(v0);  geo.outline_normals.push_back(n);
+		geo.outline_verts.push_back(v1);  geo.outline_normals.push_back(n);
+		geo.outline_verts.push_back(tip); geo.outline_normals.push_back(n);
+	}
+	if (p_use_color) {
+		const int end = geo.outline_verts.size();
+		for (int i = start; i < end; i++) geo.outline_colors.push_back(p_color);
+	}
+}
+
+// AXIS_CROSS — 4 arms on the X/Y plane only (Z disabled). Per-arm
+// rendering happens in `_rebuild_mesh` via `_build_axis_per_arm`; the
+// GeoBuf-pushing version is kept for the dispatch fallback path.
+void SuperMarker3D::_gen_axis_cross(GeoBuf &/*geo*/) const {
+	// Per-arm path handles geometry; no-op in the GeoBuf flow.
 }
 
 // ---------------------------------------------------------------------------
@@ -1230,91 +1359,20 @@ void SuperMarker3D::_gen_silhouette_cube(GeoBuf &geo) const {
 // AXIS_PLAIN — 6 cardinal axes (±X ±Y ±Z) in outline_color, lengths
 // from the shared per-direction values. Optional arrowheads applied
 // uniformly when `axis_arrows` is set.
-void SuperMarker3D::_gen_axis_plain(GeoBuf &geo) const {
-	float L[6]; _resolved_axis_lengths(L);
-	const Vector3 dirs[6] = {
-		Vector3( 1, 0, 0), Vector3(-1, 0, 0),
-		Vector3( 0, 1, 0), Vector3( 0,-1, 0),
-		Vector3( 0, 0, 1), Vector3( 0, 0,-1),
-	};
-	for (int i = 0; i < 6; i++) {
-		if (L[i] <= 0.0f) continue;
-		_add_axis_segment(geo, Vector3(), dirs[i] * L[i], Color(), false);
-		if (_axis_arrows) {
-			_add_axis_arrowhead(geo, dirs[i], L[i], Color(), false);
-		}
-	}
+void SuperMarker3D::_gen_axis_plain(GeoBuf &/*geo*/) const {
+	// Per-arm path.
 }
 
 // AXIS_BURR — Plain + 6 face-diagonal axes (12 lines total). Each
 // diagonal's length is the average of the two cardinal arms it
 // bisects, so Mirrored / Link-All modes still produce symmetric
 // burrs naturally.
-void SuperMarker3D::_gen_axis_burr(GeoBuf &geo) const {
-	float L[6]; _resolved_axis_lengths(L);
-	if (L[0] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3( L[0], 0, 0), Color(), false);
-	if (L[1] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(-L[1], 0, 0), Color(), false);
-	if (L[2] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0,  L[2], 0), Color(), false);
-	if (L[3] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0, -L[3], 0), Color(), false);
-	if (L[4] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0, 0,  L[4]), Color(), false);
-	if (L[5] > 0.0f) _add_axis_segment(geo, Vector3(), Vector3(0, 0, -L[5]), Color(), false);
-
-	const float k = 0.70710678f; // 1/√2
-	// 12 face-diagonals as 6 line segments through origin: each diagonal's
-	// "endpoint length" comes from the average of the two cardinals at
-	// either end so an asymmetric setup (e.g. long X+, short X-) still
-	// reads correctly.
-	struct Diag { int a, b; float ax, bx; }; // indices into L[]
-	const Diag diags[12] = {
-		// (+X+Y), (+X-Y), (-X+Y), (-X-Y) face diagonals
-		{ 0, 2,  k,  k }, { 0, 3,  k, -k },
-		{ 1, 2, -k,  k }, { 1, 3, -k, -k },
-		// (+X+Z), (+X-Z), (-X+Z), (-X-Z)
-		{ 0, 4,  k,  k }, { 0, 5,  k, -k },
-		{ 1, 4, -k,  k }, { 1, 5, -k, -k },
-		// (+Y+Z), (+Y-Z), (-Y+Z), (-Y-Z)
-		{ 2, 4,  k,  k }, { 2, 5,  k, -k },
-		{ 3, 4, -k,  k }, { 3, 5, -k, -k },
-	};
-	for (int i = 0; i < 12; i++) {
-		const Diag &d = diags[i];
-		float len = 0.5f * (L[d.a] + L[d.b]);
-		if (len <= 0.0f) continue;
-		// Compose a 3D direction from the two unit components. ax/bx are
-		// already √2/2-scaled so the magnitude is 1.
-		Vector3 dir;
-		if (d.a < 2) dir.x = d.ax;
-		else if (d.a < 4) dir.y = d.ax;
-		else dir.z = d.ax;
-		if (d.b < 2) dir.x = d.bx;
-		else if (d.b < 4) dir.y = d.bx;
-		else dir.z = d.bx;
-		_add_axis_segment(geo, Vector3(), dir * len, Color(), false);
-	}
+void SuperMarker3D::_gen_axis_burr(GeoBuf &/*geo*/) const {
+	// Per-arm path.
 }
 
-// AXIS_XYZ — six independently-colored axis arms. Colors come from
-// the 6 explicit `axis_color_*_pos/neg` fields (no auto-darken).
-// Arrowheads honor the universal axis_arrows flag.
-void SuperMarker3D::_gen_axis_xyz(GeoBuf &geo) const {
-	float L[6]; _resolved_axis_lengths(L);
-	const Vector3 dirs[6] = {
-		Vector3( 1, 0, 0), Vector3(-1, 0, 0),
-		Vector3( 0, 1, 0), Vector3( 0,-1, 0),
-		Vector3( 0, 0, 1), Vector3( 0, 0,-1),
-	};
-	const Color cols[6] = {
-		_axis_color_x_pos, _axis_color_x_neg,
-		_axis_color_y_pos, _axis_color_y_neg,
-		_axis_color_z_pos, _axis_color_z_neg,
-	};
-	for (int i = 0; i < 6; i++) {
-		if (L[i] <= 0.0f) continue;
-		_add_axis_segment(geo, Vector3(), dirs[i] * L[i], cols[i], true);
-		if (_axis_arrows) {
-			_add_axis_arrowhead(geo, dirs[i], L[i], cols[i], true);
-		}
-	}
+void SuperMarker3D::_gen_axis_xyz(GeoBuf &/*geo*/) const {
+	// Per-arm path.
 }
 
 // ---------------------------------------------------------------------------
@@ -1934,12 +1992,88 @@ void SuperMarker3D::_cone_fill(GeoBuf &geo, const Vector3 &apex, const Vector3 &
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_rebuild_mesh() {
+	// Axis subtypes go through the per-arm path — each arm builds its
+	// own ArrayMesh + RS instance so the renderer z-sorts arms
+	// independently. The primary `_mesh` / `_instance` stays empty for
+	// axis subtypes; non-axis subtypes use the primary mesh as before.
+	if (get_type() == TYPE_AXIS) {
+		float L[6]; _resolved_axis_lengths(L);
+		Vector<Vector3> dirs;
+		Vector<float> lens;
+		Vector<Color> cols;
+		bool use_color = (_shape == AXIS_XYZ);
+		bool with_arrows = _axis_arrows && _shape != AXIS_BURR;
+
+		switch (_shape) {
+			case AXIS_CROSS: {
+				const Vector3 d4[4] = {
+					Vector3( 1, 0, 0), Vector3(-1, 0, 0),
+					Vector3( 0, 1, 0), Vector3( 0,-1, 0),
+				};
+				for (int i = 0; i < 4; i++) { dirs.push_back(d4[i]); lens.push_back(L[i]); }
+			} break;
+			case AXIS_PLAIN: {
+				const Vector3 d6[6] = {
+					Vector3( 1, 0, 0), Vector3(-1, 0, 0),
+					Vector3( 0, 1, 0), Vector3( 0,-1, 0),
+					Vector3( 0, 0, 1), Vector3( 0, 0,-1),
+				};
+				for (int i = 0; i < 6; i++) { dirs.push_back(d6[i]); lens.push_back(L[i]); }
+			} break;
+			case AXIS_BURR: {
+				// 6 cardinals + 6 face diagonals. Diagonal length is the
+				// average of the two cardinals it bisects; same rule the
+				// previous monolithic generator used.
+				const Vector3 d6[6] = {
+					Vector3( 1, 0, 0), Vector3(-1, 0, 0),
+					Vector3( 0, 1, 0), Vector3( 0,-1, 0),
+					Vector3( 0, 0, 1), Vector3( 0, 0,-1),
+				};
+				for (int i = 0; i < 6; i++) { dirs.push_back(d6[i]); lens.push_back(L[i]); }
+				const float k = 0.70710678f; // 1/√2
+				struct Diag { int a, b; Vector3 dir; };
+				const Diag diags[12] = {
+					{ 0, 2, Vector3( k,  k,  0) }, { 0, 3, Vector3( k, -k,  0) },
+					{ 1, 2, Vector3(-k,  k,  0) }, { 1, 3, Vector3(-k, -k,  0) },
+					{ 0, 4, Vector3( k,  0,  k) }, { 0, 5, Vector3( k,  0, -k) },
+					{ 1, 4, Vector3(-k,  0,  k) }, { 1, 5, Vector3(-k,  0, -k) },
+					{ 2, 4, Vector3( 0,  k,  k) }, { 2, 5, Vector3( 0,  k, -k) },
+					{ 3, 4, Vector3( 0, -k,  k) }, { 3, 5, Vector3( 0, -k, -k) },
+				};
+				for (int i = 0; i < 12; i++) {
+					dirs.push_back(diags[i].dir);
+					lens.push_back(0.5f * (L[diags[i].a] + L[diags[i].b]));
+				}
+			} break;
+			case AXIS_XYZ: {
+				const Vector3 d6[6] = {
+					Vector3( 1, 0, 0), Vector3(-1, 0, 0),
+					Vector3( 0, 1, 0), Vector3( 0,-1, 0),
+					Vector3( 0, 0, 1), Vector3( 0, 0,-1),
+				};
+				const Color c6[6] = {
+					_axis_color_x_pos, _axis_color_x_neg,
+					_axis_color_y_pos, _axis_color_y_neg,
+					_axis_color_z_pos, _axis_color_z_neg,
+				};
+				for (int i = 0; i < 6; i++) {
+					dirs.push_back(d6[i]); lens.push_back(L[i]); cols.push_back(c6[i]);
+				}
+			} break;
+		}
+
+		_build_axis_per_arm(dirs, lens, cols, use_color, with_arrows);
+		// Hide the primary instance for axis subtypes — its mesh is empty
+		// and we don't want it competing with the arm instances.
+		if (_mesh.is_null()) _mesh.instantiate();
+		_mesh->clear_surfaces();
+		return;
+	}
+
+	// Non-axis subtypes — single mesh on the primary instance.
+	_cleanup_arm_instances();
 	GeoBuf geo;
 	switch (_shape) {
-		case AXIS_CROSS:      _gen_axis_cross(geo);  break;
-		case AXIS_PLAIN:      _gen_axis_plain(geo);  break;
-		case AXIS_BURR:       _gen_axis_burr(geo);   break;
-		case AXIS_XYZ:        _gen_axis_xyz(geo);    break;
 		case MESH_DIAMOND:    _gen_diamond(geo);     break;
 		case MESH_SPHERE:     _gen_sphere(geo);      break;
 		case MESH_BOX:        _gen_cube(geo);        break;
@@ -1948,6 +2082,7 @@ void SuperMarker3D::_rebuild_mesh() {
 		case CURVE_FLAT:      _gen_curve(geo);       break;
 		case CURVE_LINE_3D:   _gen_curve_line_3d(geo); break;
 		case FIGURE:          _gen_figure(geo);      break;
+		default: break;
 	}
 
 	// Reuse the same ArrayMesh on rebuild — keeps RID stable so any external

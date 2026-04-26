@@ -341,6 +341,14 @@ private:
 	Ref<StandardMaterial3D> _fill_material;
 	RID _instance;
 
+	// Per-arm renderables for Axis subtypes. Each arm (and each Burr
+	// diagonal) is its own ArrayMesh + RS instance, so the renderer
+	// z-sorts them independently — no more clustered overlap at the
+	// origin where six tubes would fight in a single mesh. Empty for
+	// non-Axis subtypes (the primary `_instance` carries everything).
+	Vector<Ref<ArrayMesh>> _arm_meshes;
+	Vector<RID>            _arm_instances;
+
 	// ---------------------------------------------------------------------------
 	// GeoBuf: geometry accumulator passed through shape generators.
 	//
@@ -390,6 +398,17 @@ private:
 	void _cleanup_instance();
 	void _update_visibility();
 	void _update_transform();
+	/// Build one ArrayMesh per axis arm into `_arm_meshes` / spawn the
+	/// matching RS instances into `_arm_instances`. `dirs` is the unit
+	/// directions, `lens` is the matching arm lengths (already
+	/// resolved through the link mode). Optional per-arm color array
+	/// (size matching `dirs`) drives AXIS_XYZ; pass empty for a
+	/// single-color subtype using outline_color.
+	void _build_axis_per_arm(const Vector<Vector3> &dirs,
+			const Vector<float> &lens, const Vector<Color> &cols,
+			bool p_use_color, bool p_with_arrows);
+	/// Free all per-arm RIDs and drop the meshes.
+	void _cleanup_arm_instances();
 
 	// Shape generators. One per Shape enum value. Axis variants share
 	// `_resolved_axis_lengths` to apply axis_link_mode uniformly.
@@ -415,9 +434,11 @@ private:
 	/// First subtype of a type — used when `set_type` needs to pick a
 	/// sensible default subtype value.
 	static int _type_first_subtype(int p_type);
-	/// Append a 4-spoke 2D arrowhead in `color` along axis direction
-	/// `dir`, sized to `axis_arrow_length`. Used by Cross / Plain / XYZ
-	/// when `_axis_arrows` is on.
+	/// Append a round 3D cone arrowhead at the tip of an axis arm.
+	/// `axis_arrow_length` is the cone's height (along the arm); the
+	/// base radius is `axis_arrow_width`. Used by Cross / Plain / XYZ
+	/// when `_axis_arrows` is on. Side surface only — the base disk
+	/// sits flush against the arm tube and would be hidden anyway.
 	void _add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir, float p_arm_len,
 			const Color &p_color, bool p_use_color) const;
 
