@@ -1,7 +1,7 @@
 extends Node3D
 ## Minimum-viable game built from nothing but SuperMarker3D nodes.
 ## Top-down arena, FIGURE-shape player walks with WASD, picks up
-## SHAPE_CROSS pickups by touching them, fires ARROW_FLAT projectiles
+## AXIS_CROSS pickups by touching them, fires ARROW_FLAT projectiles
 ## with left mouse.
 ##
 ## Arena geometry, the player, the initial pickups, the camera, and the
@@ -156,7 +156,7 @@ func _handle_pickups(delta: float) -> void:
 func _refill_pickups() -> void:
 	for i: int in PICKUP_REFILL_COUNT:
 		var p: SuperMarker3D = SuperMarker3D.new()
-		p.shape = SuperMarker3D.SHAPE_CROSS
+		p.subtype = SuperMarker3D.AXIS_CROSS
 		p.marker_size = 0.45
 		p.outline_color = Color(0.4, 1.0, 0.6, 1.0)
 		p.outline_thickness = 0.06
@@ -193,7 +193,7 @@ func _try_shoot() -> void:
 	_shoot_recent = SHOOT_HOLD_FRAMES
 
 	var a: SuperMarker3D = SuperMarker3D.new()
-	a.shape = SuperMarker3D.ARROW_FLAT
+	a.subtype = SuperMarker3D.ARROW_FLAT
 	a.marker_size = 0.7
 	a.head_length = 0.28
 	a.head_width = 0.14

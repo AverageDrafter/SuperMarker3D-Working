@@ -24,15 +24,153 @@ static const float SM_PI  = 3.14159265359f;
 // triangles per sphere wireframe — still trivial.
 static const int SPHERE_ARC_SEGS = 48;
 
-// Sphere fill tessellation
+// Sphere fill tessellation. LON = 12 keeps the meridians at 30° steps
+// so the wireframe meridians (every 60°, i.e. every other column) line
+// up exactly with fill quad boundaries — outline-on-mesh shader can
+// flag those edges as real face boundaries.
 static const int SPHERE_FILL_LAT = 12;
-static const int SPHERE_FILL_LON = 16;
+static const int SPHERE_FILL_LON = 12;
 
 // Silhouette circle segments
 static const int SIL_SEGS = 32;
 
 // Arrow/axis cone segments
 static const int CONE_SEGS = 16;
+
+// ---------------------------------------------------------------------------
+// Mesh shader source — paints fill_color across the mesh and outline_color
+// along edges flagged as real face boundaries during build. Per-vertex
+// COLOR carries (bary.xyz, h0); UV carries (h1, h2). h_i is the world-
+// space perpendicular distance from vertex i to the opposite edge if
+// that edge is a real face boundary, or -1 if it's an internal
+// triangulation diagonal (skip outlining).
+//
+// Lit/unlit toggled by the `unlit` uniform via the EMISSION-vs-ALBEDO
+// trick (Godot doesn't allow conditional render_mode). When `unlit` is
+// true, ALBEDO is zero and EMISSION carries the marker color, so the
+// surface reads at full color regardless of scene lighting; when false
+// (in-game-object mode), ALBEDO carries the color and the standard
+// lighting / shadow pipeline applies.
+static const char *MESH_SHADER_SRC = R"(
+shader_type spatial;
+render_mode blend_mix, cull_back, depth_draw_opaque;
+
+uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
+uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
+uniform float outline_thickness            = 0.05;
+uniform bool  unlit                        = true;
+uniform bool  show_edges                   = true;
+
+varying vec3 v_bary;
+varying vec3 v_heights;
+
+void vertex() {
+	v_bary    = COLOR.rgb;
+	v_heights = vec3(COLOR.a, UV.x, UV.y);
+}
+
+void fragment() {
+	float min_dist = 1.0e9;
+	if (show_edges) {
+		if (v_heights.x >= 0.0) min_dist = min(min_dist, v_bary.x * v_heights.x);
+		if (v_heights.y >= 0.0) min_dist = min(min_dist, v_bary.y * v_heights.y);
+		if (v_heights.z >= 0.0) min_dist = min(min_dist, v_bary.z * v_heights.z);
+	}
+
+	float aa = max(fwidth(min_dist), 1.0e-5);
+	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+
+	vec4 col = mix(fill_color, outline_color, edge);
+
+	if (unlit) {
+		ALBEDO   = vec3(0.0);
+		EMISSION = col.rgb;
+	} else {
+		ALBEDO = col.rgb;
+	}
+	ALPHA = col.a;
+}
+)";
+
+Ref<Shader> SuperMarker3D::_mesh_shader;
+
+// Sphere shader — paints lat/lon wireframe lines analytically from each
+// fragment's local-space position. Independent of the fill triangulation,
+// so the user sees a clean grid no matter how the fill is split. Polar
+// caps stay solid fill because meridian contribution is suppressed where
+// the lines would converge tighter than the outline width can resolve.
+//
+// Wireframe pattern: 5 latitudes (equator, ±30°, ±60°) and 6 meridians
+// (every 60°, i.e. 3 great-circles drawn).
+static const char *SPHERE_SHADER_SRC = R"(
+shader_type spatial;
+render_mode blend_mix, cull_back, depth_draw_opaque;
+
+uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
+uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
+uniform float outline_thickness            = 0.05;
+uniform bool  unlit                        = true;
+uniform bool  show_edges                   = true;
+uniform float marker_size                  = 1.0;
+
+const float SPHERE_PI = 3.14159265359;
+const float MER_STEP  = SPHERE_PI / 3.0; // 60° between adjacent meridians
+
+varying vec3 v_local_pos;
+
+void vertex() {
+	v_local_pos = VERTEX;
+}
+
+void fragment() {
+	float min_dist = 1.0e9;
+	if (show_edges) {
+		float r = length(v_local_pos);
+		if (r > 1.0e-5) {
+			float phi   = acos(clamp(v_local_pos.y / r, -1.0, 1.0));
+			float theta = atan(v_local_pos.z, v_local_pos.x);
+
+			// 5 latitudes by symmetry around the equator: |φ - π/2|
+			// matches one of {0, π/6, π/3} for an outline-painted lat.
+			float lat_off = abs(phi - SPHERE_PI * 0.5);
+			float d0 = lat_off;
+			float d1 = abs(lat_off - SPHERE_PI / 6.0);
+			float d2 = abs(lat_off - SPHERE_PI / 3.0);
+			float lat_diff = min(d0, min(d1, d2));
+			float lat_w = marker_size * lat_diff;
+
+			// Meridians every 60°. Folded modulo gives perpendicular
+			// angular distance in [0, MER_STEP/2].
+			float theta_off = abs(mod(theta + MER_STEP * 0.5, MER_STEP) - MER_STEP * 0.5);
+			float sin_phi   = sin(phi);
+			float mer_w     = marker_size * sin_phi * theta_off;
+
+			// Suppress meridians near the poles where adjacent lines
+			// would merge tighter than the outline can resolve. Without
+			// this the entire polar cap floods with outline color.
+			if (marker_size * sin_phi * MER_STEP < 4.0 * outline_thickness) {
+				mer_w = 1.0e9;
+			}
+
+			min_dist = min(lat_w, mer_w);
+		}
+	}
+
+	float aa = max(fwidth(min_dist), 1.0e-5);
+	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+
+	vec4 col = mix(fill_color, outline_color, edge);
+	if (unlit) {
+		ALBEDO   = vec3(0.0);
+		EMISSION = col.rgb;
+	} else {
+		ALBEDO = col.rgb;
+	}
+	ALPHA = col.a;
+}
+)";
+
+Ref<Shader> SuperMarker3D::_sphere_shader;
 
 // ---------------------------------------------------------------------------
 // GeoBuf helpers
@@ -64,33 +202,10 @@ void SuperMarker3D::GeoBuf::add_triangle(const Vector3 &a, const Vector3 &b, con
 	tri_normals.push_back(n); tri_normals.push_back(n); tri_normals.push_back(n);
 }
 
-// Core routine: thin quad along edge A→B with face normal N.
-// The quad lies on the face surface (slightly pushed by n * 0.001) so it
-// clears z-fighting with the fill mesh.  CULL_BACK on the outline material
-// provides camera-facing culling automatically — no camera math needed here.
-void SuperMarker3D::GeoBuf::add_edge_quad(const Vector3 &a, const Vector3 &b,
-		const Vector3 &n, float w) {
-	Vector3 edge = b - a;
-	float len = edge.length();
-	if (len < 0.0001f) return;
-	Vector3 edge_dir = edge / len;
-	// Width direction: perpendicular to edge, lying in the face plane
-	Vector3 perp = n.cross(edge_dir).normalized() * (w * 0.5f);
-	// Tiny offset to avoid z-fighting with the fill surface
-	Vector3 push = n * (w * 0.05f);
-
-	Vector3 v0 = a + push - perp;
-	Vector3 v1 = a + push + perp;
-	Vector3 v2 = b + push + perp;
-	Vector3 v3 = b + push - perp;
-
-	outline_verts.push_back(v0); outline_normals.push_back(n);
-	outline_verts.push_back(v1); outline_normals.push_back(n);
-	outline_verts.push_back(v2); outline_normals.push_back(n);
-	outline_verts.push_back(v0); outline_normals.push_back(n);
-	outline_verts.push_back(v2); outline_normals.push_back(n);
-	outline_verts.push_back(v3); outline_normals.push_back(n);
-}
+// (Mesh wireframe outlines are now painted by the mesh shader from
+// per-vertex barycentric + edge-height attributes — no separate edge
+// quad helper is needed. See `_add_mesh_face` and `_mesh_shader_src`
+// below.)
 
 // Flat 2D edge quad in the XZ plane (Y = 0) for Flat Arrow thick outlines.
 // Width is a 2D stroke width; the quad has normal ±Y.
@@ -159,10 +274,16 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mesh_wireframe"), &SuperMarker3D::get_mesh_wireframe);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mesh_wireframe"),
 			"set_mesh_wireframe", "get_mesh_wireframe");
-	ClassDB::bind_method(D_METHOD("set_mesh_two_sided", "enabled"), &SuperMarker3D::set_mesh_two_sided);
-	ClassDB::bind_method(D_METHOD("get_mesh_two_sided"), &SuperMarker3D::get_mesh_two_sided);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mesh_two_sided"),
-			"set_mesh_two_sided", "get_mesh_two_sided");
+	// Side count for cylinder, cone, and diamond. Range 3..24 — 3 makes
+	// a triangular prism / tetrahedron / triangular bipyramid; 24 is
+	// near-round. Default 8 reads as a nicely faceted "low-poly" shape.
+	// Hidden in the inspector for non-round mesh subtypes via
+	// `_validate_property`.
+	ClassDB::bind_method(D_METHOD("set_mesh_sides", "sides"), &SuperMarker3D::set_mesh_sides);
+	ClassDB::bind_method(D_METHOD("get_mesh_sides"), &SuperMarker3D::get_mesh_sides);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_sides",
+			PROPERTY_HINT_RANGE, "3,24,1"),
+			"set_mesh_sides", "get_mesh_sides");
 
 	// Outline color + thickness apply to every shape that has an
 	// outline (which is all of them in some form). Thickness > 0 turns
@@ -437,7 +558,10 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Cross:0,Axis:3,Burr:11,XYZ:8";
 				break;
 			case TYPE_MESH:
-				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Pyramid:13,Cylinder:14,Cone:15";
+				// Pyramid (subtype 13) is a deprecated alias — it now
+				// renders as a 4-sided Cone. Hidden from new selections;
+				// existing scenes still load and render correctly.
+				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Cylinder:14,Cone:15";
 				break;
 			case TYPE_SHAPE:
 				// No subtypes yet — placeholder slot for future flat 2D
@@ -458,10 +582,10 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 		}
 	}
 
-	// Detail Mode is gone in 1.0-beta — Mesh now uses the 3-layer
-	// hull/fill/wireframe pipeline instead of the old wireframe-vs-
-	// silhouette toggle. Hide it everywhere; kept in the binding only
-	// for back-compat with serialized scenes.
+	// Detail Mode is gone in 1.0-beta — Mesh now uses a fill + edge-quad
+	// wireframe pair instead of the old wireframe-vs-silhouette toggle.
+	// Hide it everywhere; kept in the binding only for back-compat with
+	// serialized scenes.
 	if (name == "detail_mode") hide();
 	// Fill Enabled is also gone for Mesh (fill is always on now). Keep
 	// it visible only on Arrow / Curve Flat where the user still
@@ -472,7 +596,11 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "fill_color" && !(is_mesh || is_arrow || _shape == CURVE_FLAT)) hide();
 	// Mesh-category wireframe toggle.
 	if (name == "mesh_wireframe" && !is_mesh) hide();
-	if (name == "mesh_two_sided" && !is_mesh) hide();
+	// Side count is only meaningful on the round-bodied mesh subtypes
+	// (cylinder, cone, and the multisided bipyramid diamond).
+	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
+			|| _shape == MESH_DIAMOND);
+	if (name == "mesh_sides" && !is_round_mesh) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
 	// is editable depends on the link mode; whether it's visible at all
@@ -647,6 +775,10 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 	// outline_color as a single albedo.
 	if (_outline_material.is_valid() && _shape != AXIS_XYZ)
 		_outline_material->set_albedo(_outline_color);
+	// Mesh subtypes route through the shader material — push the new
+	// outline color into its uniform so the inspector edit is live.
+	if (_mesh_material.is_valid())
+		_mesh_material->set_shader_parameter("outline_color", _outline_color);
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
@@ -661,6 +793,8 @@ void SuperMarker3D::set_fill_color(const Color &p) {
 		_fill_material->set_transparency(_fill_color.a < 1.0f
 				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
 	}
+	if (_mesh_material.is_valid())
+		_mesh_material->set_shader_parameter("fill_color", _fill_color);
 }
 Color SuperMarker3D::get_fill_color() const { return _fill_color; }
 
@@ -702,11 +836,13 @@ void SuperMarker3D::set_mesh_wireframe(bool p) {
 }
 bool SuperMarker3D::get_mesh_wireframe() const { return _mesh_wireframe; }
 
-void SuperMarker3D::set_mesh_two_sided(bool p) {
-	_mesh_two_sided = p;
-	if (is_inside_tree() && get_type() == TYPE_MESH) _build_materials();
+void SuperMarker3D::set_mesh_sides(int p) {
+	_mesh_sides = CLAMP(p, 3, 24);
+	if (_shape == MESH_CYLINDER || _shape == MESH_CONE || _shape == MESH_DIAMOND) {
+		SM_REBUILD();
+	}
 }
-bool SuperMarker3D::get_mesh_two_sided() const { return _mesh_two_sided; }
+int SuperMarker3D::get_mesh_sides() const { return _mesh_sides; }
 
 void SuperMarker3D::set_axis_link_mode(int p) {
 	_axis_link_mode = p;
@@ -1058,14 +1194,16 @@ void SuperMarker3D::_build_materials() {
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, true);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
-	// Mesh wireframe — default CULL_DISABLED so the strips render from
-	// both sides and the fill body's depth occludes the back-half (front
-	// arcs visible, back arcs hidden). When `always_on_top` is on we
-	// lose depth test, so we'd see ALL strips (including back-facing)
-	// stack up; switch to CULL_BACK in that mode so face culling alone
-	// keeps the silhouette honest. Flat arrow + curve ribbons stay
-	// CULL_DISABLED unconditionally (they're flat surfaces, both sides
-	// are intentional).
+	// Mesh wireframe — default CULL_DISABLED so edge quads render from
+	// both sides and the fill body's depth occludes the back ones. With
+	// opaque fill (DEPTH_DRAW_OPAQUE_ONLY writes depth), only camera-
+	// front edges are visible; with transparent fill (no depth written)
+	// the back edges show through, which is exactly the see-through
+	// look we want for alpha < 1. When `always_on_top` is on we lose
+	// depth test, so we'd see all edges stack up regardless; switch to
+	// CULL_BACK then so face culling alone keeps the silhouette honest.
+	// Flat arrow + curve ribbons stay CULL_DISABLED unconditionally
+	// (they're flat surfaces, both sides are intentional).
 	const bool is_mesh_type = (get_type() == TYPE_MESH);
 	BaseMaterial3D::CullMode wire_cull = BaseMaterial3D::CULL_BACK;
 	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT) {
@@ -1105,11 +1243,9 @@ void SuperMarker3D::_build_materials() {
 	// Flat shapes (silhouette billboard + flat arrow + curve) use CULL_DISABLED
 	// so both sides render. 3D fills use CULL_BACK by default — closed
 	// convex shapes self-occlude correctly via face culling alone, even
-	// in always-on-top mode where depth test is off. Mesh subtypes opt
-	// into CULL_DISABLED via `mesh_two_sided` for interior / skybox use.
+	// in always-on-top mode where depth test is off.
 	const bool flat_shape = (billboard || _shape == ARROW_FLAT || _shape == CURVE_FLAT);
-	const bool mesh_two_sided = is_mesh_type && _mesh_two_sided;
-	_fill_material->set_cull_mode((flat_shape || mesh_two_sided)
+	_fill_material->set_cull_mode(flat_shape
 			? BaseMaterial3D::CULL_DISABLED
 			: BaseMaterial3D::CULL_BACK);
 	_fill_material->set_render_priority(0);
@@ -1125,50 +1261,47 @@ void SuperMarker3D::_build_materials() {
 			? BaseMaterial3D::BILLBOARD_ENABLED
 			: BaseMaterial3D::BILLBOARD_DISABLED);
 
-	// --- Backing-hull material (Mesh category only) ---
-	// Inverted-hull outline technique: same `outline_color` as the
-	// wireframe, but with CULL_FRONT so only the back-faces of the
-	// inflated mesh show, painting a uniform-thickness halo around
-	// the screen-space silhouette. Always unshaded; depth tests
-	// against the fill so the fill occludes the hull where it covers.
-	if (_hull_material.is_null()) _hull_material.instantiate();
-	_hull_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
-	_hull_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
-	_hull_material->set_cull_mode(BaseMaterial3D::CULL_FRONT);
-	_hull_material->set_albedo(_outline_color);
-	_hull_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
-	_hull_material->set_transparency(_outline_color.a < 1.0f
-			? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
-	_hull_material->set_render_priority(-1); // draw before fill so depth test orders cleanly
-	_hull_material->set_billboard_mode(BaseMaterial3D::BILLBOARD_DISABLED);
-
-	// Apply to surfaces. The Mesh path uses a fixed 3-surface layout
-	// (hull / fill / wireframe); other types still keep the previous
-	// outline → optional fill ordering.
-	if (_mesh.is_valid()) {
-		int sc = _mesh->get_surface_count();
-		const bool is_mesh = (get_type() == TYPE_MESH);
-		if (is_mesh) {
-			// Surface 0: hull, Surface 1: fill, Surface 2: wireframe.
-			// Either of hull / wireframe can be absent depending on
-			// `outline_thickness` and `mesh_wireframe`, so we set
-			// materials by index range and tolerate the missing ones.
-			// `_rebuild_mesh` sets the surfaces in this order so the
-			// indices line up.
-			int idx = 0;
-			if (_mesh->get_meta("_sm_has_hull", false)) {
-				if (idx < sc) _mesh->surface_set_material(idx++, _hull_material);
-			}
-			if (_mesh->get_meta("_sm_has_fill", false)) {
-				if (idx < sc) _mesh->surface_set_material(idx++, _fill_material);
-			}
-			if (_mesh->get_meta("_sm_has_wire", false)) {
-				if (idx < sc) _mesh->surface_set_material(idx++, _outline_material);
+	// --- Mesh shader material (TYPE_MESH only) ---
+	// The mesh subtypes paint fill_color + outline_color directly on
+	// the fill surface via a custom shader, replacing the dual-surface
+	// fill+wireframe model. Sphere uses an analytical lat/lon shader
+	// (no triangulation dependency); every other mesh subtype uses the
+	// generic edge-from-bary shader. Non-mesh subtypes never touch
+	// this material.
+	if (is_mesh_type) {
+		const bool use_sphere_shader = (_shape == MESH_SPHERE);
+		if (use_sphere_shader) {
+			if (_sphere_shader.is_null()) {
+				_sphere_shader.instantiate();
+				_sphere_shader->set_code(SPHERE_SHADER_SRC);
 			}
 		} else {
-			// Non-mesh subtypes — previous heuristic (outline_material
-			// to all surfaces, fill_material to the final surface for
-			// fill-capable shapes).
+			if (_mesh_shader.is_null()) {
+				_mesh_shader.instantiate();
+				_mesh_shader->set_code(MESH_SHADER_SRC);
+			}
+		}
+		if (_mesh_material.is_null()) _mesh_material.instantiate();
+		_mesh_material->set_shader(use_sphere_shader ? _sphere_shader : _mesh_shader);
+		_mesh_material->set_shader_parameter("fill_color", _fill_color);
+		_mesh_material->set_shader_parameter("outline_color", _outline_color);
+		_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
+		_mesh_material->set_shader_parameter("unlit", !_in_game_object);
+		_mesh_material->set_shader_parameter("show_edges", _mesh_wireframe);
+		if (use_sphere_shader) {
+			_mesh_material->set_shader_parameter("marker_size", _marker_size);
+		}
+		_mesh_material->set_render_priority(0);
+	}
+
+	// Apply to surfaces. Mesh subtypes have one surface (fill) carrying
+	// the shader material; everything else keeps the previous
+	// outline → optional fill ordering on its StandardMaterial3D pair.
+	if (_mesh.is_valid()) {
+		int sc = _mesh->get_surface_count();
+		if (is_mesh_type) {
+			if (sc > 0) _mesh->surface_set_material(0, _mesh_material);
+		} else {
 			for (int i = 0; i < sc; i++) {
 				_mesh->surface_set_material(i, _outline_material);
 			}
@@ -1181,52 +1314,59 @@ void SuperMarker3D::_build_materials() {
 	}
 }
 
-// Helper used by every Mesh subtype generator. For each face triangle
-// the caller emits, we push the same triangle into `tri_verts` (the
-// fill mesh) AND an inflated copy into `hull_verts` (the backing
-// silhouette). Triangles wind (v0, v2, v1) — flipped from the
-// natural (v0, v1, v2) order so that CCW screen-space winding from
-// outside matches Godot's CULL_BACK convention. Same flip as the
-// tube body / hemisphere / cone — empirical, established earlier.
+// Helper used by every Mesh subtype generator. Pushes one fill
+// triangle into `tri_verts` with the (v0, v2, v1) flipped winding
+// the rest of the renderer expects — natural CCW from outside under
+// Godot's CULL_BACK convention.
 //
-// Hull inflation is an ABSOLUTE push along each vertex's direction-
-// from-origin by `outline_thickness` (constant halo width), not a
-// proportional scale. The proportional approach made small markers
-// blow out (`thickness=0.05` on a `marker_size=0.1` marker = 50%
-// inflation) — out of usable range. Now `thickness=0.05` always
-// means a 0.05m halo regardless of marker size.
+// Also pushes per-vertex barycentric + edge-height attributes the
+// mesh shader uses to paint outlines on the face. Per vertex:
+//   tri_colors.rgb = barycentric weight (1,0,0)/(0,1,0)/(0,0,1)
+//   tri_colors.a   = h0 = perpendicular world height from v0 to edge (v1,v2)
+//   tri_uvs.x      = h1 = perpendicular world height from v1 to edge (v0,v2)
+//   tri_uvs.y      = h2 = perpendicular world height from v2 to edge (v0,v1)
+// h_i is set to -1 if the corresponding edge is INTERNAL triangulation
+// (e.g. the diagonal between a quad's two triangles); the shader
+// treats -1 as "skip outlining this edge."
+void SuperMarker3D::_add_mesh_quad(GeoBuf &geo,
+		const Vector3 &p0, const Vector3 &p1, const Vector3 &p2, const Vector3 &p3,
+		const Vector3 &center,
+		bool e01, bool e12, bool e23, bool e30) const {
+	// 4 fan triangles, each with the quad's center as v0 and a
+	// consecutive pair of perimeter vertices as v1, v2. The edge
+	// opposite v0 is the perimeter edge — its boundary flag carries
+	// over from the caller. The two radial edges (center→pi) are
+	// flagged internal so the shader doesn't paint them.
+	_add_mesh_face(geo, center, p0, p1, e01, false, false);
+	_add_mesh_face(geo, center, p1, p2, e12, false, false);
+	_add_mesh_face(geo, center, p2, p3, e23, false, false);
+	_add_mesh_face(geo, center, p3, p0, e30, false, false);
+}
+
 void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
-		const Vector3 &v2) const {
-	// Recompute face normal under the flipped winding so it still
-	// points outward (matches the geometric normal of (v0, v2, v1)).
+		const Vector3 &v2, bool e0_boundary, bool e1_boundary, bool e2_boundary) const {
 	const Vector3 face_n = ((v2 - v0).cross(v1 - v0)).normalized();
 
-	geo.tri_verts.push_back(v0); geo.tri_normals.push_back(face_n);
-	geo.tri_verts.push_back(v2); geo.tri_normals.push_back(face_n);
-	geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
+	// Triangle area × 2 for height computation. h_i = (2·area) / |edge_opposite_i|.
+	const float double_area = (v1 - v0).cross(v2 - v0).length();
+	if (double_area < 1e-9f) return; // degenerate
 
-	if (_outline_thickness > 0.0f) {
-		// Hull inflation = half the outline_thickness — gives the rim a
-		// screen-space width that visually matches the wire-ring annulus
-		// (which is itself ±thickness/2 around its base radius). At full
-		// `outline_thickness` the hull rim was reading noticeably heavier
-		// than the lat/lon rings on the same marker.
-		const float hull_push = _outline_thickness * 0.5f;
-		auto push_out = [&](const Vector3 &v) -> Vector3 {
-			float len_sq = v.length_squared();
-			if (len_sq < 1e-8f) return v;
-			return v + v / Math::sqrt(len_sq) * hull_push;
-		};
-		const Vector3 h0 = push_out(v0);
-		const Vector3 h1 = push_out(v1);
-		const Vector3 h2 = push_out(v2);
-		// Same flipped winding as fill. CULL_FRONT in the hull material
-		// keeps only the back-faces, which from any camera angle paint
-		// the halo around the silhouette.
-		geo.hull_verts.push_back(h0); geo.hull_normals.push_back(face_n);
-		geo.hull_verts.push_back(h2); geo.hull_normals.push_back(face_n);
-		geo.hull_verts.push_back(h1); geo.hull_normals.push_back(face_n);
-	}
+	const float len_e0 = (v2 - v1).length(); // edge opposite v0
+	const float len_e1 = (v2 - v0).length(); // edge opposite v1
+	const float len_e2 = (v1 - v0).length(); // edge opposite v2
+	const float h0 = e0_boundary ? (double_area / MAX(1e-9f, len_e0)) : -1.0f;
+	const float h1 = e1_boundary ? (double_area / MAX(1e-9f, len_e1)) : -1.0f;
+	const float h2 = e2_boundary ? (double_area / MAX(1e-9f, len_e2)) : -1.0f;
+
+	const Vector2 uv(h1, h2);
+	// Emit (v0, v2, v1) winding flip — bary index goes with the original
+	// vertex (bary slot 0 always tags v0 regardless of emission order).
+	geo.tri_verts.push_back(v0); geo.tri_normals.push_back(face_n);
+	geo.tri_colors.push_back(Color(1, 0, 0, h0)); geo.tri_uvs.push_back(uv);
+	geo.tri_verts.push_back(v2); geo.tri_normals.push_back(face_n);
+	geo.tri_colors.push_back(Color(0, 0, 1, h0)); geo.tri_uvs.push_back(uv);
+	geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
+	geo.tri_colors.push_back(Color(0, 1, 0, h0)); geo.tri_uvs.push_back(uv);
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,134 +1508,84 @@ void SuperMarker3D::_gen_axis_cross(GeoBuf &/*geo*/) const {
 }
 
 // ---------------------------------------------------------------------------
-// Diamond — 8-triangle octahedron.
-// Wireframe: edge quads with face normals (CULL_BACK handles camera culling).
+// Diamond — N-sided bipyramid. N equator vertices on a circle of
+// radius `marker_size` plus top + bottom pole. 2N triangle faces, each
+// a single triangle so every edge is a real face boundary (default
+// flags). Default N=8 reads as a Sims-like selector diamond; N=4 is
+// the classic octahedron, N=3 a triangular bipyramid, N=24 a smooth-ish
+// double-cone.
 // Silhouette: flat 2D diamond in XY, billboarded.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
-	const float s  = _marker_size;
-	const Vector3 top(0, s, 0), btm(0, -s, 0);
-	const Vector3 px(s, 0, 0), nx(-s, 0, 0), pz(0, 0, s), nz(0, 0, -s);
-
-	// Fill (always) + backing hull (when outline_thickness > 0) — 8
-	// octahedron faces. _add_mesh_face emits both layers.
-	struct Face { Vector3 a, b, c; };
-	const Face faces[8] = {
-		{ top,pz,px }, { top,px,nz }, { top,nz,nx }, { top,nx,pz },
-		{ btm,px,pz }, { btm,pz,nx }, { btm,nx,nz }, { btm,nz,px },
-	};
-	for (int i = 0; i < 8; i++) _add_mesh_face(geo, faces[i].a, faces[i].b, faces[i].c);
-
-	if (!_mesh_wireframe) return;
-	const Vector3 corners[6] = { top, btm, px, nx, pz, nz };
-	const int edges[12][2] = {
-		{0,2},{0,3},{0,4},{0,5}, {1,2},{1,3},{1,4},{1,5},
-		{2,4},{4,3},{3,5},{5,2},
-	};
-	if (_outline_thickness > 0.0f) {
-		for (int i = 0; i < 12; i++) {
-			const Vector3 a = corners[edges[i][0]];
-			const Vector3 b = corners[edges[i][1]];
-			const Vector3 n = ((a + b) * 0.5f).normalized(); // outward-radial
-			geo.add_edge_quad(a, b, n, _outline_thickness);
-		}
-	} else {
-		for (int i = 0; i < 12; i++) geo.add_line(corners[edges[i][0]], corners[edges[i][1]]);
+	const float s = _marker_size;
+	const int   N = MAX(3, _mesh_sides);
+	const Vector3 top(0,  s, 0);
+	const Vector3 btm(0, -s, 0);
+	PackedVector3Array eq;
+	eq.resize(N);
+	for (int i = 0; i < N; i++) {
+		const float a = SM_TAU * (float)i / N;
+		eq.set(i, Vector3(std::cos(a) * s, 0.0f, std::sin(a) * s));
+	}
+	for (int i = 0; i < N; i++) {
+		const int j = (i + 1) % N;
+		// Top hemisphere: caller order matches the original octahedron
+		// (top, pz, px)-style — equator vertex with the LATER angle
+		// first, so after `_add_mesh_face`'s winding flip the emitted
+		// triangle is front-facing from outside the top.
+		_add_mesh_face(geo, top, eq[j], eq[i]);
+		// Bottom hemisphere: equator vertex with the EARLIER angle
+		// first, mirroring the original (btm, px, pz) pattern.
+		_add_mesh_face(geo, btm, eq[i], eq[j]);
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Sphere — arc-based wireframe, UV sphere fill.
-// Wireframe arcs use the sphere surface normal (radially outward) for each
-// arc segment — backfacing segments are culled automatically.
+// Sphere — plain UV sphere fill. The wireframe (5 latitudes + 6
+// meridians) is NOT painted via flagged triangle edges; instead it's
+// computed analytically per-fragment by `SPHERE_SHADER_SRC` from the
+// fragment's local-space (φ, θ). That makes the visible grid totally
+// independent of the fill triangulation — no diagonal-tab artifact, no
+// fan-flooding, no triangulation visible at all. The fill triangles
+// here just supply a sphere surface to render onto.
 // Silhouette: circle in XY, billboarded.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
-	const float r  = _marker_size;
+	const float r = _marker_size;
+	const int   W = SPHERE_FILL_LON + 1;
 
-	// Fill (always) + backing hull (when outline_thickness > 0) — UV
-	// sphere triangles. _add_mesh_face per triangle emits both layers.
-	{
-		PackedVector3Array verts;
-		verts.resize((SPHERE_FILL_LAT + 1) * (SPHERE_FILL_LON + 1));
-		for (int i = 0; i <= SPHERE_FILL_LAT; i++) {
-			float phi = SM_PI * (float)i / SPHERE_FILL_LAT;
-			float sp = std::sin(phi), cp = std::cos(phi);
-			for (int j = 0; j <= SPHERE_FILL_LON; j++) {
-				float theta = SM_TAU * (float)j / SPHERE_FILL_LON;
-				float st = std::sin(theta), ct = std::cos(theta);
-				verts.set(i * (SPHERE_FILL_LON + 1) + j, Vector3(sp * ct, cp, sp * st) * r);
-			}
-		}
-		for (int i = 0; i < SPHERE_FILL_LAT; i++) {
-			for (int j = 0; j < SPHERE_FILL_LON; j++) {
-				int a = i * (SPHERE_FILL_LON + 1) + j;
-				int b = a + 1;
-				int c = a + (SPHERE_FILL_LON + 1);
-				int d = c + 1;
-				_add_mesh_face(geo, verts[a], verts[b], verts[d]);
-				_add_mesh_face(geo, verts[a], verts[d], verts[c]);
-			}
-		}
-	}
-
-	if (!_mesh_wireframe) return;
-	const int N = SPHERE_ARC_SEGS;
-	const float w = _outline_thickness;
-
-	// 5 latitude rings — Antarctic, Tropic of Capricorn, Equator,
-	// Tropic of Cancer, Arctic — each a single smooth annulus polygon.
-	const float lats[5] = { -r * 0.85f, -r * 0.5f, 0.0f, r * 0.5f, r * 0.85f };
-	for (int k = 0; k < 5; k++) {
-		float y = lats[k];
-		float rr = std::sqrt(MAX(0.0f, r * r - y * y));
-		if (rr < 0.0001f) continue;
-		const Vector3 center(0, y, 0);
-		const Vector3 n(0, 1, 0);
-		const Vector3 u(1, 0, 0), v(0, 0, 1);
-		if (w > 0.0f) {
-			_add_arc_ring(geo, center, n, u, v, rr, w, N);
-		} else {
-			for (int i = 0; i < N; i++) {
-				float a0 = SM_TAU * (float)i / N;
-				float a1 = SM_TAU * (float)(i + 1) / N;
-				geo.add_line(Vector3(rr * std::cos(a0), y, rr * std::sin(a0)),
-						Vector3(rr * std::cos(a1), y, rr * std::sin(a1)));
-			}
-		}
-	}
-
-	// 3 full longitude great-circles at φ = 0°, 60°, 120°.
-	// Each great circle lies in a plane containing the y-axis and the
-	// equator point at angle φ. Plane is spanned by u = +Y (pole-axis)
-	// and v = (sin(φ), 0, cos(φ)) (equator direction at φ).
-	const float longs[3] = { 0.0f, SM_TAU / 6.0f, SM_TAU / 3.0f };
-	for (int k = 0; k < 3; k++) {
-		float phi = longs[k];
+	PackedVector3Array verts;
+	verts.resize((SPHERE_FILL_LAT + 1) * W);
+	for (int i = 0; i <= SPHERE_FILL_LAT; i++) {
+		float phi = SM_PI * (float)i / SPHERE_FILL_LAT;
 		float sp = std::sin(phi), cp = std::cos(phi);
-		const Vector3 u_lon(0, 1, 0);
-		const Vector3 v_lon(sp, 0, cp);
-		// Plane normal n = u × v, points perpendicular to longitude plane.
-		const Vector3 n_lon = u_lon.cross(v_lon); // (cp, 0, -sp), unit
-		if (w > 0.0f) {
-			_add_arc_ring(geo, Vector3(), n_lon, u_lon, v_lon, r, w, N);
-		} else {
-			for (int i = 0; i < N; i++) {
-				float t0 = SM_TAU * (float)i / N;
-				float t1 = SM_TAU * (float)(i + 1) / N;
-				Vector3 p0(std::sin(t0) * sp * r, std::cos(t0) * r, std::sin(t0) * cp * r);
-				Vector3 p1(std::sin(t1) * sp * r, std::cos(t1) * r, std::sin(t1) * cp * r);
-				geo.add_line(p0, p1);
-			}
+		for (int j = 0; j <= SPHERE_FILL_LON; j++) {
+			float theta = SM_TAU * (float)j / SPHERE_FILL_LON;
+			float st = std::sin(theta), ct = std::cos(theta);
+			verts.set(i * W + j, Vector3(sp * ct, cp, sp * st) * r);
+		}
+	}
+	for (int i = 0; i < SPHERE_FILL_LAT; i++) {
+		for (int j = 0; j < SPHERE_FILL_LON; j++) {
+			const int ia = i * W + j;
+			const int ib = ia + 1;
+			const int ic = ia + W;
+			const int id = ic + 1;
+			// Diagonal-split triangulation. The shader paints lines
+			// analytically, so triangulation choice doesn't matter.
+			_add_mesh_face(geo, verts[ia], verts[ib], verts[id]);
+			_add_mesh_face(geo, verts[ia], verts[id], verts[ic]);
 		}
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Cube — 12-triangle (6 face) box.
-// Wireframe: edge quads with face normals.
+// Cube — 6 quad faces, each emitted as a 4-triangle center fan from the
+// face centroid (eliminates the diagonal-corner outline tabs the
+// previous diagonal split produced). All 4 perimeter edges of each
+// face are real face boundaries.
 // Silhouette: flat square in XY, billboarded.
 // ---------------------------------------------------------------------------
 
@@ -1505,83 +1595,31 @@ void SuperMarker3D::_gen_cube(GeoBuf &geo) const {
 		Vector3(-s,-s,-s), Vector3(s,-s,-s), Vector3(s,s,-s), Vector3(-s,s,-s),
 		Vector3(-s,-s, s), Vector3(s,-s, s), Vector3(s,s, s), Vector3(-s,s, s),
 	};
-	// Fill (always) + backing hull (when outline_thickness > 0) — 6
-	// faces, 2 triangles each. _add_mesh_face takes care of both.
 	struct QuadFace { int i0,i1,i2,i3; };
 	const QuadFace faces[6] = {
 		{0,3,2,1}, {4,5,6,7}, {0,4,7,3}, {1,2,6,5}, {3,7,6,2}, {0,1,5,4},
 	};
 	for (int f = 0; f < 6; f++) {
-		_add_mesh_face(geo, c[faces[f].i0], c[faces[f].i1], c[faces[f].i2]);
-		_add_mesh_face(geo, c[faces[f].i0], c[faces[f].i2], c[faces[f].i3]);
-	}
-
-	if (!_mesh_wireframe) return;
-	const int edges[12][2] = {
-		{0,1},{1,2},{2,3},{3,0},
-		{4,5},{5,6},{6,7},{7,4},
-		{0,4},{1,5},{2,6},{3,7},
-	};
-	if (_outline_thickness > 0.0f) {
-		for (int i = 0; i < 12; i++) {
-			const Vector3 a = c[edges[i][0]];
-			const Vector3 b = c[edges[i][1]];
-			const Vector3 n = ((a + b) * 0.5f).normalized(); // outward-radial
-			geo.add_edge_quad(a, b, n, _outline_thickness);
-		}
-	} else {
-		for (int i = 0; i < 12; i++) geo.add_line(c[edges[i][0]], c[edges[i][1]]);
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Pyramid — square base + apex. 5 vertices, 6 fill triangles (4 lateral
-// sides + 2 base), 8 wireframe edges (4 base + 4 lateral). Base sits at
-// y=-marker_size, apex at y=+marker_size, base spans 2·marker_size.
-// ---------------------------------------------------------------------------
-
-void SuperMarker3D::_gen_pyramid(GeoBuf &geo) const {
-	const float s = _marker_size;
-	const Vector3 b0(-s, -s, -s), b1(s, -s, -s), b2(s, -s, s), b3(-s, -s, s);
-	const Vector3 ap(0, s, 0);
-
-	// Lateral sides — outward normals point away from the y-axis
-	// interior with a slight downward tilt (face slopes up to apex).
-	_add_mesh_face(geo, ap, b1, b0);
-	_add_mesh_face(geo, ap, b2, b1);
-	_add_mesh_face(geo, ap, b3, b2);
-	_add_mesh_face(geo, ap, b0, b3);
-	// Base — outward normal -Y (visible from below).
-	_add_mesh_face(geo, b0, b2, b3);
-	_add_mesh_face(geo, b0, b1, b2);
-
-	if (!_mesh_wireframe) return;
-	const Vector3 corners[5] = { b0, b1, b2, b3, ap };
-	const int edges[8][2] = {
-		{0,1},{1,2},{2,3},{3,0}, // base
-		{4,0},{4,1},{4,2},{4,3}, // lateral
-	};
-	if (_outline_thickness > 0.0f) {
-		for (int i = 0; i < 8; i++) {
-			const Vector3 a = corners[edges[i][0]];
-			const Vector3 b = corners[edges[i][1]];
-			const Vector3 n = ((a + b) * 0.5f).normalized(); // outward-radial
-			geo.add_edge_quad(a, b, n, _outline_thickness);
-		}
-	} else {
-		for (int i = 0; i < 8; i++) geo.add_line(corners[edges[i][0]], corners[edges[i][1]]);
+		const Vector3 &p0 = c[faces[f].i0];
+		const Vector3 &p1 = c[faces[f].i1];
+		const Vector3 &p2 = c[faces[f].i2];
+		const Vector3 &p3 = c[faces[f].i3];
+		const Vector3 center = (p0 + p1 + p2 + p3) * 0.25f;
+		_add_mesh_quad(geo, p0, p1, p2, p3, center, true, true, true, true);
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Cylinder — radius and half-height both = marker_size. Caps at y = ±s,
-// lateral surface around the Y axis. Wireframe: top + bottom arc rings
-// plus 4 vertical edges at 0/90/180/270°.
+// lateral surface around the Y axis. Wireframe: top + bottom rings as
+// chord-by-chord edge quads, plus a vertical seam at every CYL_LON
+// boundary so the body silhouette comes from explicit edges (not a
+// view-dependent silhouette trick).
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 	const float s = _marker_size;
-	const int CYL_LON = 24;
+	const int CYL_LON = MAX(3, _mesh_sides);
 	PackedVector3Array top, btm;
 	top.resize(CYL_LON); btm.resize(CYL_LON);
 	for (int i = 0; i < CYL_LON; i++) {
@@ -1590,57 +1628,44 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 		top.set(i, Vector3(cx,  s, cz));
 		btm.set(i, Vector3(cx, -s, cz));
 	}
-	// Lateral fill — quad per segment.
+	// Lateral quads — each emitted as a 4-triangle center fan with the
+	// fan center at the quad's centroid (chord midpoint, IN the quad
+	// plane). Earlier versions projected the center onto the cylinder's
+	// lateral surface, which pushed it outside the chord plane and made
+	// each lateral face bulge outward like a 4-sided pyramid (very
+	// visible at 5 sides, ~19% of the radius). All 4 perimeter edges
+	// (top/bottom cap rings + left/right vertical seams) are real face
+	// boundaries.
 	for (int i = 0; i < CYL_LON; i++) {
 		int j = (i + 1) % CYL_LON;
-		_add_mesh_face(geo, btm[i], top[i], top[j]);
-		_add_mesh_face(geo, btm[i], top[j], btm[j]);
+		const Vector3 center = (btm[i] + top[i] + top[j] + btm[j]) * 0.25f;
+		_add_mesh_quad(geo, btm[i], top[i], top[j], btm[j], center,
+				true, true, true, true);
 	}
-	// Caps — fans from center. `_add_mesh_face` expects the caller's
-	// natural (v1-v0)×(v2-v0) to point OUTWARD; the function then flips
-	// the winding so the emitted front-face lands on the outward side.
+	// Cap fans — only the outer chord on each fan triangle is a real
+	// boundary; the two radial fan edges (center → ring vertex) are
+	// internal triangulation.
 	const Vector3 tc(0,  s, 0), bc(0, -s, 0);
 	for (int i = 0; i < CYL_LON; i++) {
 		int j = (i + 1) % CYL_LON;
-		_add_mesh_face(geo, tc, top[j], top[i]);  // top — outward +Y
-		_add_mesh_face(geo, bc, btm[i], btm[j]);  // bottom — outward -Y
-	}
-
-	if (!_mesh_wireframe) return;
-	const float w = _outline_thickness;
-	const Vector3 up(0, 1, 0), down(0, -1, 0);
-	const Vector3 u_axis(1, 0, 0), v_axis(0, 0, 1);
-	const int W = SPHERE_ARC_SEGS;
-
-	// Top + bottom cap rings — each a single continuous flat annulus.
-	// The body's silhouette/edges come from the inverted-hull rim, so
-	// the wire doesn't add explicit vertical lines on the lateral
-	// surface; that would just double the body's silhouette.
-	if (w > 0.0f) {
-		_add_arc_ring(geo, Vector3(0,  s, 0), up,   u_axis, v_axis, s, w, W);
-		_add_arc_ring(geo, Vector3(0, -s, 0), down, u_axis, v_axis, s, w, W);
-	} else {
-		for (int i = 0; i < W; i++) {
-			float a0 = SM_TAU * (float)i / W;
-			float a1 = SM_TAU * (float)(i + 1) / W;
-			Vector3 t0(std::cos(a0) * s,  s, std::sin(a0) * s);
-			Vector3 t1(std::cos(a1) * s,  s, std::sin(a1) * s);
-			Vector3 b0(std::cos(a0) * s, -s, std::sin(a0) * s);
-			Vector3 b1(std::cos(a1) * s, -s, std::sin(a1) * s);
-			geo.add_line(t0, t1);
-			geo.add_line(b0, b1);
-		}
+		// Top cap tri (tc, top[j], top[i]): opp v0=(top[j],top[i]) chord,
+		// opp v1=(tc,top[i]) radial, opp v2=(tc,top[j]) radial.
+		_add_mesh_face(geo, tc, top[j], top[i], true, false, false);
+		// Bottom cap tri (bc, btm[i], btm[j]): opp v0=(btm[i],btm[j])
+		// chord, opp v1=(bc,btm[j]) radial, opp v2=(bc,btm[i]) radial.
+		_add_mesh_face(geo, bc, btm[i], btm[j], true, false, false);
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Cone — round base at y=-s with radius=s, apex at y=+s. Wireframe: base
-// arc ring + 4 slant edges to the apex.
+// chord segments + one slant edge per longitude up to the apex. Like
+// the cylinder, all body edges are explicit (no view-dependent silhouette).
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 	const float s = _marker_size;
-	const int CONE_LON = 24;
+	const int CONE_LON = (_shape == MESH_PYRAMID) ? 4 : MAX(3, _mesh_sides);
 	PackedVector3Array base;
 	base.resize(CONE_LON);
 	for (int i = 0; i < CONE_LON; i++) {
@@ -1648,37 +1673,22 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 		base.set(i, Vector3(std::cos(a) * s, -s, std::sin(a) * s));
 	}
 	const Vector3 apex(0, s, 0), bc(0, -s, 0);
-	// Lateral surface — triangle per segment, outward normal points
-	// radially outward + slightly upward (cone slant).
+	// Slant lateral — each segment is a single triangle, all 3 edges
+	// (the two slant edges to apex and the base chord) are real face
+	// boundaries (default flags). The two slant edges shared with
+	// adjacent slant triangles will be painted from both sides — same
+	// outline color, harmless overdraw.
 	for (int i = 0; i < CONE_LON; i++) {
 		int j = (i + 1) % CONE_LON;
 		_add_mesh_face(geo, apex, base[j], base[i]);
 	}
-	// Base — fan from center, outward normal -Y.
+	// Base fan — only the outer chord is a real boundary; the two
+	// radial fan edges are internal triangulation.
 	for (int i = 0; i < CONE_LON; i++) {
 		int j = (i + 1) % CONE_LON;
-		_add_mesh_face(geo, bc, base[i], base[j]);
-	}
-
-	if (!_mesh_wireframe) return;
-	const float w = _outline_thickness;
-	const Vector3 down(0, -1, 0);
-	const Vector3 u_axis(1, 0, 0), v_axis(0, 0, 1);
-	const int W = SPHERE_ARC_SEGS;
-
-	// Base ring only — the cone's slant silhouette comes from the
-	// inverted-hull rim, so adding explicit slant lines would double
-	// the apparent silhouette.
-	if (w > 0.0f) {
-		_add_arc_ring(geo, Vector3(0, -s, 0), down, u_axis, v_axis, s, w, W);
-	} else {
-		for (int i = 0; i < W; i++) {
-			float a0 = SM_TAU * (float)i / W;
-			float a1 = SM_TAU * (float)(i + 1) / W;
-			Vector3 p0(std::cos(a0) * s, -s, std::sin(a0) * s);
-			Vector3 p1(std::cos(a1) * s, -s, std::sin(a1) * s);
-			geo.add_line(p0, p1);
-		}
+		// Tri (bc, base[i], base[j]): opp v0=(base[i],base[j]) chord,
+		// opp v1=(bc,base[j]) radial, opp v2=(bc,base[i]) radial.
+		_add_mesh_face(geo, bc, base[i], base[j], true, false, false);
 	}
 }
 
@@ -2336,41 +2346,6 @@ void SuperMarker3D::_add_disc_blob(GeoBuf &geo,
 	}
 }
 
-// Single flat annulus polygon — outer and inner ring vertices share
-// across adjacent segments, so there are no inter-segment seams. Reads
-// as a smooth ellipse from any view angle instead of a faceted strip.
-void SuperMarker3D::_add_arc_ring(GeoBuf &geo,
-		const Vector3 &center, const Vector3 &n,
-		const Vector3 &u, const Vector3 &v,
-		float radius, float width, int segs) {
-	if (radius < 0.0001f || segs < 3 || width <= 0.0f) return;
-	const float r_out = radius + width * 0.5f;
-	const float r_in  = MAX(0.0001f, radius - width * 0.5f);
-	const Vector3 push = n * (width * 0.05f);
-	PackedVector3Array outer, inner;
-	outer.resize(segs); inner.resize(segs);
-	for (int i = 0; i < segs; i++) {
-		float t = SM_TAU * (float)i / segs;
-		Vector3 dir = u * std::cos(t) + v * std::sin(t);
-		outer.set(i, center + push + dir * r_out);
-		inner.set(i, center + push + dir * r_in);
-	}
-	// Triangulate as a continuous strip — outer-to-inner winding gives
-	// natural normal pointing -n, so under CCW-front the front face is
-	// on the +n side. CULL_DISABLED on the wireframe material draws
-	// both sides anyway, so depth-test against the fill body still
-	// hides the back-half of the ring (front-arc visible from outside).
-	for (int i = 0; i < segs; i++) {
-		int j = (i + 1) % segs;
-		geo.outline_verts.push_back(outer[i]); geo.outline_normals.push_back(n);
-		geo.outline_verts.push_back(outer[j]); geo.outline_normals.push_back(n);
-		geo.outline_verts.push_back(inner[j]); geo.outline_normals.push_back(n);
-		geo.outline_verts.push_back(outer[i]); geo.outline_normals.push_back(n);
-		geo.outline_verts.push_back(inner[j]); geo.outline_normals.push_back(n);
-		geo.outline_verts.push_back(inner[i]); geo.outline_normals.push_back(n);
-	}
-}
-
 // Flat XY quad along edge for silhouette thick outlines (billboarded, n=+Z).
 void SuperMarker3D::_add_sil_edge_quad(GeoBuf &geo,
 		const Vector3 &a, const Vector3 &b, float w) {
@@ -2518,7 +2493,7 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_DIAMOND:    _gen_diamond(geo);     break;
 		case MESH_SPHERE:     _gen_sphere(geo);      break;
 		case MESH_BOX:        _gen_cube(geo);        break;
-		case MESH_PYRAMID:    _gen_pyramid(geo);     break;
+		case MESH_PYRAMID:    _gen_cone(geo);        break; // 4-sided cone fallback
 		case MESH_CYLINDER:   _gen_cylinder(geo);    break;
 		case MESH_CONE:       _gen_cone(geo);        break;
 		case ARROW_EXTRUDED:  _gen_arrow(geo);       break;
@@ -2539,50 +2514,19 @@ void SuperMarker3D::_rebuild_mesh() {
 	}
 
 	const bool is_mesh = (get_type() == TYPE_MESH);
-	const bool has_hull = is_mesh && geo.hull_verts.size() > 0;
-	const bool has_fill = is_mesh && geo.tri_verts.size() > 0;
-	const bool has_wire = is_mesh && (geo.outline_verts.size() > 0 || geo.line_verts.size() > 0);
 
 	if (is_mesh) {
-		// Mesh subtypes: fixed 3-surface order (hull → fill → wireframe)
-		// so `_build_materials` can apply the right material per index.
-		// `_build_materials` reads these flags off the mesh metadata.
-		_mesh->set_meta("_sm_has_hull", has_hull);
-		_mesh->set_meta("_sm_has_fill", has_fill);
-		_mesh->set_meta("_sm_has_wire", has_wire);
-
-		if (has_hull) {
-			Array a; a.resize(Mesh::ARRAY_MAX);
-			a[Mesh::ARRAY_VERTEX] = geo.hull_verts;
-			a[Mesh::ARRAY_NORMAL] = geo.hull_normals;
-			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
-		}
-		if (has_fill) {
+		// Mesh subtypes: ONE surface (fill triangles), with per-vertex
+		// barycentric (COLOR.rgb), height-of-edge-opposite-v0 (COLOR.a),
+		// and (height_e1, height_e2) (UV.xy) attribs that the mesh
+		// shader uses to paint outline_color along flagged boundaries.
+		if (geo.tri_verts.size() > 0) {
 			Array a; a.resize(Mesh::ARRAY_MAX);
 			a[Mesh::ARRAY_VERTEX] = geo.tri_verts;
 			a[Mesh::ARRAY_NORMAL] = geo.tri_normals;
+			a[Mesh::ARRAY_COLOR]  = geo.tri_colors;
+			a[Mesh::ARRAY_TEX_UV] = geo.tri_uvs;
 			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
-		}
-		if (has_wire) {
-			// Wireframe — outline triangles (tubes) at thickness > 0,
-			// or line primitives at thickness 0. Same outline_material.
-			if (geo.outline_verts.size() > 0) {
-				Array a; a.resize(Mesh::ARRAY_MAX);
-				a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
-				a[Mesh::ARRAY_NORMAL] = geo.outline_normals;
-				if (geo.use_outline_colors) {
-					while (geo.outline_colors.size() < geo.outline_verts.size()) {
-						geo.outline_colors.push_back(Color(1, 1, 1, 1));
-					}
-					a[Mesh::ARRAY_COLOR] = geo.outline_colors;
-				}
-				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
-			} else {
-				Array a; a.resize(Mesh::ARRAY_MAX);
-				a[Mesh::ARRAY_VERTEX] = geo.line_verts;
-				if (geo.use_line_colors) a[Mesh::ARRAY_COLOR] = geo.line_colors;
-				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, a);
-			}
 		}
 		return;
 	}

@@ -4,10 +4,13 @@
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/curve3d.hpp>
+#include <godot_cpp/classes/shader.hpp>
+#include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/standard_material3d.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/vector2.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/packed_color_array.hpp>
 
@@ -177,13 +180,10 @@ public:
 	// poking out around the screen-space edges if thickness > 0).
 	void set_mesh_wireframe(bool p);  bool get_mesh_wireframe() const;
 
-	/// Two-sided fill — when ON, the fill mesh renders both inner and
-	/// outer faces (CULL_DISABLED). Useful for "interior" or skybox-
-	/// like uses where the user wants to stand inside the marker and
-	/// still see its skin. Default OFF: standard convex-shape rendering
-	/// with face culling (no painter's-order ambiguity in always-on-top
-	/// mode, since CULL_BACK alone gives correct visibility).
-	void set_mesh_two_sided(bool p);  bool get_mesh_two_sided() const;
+	/// Number of longitudinal segments on cylinder + cone, controlling
+	/// both fill tessellation and wireframe segmentation. Range 5..24.
+	void set_mesh_sides(int p);   int get_mesh_sides() const;
+
 
 	// Universal arrow flag for the Axis category. ON: every axis arm in
 	// Cross / Plain / XYZ gets an arrowhead at its tip — `length`
@@ -293,7 +293,11 @@ private:
 	// Mesh category overlay toggle. Default ON — thick wireframe gives
 	// the bold "travel-agent globe" look out of the box.
 	bool _mesh_wireframe = true;
-	bool _mesh_two_sided = false;
+	// Round-mesh longitudinal segmentation (cylinder, cone, diamond).
+	// Default 8 reads as a nice low-poly shape; clamped 3..24 at every
+	// entry point. 3 = triangular prism / tetrahedron / triangular
+	// bipyramid, 24 = effectively round.
+	int  _mesh_sides = 8;
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -362,11 +366,26 @@ private:
 	Ref<ArrayMesh>         _mesh;
 	Ref<StandardMaterial3D> _outline_material;
 	Ref<StandardMaterial3D> _fill_material;
-	/// Inverted-hull material for the Mesh category — same `outline_color`
-	/// as the wireframe but with `CULL_FRONT` so only back-faces of the
-	/// inflated mesh show, producing a uniform-thickness outline halo
-	/// around the screen-space silhouette.
-	Ref<StandardMaterial3D> _hull_material;
+	/// Mesh-category shader material — paints fill_color across each
+	/// triangle and outline_color along edges that were flagged as real
+	/// face boundaries during mesh build (per-vertex bary + height
+	/// attribs in COLOR + UV). Replaces the dual-surface fill+wireframe
+	/// model entirely for mesh subtypes; non-mesh subtypes still use
+	/// the StandardMaterial3D pair above.
+	Ref<ShaderMaterial>     _mesh_material;
+	/// Singleton Shader resource shared by every SuperMarker3D's
+	/// `_mesh_material`. Built lazily on first use; uniforms are
+	/// per-instance via the ShaderMaterial. The mesh shader paints
+	/// outlines along flagged triangle edges (cube/cylinder/cone/etc.)
+	/// — for sphere we swap in `_sphere_shader` instead.
+	static Ref<Shader>      _mesh_shader;
+	/// Singleton Shader resource for sphere subtype. Computes lat/lon
+	/// wireframe lines analytically from each fragment's local
+	/// position so the visible grid is independent of the fill
+	/// triangulation. Both shaders share the same uniform names where
+	/// they overlap (fill_color, outline_color, etc.) plus marker_size
+	/// for the sphere's arc-length math.
+	static Ref<Shader>      _sphere_shader;
 	RID _instance;
 
 	// Per-arm renderables for Axis subtypes. Each arm (and each Burr
@@ -383,7 +402,15 @@ private:
 	//  line_verts        — PRIMITIVE_LINES (Cross, Axis, arrows, sil outlines)
 	//  outline_verts     — PRIMITIVE_TRIANGLES, thin quads WITH face normals.
 	//                      CULL_BACK on the material provides camera culling.
-	//  tri_verts         — PRIMITIVE_TRIANGLES fill (backface culled)
+	//  tri_verts         — PRIMITIVE_TRIANGLES fill (backface culled).
+	//                      For mesh subtypes, every fill vertex carries a
+	//                      barycentric weight (in tri_colors.rgb) plus three
+	//                      world-space "perpendicular height to opposite
+	//                      edge" values (tri_colors.a + tri_uvs.xy). The
+	//                      mesh shader uses these to paint outline_color
+	//                      within outline_thickness of any flagged-as-real
+	//                      face-boundary edge — height = -1 marks an edge
+	//                      as internal triangulation (skip outlining it).
 	// ---------------------------------------------------------------------------
 	struct GeoBuf {
 		// Thin-line outline (shapes without a closed 3D volume, or silhouette mode).
@@ -391,36 +418,29 @@ private:
 		PackedColorArray   line_colors;
 		bool use_line_colors = false;
 
-		// Face-normal edge quads (wireframe mode on 3D closed shapes)
-		// + tube triangles when axis lines render with thickness > 0.
-		// `outline_colors` is populated only when a generator pushes
-		// per-vertex tints (e.g. AXIS_XYZ thick tubes); the build path
-		// pads any missing entries with white at mesh-assembly time so
-		// the array stays parallel to outline_verts.
+		// Face-normal edge quads (axis tubes, arrow heads, curve ribbons,
+		// silhouette outlines). `outline_colors` is populated only when a
+		// generator pushes per-vertex tints (e.g. AXIS_XYZ thick tubes);
+		// the build path pads any missing entries with white at mesh-
+		// assembly time so the array stays parallel to outline_verts.
 		PackedVector3Array outline_verts;
 		PackedVector3Array outline_normals;
 		PackedColorArray   outline_colors;
 		bool use_outline_colors = false;
 
-		// Fill triangles — solid 3D mesh body.
+		// Fill triangles — solid 3D mesh body. For mesh subtypes only,
+		// `tri_colors` and `tri_uvs` carry the per-vertex barycentric +
+		// edge-height attributes the mesh shader needs (see top-of-struct
+		// note). Other subtypes leave these arrays empty.
 		PackedVector3Array tri_verts;
 		PackedVector3Array tri_normals;
-
-		// Backing-hull triangles — same fill geometry inflated outward
-		// by `outline_thickness`. Rendered behind the fill with
-		// CULL_FRONT in `outline_color` to give the strong cartoon
-		// outline halo around the screen-space silhouette.
-		PackedVector3Array hull_verts;
-		PackedVector3Array hull_normals;
+		PackedColorArray   tri_colors;
+		PackedVector2Array tri_uvs;
 
 		// --- Helpers ---
 		void add_line(const Vector3 &a, const Vector3 &b);
 		void add_line_colored(const Vector3 &a, const Vector3 &b, const Color &c);
 		void add_triangle(const Vector3 &a, const Vector3 &b, const Vector3 &c);
-
-		/// Thin quad along edge A→B with face normal N, width W.
-		/// Adds to outline_verts (PRIMITIVE_TRIANGLES with CULL_BACK).
-		void add_edge_quad(const Vector3 &a, const Vector3 &b, const Vector3 &n, float w);
 
 		/// Flat 2D edge quad in the XZ plane (Y=0) with normal ±Y.
 		/// Used for Flat Arrow thick outlines.
@@ -454,16 +474,40 @@ private:
 	void _gen_diamond(GeoBuf &geo) const;
 	void _gen_sphere(GeoBuf &geo) const;
 	void _gen_cube(GeoBuf &geo) const;
-	void _gen_pyramid(GeoBuf &geo) const;
 	void _gen_cylinder(GeoBuf &geo) const;
 	void _gen_cone(GeoBuf &geo) const;
-	/// Helper used by every Mesh subtype's generator: emits one fill
-	/// triangle plus one inflated hull triangle scaled outward from
-	/// the marker's origin by `outline_thickness`. Centralizes the
-	/// "always-on hull, always-on fill" pattern so each subtype's
-	/// generator is just a list of triangle vertices.
+	/// Helper used by every Mesh subtype's generator. Pushes one fill
+	/// triangle (with the flipped winding the rest of the renderer
+	/// expects) plus the per-vertex barycentric + edge-height attribs
+	/// the mesh shader needs to paint outlines on the face. The three
+	/// `e*_boundary` flags say which of the triangle's three edges are
+	/// REAL face boundaries (default true) vs. internal triangulation
+	/// diagonals (false — the shader will skip painting outlines on
+	/// those, so a cube face looks like one quad outline instead of
+	/// the two triangles it's actually built from).
+	/// `e_i` flags the edge OPPOSITE vertex i.
 	void _add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
-			const Vector3 &v2) const;
+			const Vector3 &v2,
+			bool e0_boundary = true,
+			bool e1_boundary = true,
+			bool e2_boundary = true) const;
+
+	/// Quad-face helper — emits 4 fan triangles meeting at `center`,
+	/// each owning one perimeter edge of the quad. `p0..p3` are CCW
+	/// from outside; `e01..e30` flag whether each perimeter edge is a
+	/// real face boundary. The two radial edges in each fan triangle
+	/// are always flagged internal so the shader skips outlining them.
+	/// Use this instead of two diagonal-split triangles for any flat
+	/// or near-flat quad face — the diagonal split creates corner
+	/// "outline tabs" along the diagonal direction; the center fan
+	/// has no diagonal corners and the per-edge outline strips meet
+	/// cleanly at the perimeter vertices.
+	void _add_mesh_quad(GeoBuf &geo,
+			const Vector3 &p0, const Vector3 &p1,
+			const Vector3 &p2, const Vector3 &p3,
+			const Vector3 &center,
+			bool e01_boundary, bool e12_boundary,
+			bool e23_boundary, bool e30_boundary) const;
 	void _gen_arrow(GeoBuf &geo) const;
 	void _gen_flat_arrow(GeoBuf &geo) const;
 	void _gen_curve(GeoBuf &geo) const;
@@ -530,17 +574,6 @@ private:
 	static void _add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
 			const Vector3 &axis_dir, float radius, int segs, int lat_segs);
 	static void _add_disc_blob(GeoBuf &geo, const Vector3 &center, float radius, int segs);
-	/// Flat ring annulus — a single continuous polygon in the plane
-	/// spanned by perpendicular unit vectors `u` and `v`, centered at
-	/// `center`, with outer radius = radius + width/2 and inner radius
-	/// = radius − width/2. Plane normal `n` (= u × v) is used for face
-	/// orientation and a tiny push to clear z-fighting. Adjacent
-	/// segments share vertices, so the ring reads as a smooth ellipse
-	/// instead of a faceted strip — used for sphere lat/lon arcs and
-	/// cylinder/cone cap rings.
-	static void _add_arc_ring(GeoBuf &geo, const Vector3 &center,
-			const Vector3 &n, const Vector3 &u, const Vector3 &v,
-			float radius, float width, int segs);
 	static void _add_sil_edge_quad(GeoBuf &geo, const Vector3 &a, const Vector3 &b, float w);
 	static void _add_sil_disc(GeoBuf &geo, const Vector3 &center, float radius, int segs);
 

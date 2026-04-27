@@ -11,6 +11,7 @@ addons/super_marker_3d/godot-cpp/
 addons/super_marker_3d/bin/*.exp
 addons/super_marker_3d/bin/*.lib
 addons/super_marker_3d/bin/*.pdb
+addons/super_marker_3d/bin/~*
 addons/super_marker_3d/src/*.o
 addons/super_marker_3d/.sconsign.dblite
 
@@ -25,3 +26,6 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Local launcher
+SuperMarker3D Claude.bat
