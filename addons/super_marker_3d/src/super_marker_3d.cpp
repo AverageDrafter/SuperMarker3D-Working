@@ -159,6 +159,10 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mesh_wireframe"), &SuperMarker3D::get_mesh_wireframe);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mesh_wireframe"),
 			"set_mesh_wireframe", "get_mesh_wireframe");
+	ClassDB::bind_method(D_METHOD("set_mesh_two_sided", "enabled"), &SuperMarker3D::set_mesh_two_sided);
+	ClassDB::bind_method(D_METHOD("get_mesh_two_sided"), &SuperMarker3D::get_mesh_two_sided);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mesh_two_sided"),
+			"set_mesh_two_sided", "get_mesh_two_sided");
 
 	// Outline color + thickness apply to every shape that has an
 	// outline (which is all of them in some form). Thickness > 0 turns
@@ -383,6 +387,9 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(MESH_SPHERE);
 	BIND_ENUM_CONSTANT(MESH_BOX);
 	BIND_ENUM_CONSTANT(MESH_DIAMOND);
+	BIND_ENUM_CONSTANT(MESH_PYRAMID);
+	BIND_ENUM_CONSTANT(MESH_CYLINDER);
+	BIND_ENUM_CONSTANT(MESH_CONE);
 	BIND_ENUM_CONSTANT(CURVE_FLAT);
 	BIND_ENUM_CONSTANT(CURVE_LINE_3D);
 	BIND_ENUM_CONSTANT(ARROW_EXTRUDED);
@@ -430,7 +437,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Cross:0,Axis:3,Burr:11,XYZ:8";
 				break;
 			case TYPE_MESH:
-				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Pyramid:13";
+				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Pyramid:13,Cylinder:14,Cone:15";
 				break;
 			case TYPE_SHAPE:
 				// No subtypes yet — placeholder slot for future flat 2D
@@ -465,6 +472,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "fill_color" && !(is_mesh || is_arrow || _shape == CURVE_FLAT)) hide();
 	// Mesh-category wireframe toggle.
 	if (name == "mesh_wireframe" && !is_mesh) hide();
+	if (name == "mesh_two_sided" && !is_mesh) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
 	// is editable depends on the link mode; whether it's visible at all
@@ -601,6 +609,7 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 		case AXIS_CROSS: case AXIS_PLAIN: case AXIS_BURR: case AXIS_XYZ:
 			return TYPE_AXIS;
 		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND: case MESH_PYRAMID:
+		case MESH_CYLINDER: case MESH_CONE:
 			return TYPE_MESH;
 		case CURVE_FLAT: case CURVE_LINE_3D:
 			return TYPE_CURVE;
@@ -692,6 +701,12 @@ void SuperMarker3D::set_mesh_wireframe(bool p) {
 	if (get_type() == TYPE_MESH) SM_REBUILD();
 }
 bool SuperMarker3D::get_mesh_wireframe() const { return _mesh_wireframe; }
+
+void SuperMarker3D::set_mesh_two_sided(bool p) {
+	_mesh_two_sided = p;
+	if (is_inside_tree() && get_type() == TYPE_MESH) _build_materials();
+}
+bool SuperMarker3D::get_mesh_two_sided() const { return _mesh_two_sided; }
 
 void SuperMarker3D::set_axis_link_mode(int p) {
 	_axis_link_mode = p;
@@ -1034,16 +1049,33 @@ void SuperMarker3D::_build_materials() {
 	const bool billboard  = silhouette && is_mesh;
 
 	// --- Outline material ---
+	// The outline / wireframe is artificially unshaded and unshadowed —
+	// it's a highlight, not a real surface. Even when `in_game_object`
+	// is on (which routes the FILL through lit shading + shadows), the
+	// outline stays flat unshaded so it reads as a bold marker overlay.
 	if (_outline_material.is_null()) _outline_material.instantiate();
-	_outline_material->set_shading_mode(_in_game_object
-			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
-			: BaseMaterial3D::SHADING_MODE_UNSHADED);
+	_outline_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, true);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
-	// Flat arrow + curve ribbons are two-sided (visible from both sides).
-	_outline_material->set_cull_mode((_shape == ARROW_FLAT || _shape == CURVE_FLAT)
-			? BaseMaterial3D::CULL_DISABLED
-			: BaseMaterial3D::CULL_BACK);
+	// Mesh wireframe — default CULL_DISABLED so the strips render from
+	// both sides and the fill body's depth occludes the back-half (front
+	// arcs visible, back arcs hidden). When `always_on_top` is on we
+	// lose depth test, so we'd see ALL strips (including back-facing)
+	// stack up; switch to CULL_BACK in that mode so face culling alone
+	// keeps the silhouette honest. Flat arrow + curve ribbons stay
+	// CULL_DISABLED unconditionally (they're flat surfaces, both sides
+	// are intentional).
+	const bool is_mesh_type = (get_type() == TYPE_MESH);
+	BaseMaterial3D::CullMode wire_cull = BaseMaterial3D::CULL_BACK;
+	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT) {
+		wire_cull = BaseMaterial3D::CULL_DISABLED;
+	} else if (is_mesh_type) {
+		wire_cull = _always_on_top
+				? BaseMaterial3D::CULL_BACK
+				: BaseMaterial3D::CULL_DISABLED;
+	}
+	_outline_material->set_cull_mode(wire_cull);
 
 	if (_shape == AXIS_XYZ) {
 		// Vertex colors drive the per-axis RGB.  Material albedo = white so nothing tints.
@@ -1071,14 +1103,24 @@ void SuperMarker3D::_build_materials() {
 	_fill_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
 	_fill_material->set_albedo(_fill_color);
 	// Flat shapes (silhouette billboard + flat arrow + curve) use CULL_DISABLED
-	// so both sides render. 3D fills use CULL_BACK.
+	// so both sides render. 3D fills use CULL_BACK by default — closed
+	// convex shapes self-occlude correctly via face culling alone, even
+	// in always-on-top mode where depth test is off. Mesh subtypes opt
+	// into CULL_DISABLED via `mesh_two_sided` for interior / skybox use.
 	const bool flat_shape = (billboard || _shape == ARROW_FLAT || _shape == CURVE_FLAT);
-	_fill_material->set_cull_mode(flat_shape
+	const bool mesh_two_sided = is_mesh_type && _mesh_two_sided;
+	_fill_material->set_cull_mode((flat_shape || mesh_two_sided)
 			? BaseMaterial3D::CULL_DISABLED
 			: BaseMaterial3D::CULL_BACK);
 	_fill_material->set_render_priority(0);
 	_fill_material->set_transparency(_fill_color.a < 1.0f
 			? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
+	// Default depth-draw: opaque-only writes depth, alpha doesn't. With
+	// alpha < 1 fill the body's depth is left empty inside the silhouette,
+	// so the back half of wire rings can show through the (transparent)
+	// fill — at full transparency you see a complete circle of outline
+	// color, at partial alpha you see the back arc blended with the fill.
+	_fill_material->set_depth_draw_mode(BaseMaterial3D::DEPTH_DRAW_OPAQUE_ONLY);
 	_fill_material->set_billboard_mode(billboard
 			? BaseMaterial3D::BILLBOARD_ENABLED
 			: BaseMaterial3D::BILLBOARD_DISABLED);
@@ -1164,10 +1206,16 @@ void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3
 	geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
 
 	if (_outline_thickness > 0.0f) {
+		// Hull inflation = half the outline_thickness — gives the rim a
+		// screen-space width that visually matches the wire-ring annulus
+		// (which is itself ±thickness/2 around its base radius). At full
+		// `outline_thickness` the hull rim was reading noticeably heavier
+		// than the lat/lon rings on the same marker.
+		const float hull_push = _outline_thickness * 0.5f;
 		auto push_out = [&](const Vector3 &v) -> Vector3 {
 			float len_sq = v.length_squared();
 			if (len_sq < 1e-8f) return v;
-			return v + v / Math::sqrt(len_sq) * _outline_thickness;
+			return v + v / Math::sqrt(len_sq) * hull_push;
 		};
 		const Vector3 h0 = push_out(v0);
 		const Vector3 h1 = push_out(v1);
@@ -1346,9 +1394,12 @@ void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 		{2,4},{4,3},{3,5},{5,2},
 	};
 	if (_outline_thickness > 0.0f) {
-		const float tr = _outline_thickness * 0.5f;
-		for (int i = 0; i < 12; i++) _add_tube(geo, corners[edges[i][0]], corners[edges[i][1]], tr, 6);
-		for (int i = 0; i < 6; i++) _add_sphere_blob(geo, corners[i], tr, 4, 6);
+		for (int i = 0; i < 12; i++) {
+			const Vector3 a = corners[edges[i][0]];
+			const Vector3 b = corners[edges[i][1]];
+			const Vector3 n = ((a + b) * 0.5f).normalized(); // outward-radial
+			geo.add_edge_quad(a, b, n, _outline_thickness);
+		}
 	} else {
 		for (int i = 0; i < 12; i++) geo.add_line(corners[edges[i][0]], corners[edges[i][1]]);
 	}
@@ -1392,36 +1443,52 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 
 	if (!_mesh_wireframe) return;
 	const int N = SPHERE_ARC_SEGS;
-	const float tr = (_outline_thickness > 0.0f) ? _outline_thickness * 0.5f : 0.0f;
+	const float w = _outline_thickness;
 
-	// 3 latitude rings at y = -r/2, 0, +r/2 — smooth circular arcs.
-	const float lats[3] = { -r * 0.5f, 0.0f, r * 0.5f };
-	for (int k = 0; k < 3; k++) {
+	// 5 latitude rings — Antarctic, Tropic of Capricorn, Equator,
+	// Tropic of Cancer, Arctic — each a single smooth annulus polygon.
+	const float lats[5] = { -r * 0.85f, -r * 0.5f, 0.0f, r * 0.5f, r * 0.85f };
+	for (int k = 0; k < 5; k++) {
 		float y = lats[k];
-		float rr = std::sqrt(r * r - y * y);
+		float rr = std::sqrt(MAX(0.0f, r * r - y * y));
 		if (rr < 0.0001f) continue;
-		for (int i = 0; i < N; i++) {
-			float a0 = SM_TAU * (float)i / N;
-			float a1 = SM_TAU * (float)(i + 1) / N;
-			Vector3 p0(rr * std::cos(a0), y, rr * std::sin(a0));
-			Vector3 p1(rr * std::cos(a1), y, rr * std::sin(a1));
-			if (tr > 0.0f) _add_tube(geo, p0, p1, tr, 5);
-			else           geo.add_line(p0, p1);
+		const Vector3 center(0, y, 0);
+		const Vector3 n(0, 1, 0);
+		const Vector3 u(1, 0, 0), v(0, 0, 1);
+		if (w > 0.0f) {
+			_add_arc_ring(geo, center, n, u, v, rr, w, N);
+		} else {
+			for (int i = 0; i < N; i++) {
+				float a0 = SM_TAU * (float)i / N;
+				float a1 = SM_TAU * (float)(i + 1) / N;
+				geo.add_line(Vector3(rr * std::cos(a0), y, rr * std::sin(a0)),
+						Vector3(rr * std::cos(a1), y, rr * std::sin(a1)));
+			}
 		}
 	}
 
 	// 3 full longitude great-circles at φ = 0°, 60°, 120°.
+	// Each great circle lies in a plane containing the y-axis and the
+	// equator point at angle φ. Plane is spanned by u = +Y (pole-axis)
+	// and v = (sin(φ), 0, cos(φ)) (equator direction at φ).
 	const float longs[3] = { 0.0f, SM_TAU / 6.0f, SM_TAU / 3.0f };
 	for (int k = 0; k < 3; k++) {
 		float phi = longs[k];
 		float sp = std::sin(phi), cp = std::cos(phi);
-		for (int i = 0; i < N; i++) {
-			float psi0 = SM_TAU * (float)i / N;
-			float psi1 = SM_TAU * (float)(i + 1) / N;
-			Vector3 p0(std::sin(psi0) * sp * r, std::cos(psi0) * r, std::sin(psi0) * cp * r);
-			Vector3 p1(std::sin(psi1) * sp * r, std::cos(psi1) * r, std::sin(psi1) * cp * r);
-			if (tr > 0.0f) _add_tube(geo, p0, p1, tr, 5);
-			else           geo.add_line(p0, p1);
+		const Vector3 u_lon(0, 1, 0);
+		const Vector3 v_lon(sp, 0, cp);
+		// Plane normal n = u × v, points perpendicular to longitude plane.
+		const Vector3 n_lon = u_lon.cross(v_lon); // (cp, 0, -sp), unit
+		if (w > 0.0f) {
+			_add_arc_ring(geo, Vector3(), n_lon, u_lon, v_lon, r, w, N);
+		} else {
+			for (int i = 0; i < N; i++) {
+				float t0 = SM_TAU * (float)i / N;
+				float t1 = SM_TAU * (float)(i + 1) / N;
+				Vector3 p0(std::sin(t0) * sp * r, std::cos(t0) * r, std::sin(t0) * cp * r);
+				Vector3 p1(std::sin(t1) * sp * r, std::cos(t1) * r, std::sin(t1) * cp * r);
+				geo.add_line(p0, p1);
+			}
 		}
 	}
 }
@@ -1456,9 +1523,12 @@ void SuperMarker3D::_gen_cube(GeoBuf &geo) const {
 		{0,4},{1,5},{2,6},{3,7},
 	};
 	if (_outline_thickness > 0.0f) {
-		const float tr = _outline_thickness * 0.5f;
-		for (int i = 0; i < 12; i++) _add_tube(geo, c[edges[i][0]], c[edges[i][1]], tr, 6);
-		for (int i = 0; i < 8; i++) _add_sphere_blob(geo, c[i], tr, 4, 6);
+		for (int i = 0; i < 12; i++) {
+			const Vector3 a = c[edges[i][0]];
+			const Vector3 b = c[edges[i][1]];
+			const Vector3 n = ((a + b) * 0.5f).normalized(); // outward-radial
+			geo.add_edge_quad(a, b, n, _outline_thickness);
+		}
 	} else {
 		for (int i = 0; i < 12; i++) geo.add_line(c[edges[i][0]], c[edges[i][1]]);
 	}
@@ -1475,14 +1545,15 @@ void SuperMarker3D::_gen_pyramid(GeoBuf &geo) const {
 	const Vector3 b0(-s, -s, -s), b1(s, -s, -s), b2(s, -s, s), b3(-s, -s, s);
 	const Vector3 ap(0, s, 0);
 
-	// Lateral sides (apex on top, going CCW around base).
-	_add_mesh_face(geo, ap, b0, b1);
-	_add_mesh_face(geo, ap, b1, b2);
-	_add_mesh_face(geo, ap, b2, b3);
-	_add_mesh_face(geo, ap, b3, b0);
-	// Base — two triangles facing -Y (CCW from below).
-	_add_mesh_face(geo, b0, b3, b2);
-	_add_mesh_face(geo, b0, b2, b1);
+	// Lateral sides — outward normals point away from the y-axis
+	// interior with a slight downward tilt (face slopes up to apex).
+	_add_mesh_face(geo, ap, b1, b0);
+	_add_mesh_face(geo, ap, b2, b1);
+	_add_mesh_face(geo, ap, b3, b2);
+	_add_mesh_face(geo, ap, b0, b3);
+	// Base — outward normal -Y (visible from below).
+	_add_mesh_face(geo, b0, b2, b3);
+	_add_mesh_face(geo, b0, b1, b2);
 
 	if (!_mesh_wireframe) return;
 	const Vector3 corners[5] = { b0, b1, b2, b3, ap };
@@ -1491,11 +1562,123 @@ void SuperMarker3D::_gen_pyramid(GeoBuf &geo) const {
 		{4,0},{4,1},{4,2},{4,3}, // lateral
 	};
 	if (_outline_thickness > 0.0f) {
-		const float tr = _outline_thickness * 0.5f;
-		for (int i = 0; i < 8; i++) _add_tube(geo, corners[edges[i][0]], corners[edges[i][1]], tr, 6);
-		for (int i = 0; i < 5; i++) _add_sphere_blob(geo, corners[i], tr, 4, 6);
+		for (int i = 0; i < 8; i++) {
+			const Vector3 a = corners[edges[i][0]];
+			const Vector3 b = corners[edges[i][1]];
+			const Vector3 n = ((a + b) * 0.5f).normalized(); // outward-radial
+			geo.add_edge_quad(a, b, n, _outline_thickness);
+		}
 	} else {
 		for (int i = 0; i < 8; i++) geo.add_line(corners[edges[i][0]], corners[edges[i][1]]);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cylinder — radius and half-height both = marker_size. Caps at y = ±s,
+// lateral surface around the Y axis. Wireframe: top + bottom arc rings
+// plus 4 vertical edges at 0/90/180/270°.
+// ---------------------------------------------------------------------------
+
+void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
+	const float s = _marker_size;
+	const int CYL_LON = 24;
+	PackedVector3Array top, btm;
+	top.resize(CYL_LON); btm.resize(CYL_LON);
+	for (int i = 0; i < CYL_LON; i++) {
+		float a = SM_TAU * (float)i / CYL_LON;
+		float cx = std::cos(a) * s, cz = std::sin(a) * s;
+		top.set(i, Vector3(cx,  s, cz));
+		btm.set(i, Vector3(cx, -s, cz));
+	}
+	// Lateral fill — quad per segment.
+	for (int i = 0; i < CYL_LON; i++) {
+		int j = (i + 1) % CYL_LON;
+		_add_mesh_face(geo, btm[i], top[i], top[j]);
+		_add_mesh_face(geo, btm[i], top[j], btm[j]);
+	}
+	// Caps — fans from center. `_add_mesh_face` expects the caller's
+	// natural (v1-v0)×(v2-v0) to point OUTWARD; the function then flips
+	// the winding so the emitted front-face lands on the outward side.
+	const Vector3 tc(0,  s, 0), bc(0, -s, 0);
+	for (int i = 0; i < CYL_LON; i++) {
+		int j = (i + 1) % CYL_LON;
+		_add_mesh_face(geo, tc, top[j], top[i]);  // top — outward +Y
+		_add_mesh_face(geo, bc, btm[i], btm[j]);  // bottom — outward -Y
+	}
+
+	if (!_mesh_wireframe) return;
+	const float w = _outline_thickness;
+	const Vector3 up(0, 1, 0), down(0, -1, 0);
+	const Vector3 u_axis(1, 0, 0), v_axis(0, 0, 1);
+	const int W = SPHERE_ARC_SEGS;
+
+	// Top + bottom cap rings — each a single continuous flat annulus.
+	// The body's silhouette/edges come from the inverted-hull rim, so
+	// the wire doesn't add explicit vertical lines on the lateral
+	// surface; that would just double the body's silhouette.
+	if (w > 0.0f) {
+		_add_arc_ring(geo, Vector3(0,  s, 0), up,   u_axis, v_axis, s, w, W);
+		_add_arc_ring(geo, Vector3(0, -s, 0), down, u_axis, v_axis, s, w, W);
+	} else {
+		for (int i = 0; i < W; i++) {
+			float a0 = SM_TAU * (float)i / W;
+			float a1 = SM_TAU * (float)(i + 1) / W;
+			Vector3 t0(std::cos(a0) * s,  s, std::sin(a0) * s);
+			Vector3 t1(std::cos(a1) * s,  s, std::sin(a1) * s);
+			Vector3 b0(std::cos(a0) * s, -s, std::sin(a0) * s);
+			Vector3 b1(std::cos(a1) * s, -s, std::sin(a1) * s);
+			geo.add_line(t0, t1);
+			geo.add_line(b0, b1);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cone — round base at y=-s with radius=s, apex at y=+s. Wireframe: base
+// arc ring + 4 slant edges to the apex.
+// ---------------------------------------------------------------------------
+
+void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
+	const float s = _marker_size;
+	const int CONE_LON = 24;
+	PackedVector3Array base;
+	base.resize(CONE_LON);
+	for (int i = 0; i < CONE_LON; i++) {
+		float a = SM_TAU * (float)i / CONE_LON;
+		base.set(i, Vector3(std::cos(a) * s, -s, std::sin(a) * s));
+	}
+	const Vector3 apex(0, s, 0), bc(0, -s, 0);
+	// Lateral surface — triangle per segment, outward normal points
+	// radially outward + slightly upward (cone slant).
+	for (int i = 0; i < CONE_LON; i++) {
+		int j = (i + 1) % CONE_LON;
+		_add_mesh_face(geo, apex, base[j], base[i]);
+	}
+	// Base — fan from center, outward normal -Y.
+	for (int i = 0; i < CONE_LON; i++) {
+		int j = (i + 1) % CONE_LON;
+		_add_mesh_face(geo, bc, base[i], base[j]);
+	}
+
+	if (!_mesh_wireframe) return;
+	const float w = _outline_thickness;
+	const Vector3 down(0, -1, 0);
+	const Vector3 u_axis(1, 0, 0), v_axis(0, 0, 1);
+	const int W = SPHERE_ARC_SEGS;
+
+	// Base ring only — the cone's slant silhouette comes from the
+	// inverted-hull rim, so adding explicit slant lines would double
+	// the apparent silhouette.
+	if (w > 0.0f) {
+		_add_arc_ring(geo, Vector3(0, -s, 0), down, u_axis, v_axis, s, w, W);
+	} else {
+		for (int i = 0; i < W; i++) {
+			float a0 = SM_TAU * (float)i / W;
+			float a1 = SM_TAU * (float)(i + 1) / W;
+			Vector3 p0(std::cos(a0) * s, -s, std::sin(a0) * s);
+			Vector3 p1(std::cos(a1) * s, -s, std::sin(a1) * s);
+			geo.add_line(p0, p1);
+		}
 	}
 }
 
@@ -2153,6 +2336,41 @@ void SuperMarker3D::_add_disc_blob(GeoBuf &geo,
 	}
 }
 
+// Single flat annulus polygon — outer and inner ring vertices share
+// across adjacent segments, so there are no inter-segment seams. Reads
+// as a smooth ellipse from any view angle instead of a faceted strip.
+void SuperMarker3D::_add_arc_ring(GeoBuf &geo,
+		const Vector3 &center, const Vector3 &n,
+		const Vector3 &u, const Vector3 &v,
+		float radius, float width, int segs) {
+	if (radius < 0.0001f || segs < 3 || width <= 0.0f) return;
+	const float r_out = radius + width * 0.5f;
+	const float r_in  = MAX(0.0001f, radius - width * 0.5f);
+	const Vector3 push = n * (width * 0.05f);
+	PackedVector3Array outer, inner;
+	outer.resize(segs); inner.resize(segs);
+	for (int i = 0; i < segs; i++) {
+		float t = SM_TAU * (float)i / segs;
+		Vector3 dir = u * std::cos(t) + v * std::sin(t);
+		outer.set(i, center + push + dir * r_out);
+		inner.set(i, center + push + dir * r_in);
+	}
+	// Triangulate as a continuous strip — outer-to-inner winding gives
+	// natural normal pointing -n, so under CCW-front the front face is
+	// on the +n side. CULL_DISABLED on the wireframe material draws
+	// both sides anyway, so depth-test against the fill body still
+	// hides the back-half of the ring (front-arc visible from outside).
+	for (int i = 0; i < segs; i++) {
+		int j = (i + 1) % segs;
+		geo.outline_verts.push_back(outer[i]); geo.outline_normals.push_back(n);
+		geo.outline_verts.push_back(outer[j]); geo.outline_normals.push_back(n);
+		geo.outline_verts.push_back(inner[j]); geo.outline_normals.push_back(n);
+		geo.outline_verts.push_back(outer[i]); geo.outline_normals.push_back(n);
+		geo.outline_verts.push_back(inner[j]); geo.outline_normals.push_back(n);
+		geo.outline_verts.push_back(inner[i]); geo.outline_normals.push_back(n);
+	}
+}
+
 // Flat XY quad along edge for silhouette thick outlines (billboarded, n=+Z).
 void SuperMarker3D::_add_sil_edge_quad(GeoBuf &geo,
 		const Vector3 &a, const Vector3 &b, float w) {
@@ -2301,6 +2519,8 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_SPHERE:     _gen_sphere(geo);      break;
 		case MESH_BOX:        _gen_cube(geo);        break;
 		case MESH_PYRAMID:    _gen_pyramid(geo);     break;
+		case MESH_CYLINDER:   _gen_cylinder(geo);    break;
+		case MESH_CONE:       _gen_cone(geo);        break;
 		case ARROW_EXTRUDED:  _gen_arrow(geo);       break;
 		case ARROW_FLAT:      _gen_flat_arrow(geo);  break;
 		case CURVE_FLAT:      _gen_curve(geo);       break;

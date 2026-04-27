@@ -58,6 +58,8 @@ public:
 		MESH_BOX = 4,           // value 4 retained from old SHAPE_CUBE
 		MESH_DIAMOND = 1,
 		MESH_PYRAMID = 13,      // 4-sided pyramid (square base + apex)
+		MESH_CYLINDER = 14,     // capped cylinder
+		MESH_CONE = 15,         // round-base cone
 
 		// Shape category — reserved for future flat 2D iconography.
 		// (Cross used to live here pre-1.0; it migrated to Axis.)
@@ -175,6 +177,14 @@ public:
 	// poking out around the screen-space edges if thickness > 0).
 	void set_mesh_wireframe(bool p);  bool get_mesh_wireframe() const;
 
+	/// Two-sided fill — when ON, the fill mesh renders both inner and
+	/// outer faces (CULL_DISABLED). Useful for "interior" or skybox-
+	/// like uses where the user wants to stand inside the marker and
+	/// still see its skin. Default OFF: standard convex-shape rendering
+	/// with face culling (no painter's-order ambiguity in always-on-top
+	/// mode, since CULL_BACK alone gives correct visibility).
+	void set_mesh_two_sided(bool p);  bool get_mesh_two_sided() const;
+
 	// Universal arrow flag for the Axis category. ON: every axis arm in
 	// Cross / Plain / XYZ gets an arrowhead at its tip — `length`
 	// controls how far back from the tip the arrowhead extends, `width`
@@ -283,6 +293,7 @@ private:
 	// Mesh category overlay toggle. Default ON — thick wireframe gives
 	// the bold "travel-agent globe" look out of the box.
 	bool _mesh_wireframe = true;
+	bool _mesh_two_sided = false;
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -444,6 +455,8 @@ private:
 	void _gen_sphere(GeoBuf &geo) const;
 	void _gen_cube(GeoBuf &geo) const;
 	void _gen_pyramid(GeoBuf &geo) const;
+	void _gen_cylinder(GeoBuf &geo) const;
+	void _gen_cone(GeoBuf &geo) const;
 	/// Helper used by every Mesh subtype's generator: emits one fill
 	/// triangle plus one inflated hull triangle scaled outward from
 	/// the marker's origin by `outline_thickness`. Centralizes the
@@ -517,6 +530,17 @@ private:
 	static void _add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
 			const Vector3 &axis_dir, float radius, int segs, int lat_segs);
 	static void _add_disc_blob(GeoBuf &geo, const Vector3 &center, float radius, int segs);
+	/// Flat ring annulus — a single continuous polygon in the plane
+	/// spanned by perpendicular unit vectors `u` and `v`, centered at
+	/// `center`, with outer radius = radius + width/2 and inner radius
+	/// = radius − width/2. Plane normal `n` (= u × v) is used for face
+	/// orientation and a tiny push to clear z-fighting. Adjacent
+	/// segments share vertices, so the ring reads as a smooth ellipse
+	/// instead of a faceted strip — used for sphere lat/lon arcs and
+	/// cylinder/cone cap rings.
+	static void _add_arc_ring(GeoBuf &geo, const Vector3 &center,
+			const Vector3 &n, const Vector3 &u, const Vector3 &v,
+			float radius, float width, int segs);
 	static void _add_sil_edge_quad(GeoBuf &geo, const Vector3 &a, const Vector3 &b, float w);
 	static void _add_sil_disc(GeoBuf &geo, const Vector3 &center, float radius, int segs);
 
