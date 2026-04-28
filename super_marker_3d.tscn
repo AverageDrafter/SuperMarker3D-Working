@@ -2,13 +2,14 @@
 
 [node name="SuperMarker3D" type="SuperMarker3D" unique_id=29451092]
 type = 1
-subtype = 2
+subtype = 1
 axis_arrows = true
 axis_arrow_length = 1.293
 axis_arrow_width = 0.485
 mesh_sides = 10
-outline_color = Color(0.9843137, 0.85882354, 0.019607844, 1)
-marker_size = 1.62
+outline_color = Color(0.8666667, 0.14901961, 0.13725491, 1)
+bary_thickness = 0.191
+marker_size = 3.62
 axis_length_x_pos = 8.04
 axis_length_x_neg = 8.04
 axis_length_y_pos = 8.04
@@ -17,5 +18,4 @@ axis_length_z_pos = 8.04
 axis_length_z_neg = 8.04
 head_length = 3.5
 head_width = 1.94
-shows_in_play = false
 always_on_top = true

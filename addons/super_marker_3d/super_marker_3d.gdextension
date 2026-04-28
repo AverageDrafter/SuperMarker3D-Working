@@ -15,4 +15,4 @@ macos.release = "res://addons/super_marker_3d/bin/libsupermarker3d.macos.templat
 class_reference = "res://addons/super_marker_3d/doc_classes"
 
 [icons]
-SuperMarker3D = "res://addons/super_marker_3d/icons/super_marker_3d.svg"
+SuperMarker3D = "res://addons/super_marker_3d/Assets/super_marker_3d.svg"

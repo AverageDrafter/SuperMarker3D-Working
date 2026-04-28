@@ -159,6 +159,15 @@ public:
 
 	void set_outline_color(const Color &p);   Color get_outline_color() const;
 	void set_outline_thickness(float p);      float get_outline_thickness() const;
+	/// Pass-2 bary-method overlay strip width (world units). The pass-1
+	/// quad-method strip on a face can leave a 1-pixel hairline along
+	/// the diagonals where its min-of-4-edges function has a crease;
+	/// this overlay paints a thin bary-method strip on top of pass 1
+	/// to clean that up. Set to 0 to disable the overlay entirely.
+	/// The overlay is also auto-disabled whenever
+	/// `outline_thickness <= bary_thickness` (otherwise the overlay
+	/// would be wider than the user's chosen outline).
+	void set_bary_thickness(float p);         float get_bary_thickness() const;
 
 	void set_fill_enabled(bool p);  bool get_fill_enabled() const;
 	void set_fill_color(const Color &p); Color get_fill_color() const;
@@ -272,6 +281,7 @@ private:
 
 	Color _outline_color = Color(0.0f, 1.0f, 0.8f, 1.0f);
 	float _outline_thickness = 0.0f;
+	float _bary_thickness    = 0.005f;
 
 	bool  _fill_enabled = false;
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);
@@ -373,12 +383,23 @@ private:
 	/// model entirely for mesh subtypes; non-mesh subtypes still use
 	/// the StandardMaterial3D pair above.
 	Ref<ShaderMaterial>     _mesh_material;
+	/// Pass-2 bary-method overlay material. Uses the OLD bary*h
+	/// shader (`_bary_shader`) and a fixed thin outline_thickness so
+	/// the overlay strip is a thin line that cleans up any artifact
+	/// the pass-1 quad-method painting leaves at min-of-4 creases on
+	/// a face.
+	Ref<ShaderMaterial>     _bary_material;
 	/// Singleton Shader resource shared by every SuperMarker3D's
 	/// `_mesh_material`. Built lazily on first use; uniforms are
 	/// per-instance via the ShaderMaterial. The mesh shader paints
 	/// outlines along flagged triangle edges (cube/cylinder/cone/etc.)
 	/// — for sphere we swap in `_sphere_shader` instead.
 	static Ref<Shader>      _mesh_shader;
+	/// Singleton Shader resource for the pass-2 bary-method overlay.
+	/// OLD `bary[v_opp] * h_opp_edge` strip math, one boundary edge
+	/// painted per triangle — no min-of-multiple-edges fold and so no
+	/// crease artifact on a face.
+	static Ref<Shader>      _bary_shader;
 	/// Singleton Shader resource for sphere subtype. Computes lat/lon
 	/// wireframe lines analytically from each fragment's local
 	/// position so the visible grid is independent of the fill
@@ -428,14 +449,31 @@ private:
 		PackedColorArray   outline_colors;
 		bool use_outline_colors = false;
 
-		// Fill triangles — solid 3D mesh body. For mesh subtypes only,
-		// `tri_colors` and `tri_uvs` carry the per-vertex barycentric +
-		// edge-height attributes the mesh shader needs (see top-of-struct
-		// note). Other subtypes leave these arrays empty.
+		// Fill triangles — solid 3D mesh body. For mesh subtypes the
+		// per-vertex perpendicular distances to the (up to) 4 face edges
+		// are split between `tri_uvs` (slots 0-1) and `tri_uv2s` (slots
+		// 2-3). Both are 32-bit-float vertex attributes, so the -1
+		// "skip this slot" sentinel survives. (COLOR was used for slots
+		// 0-3 in an earlier revision but ArrayMesh quantises COLOR to
+		// 8-bit normalised, clamping -1 to 0 and turning the sentinel
+		// into a valid zero-distance edge — the mesh painted entirely
+		// outline color.) Other subtypes leave the tri_* arrays empty.
 		PackedVector3Array tri_verts;
 		PackedVector3Array tri_normals;
-		PackedColorArray   tri_colors;
-		PackedVector2Array tri_uvs;
+		PackedColorArray   tri_colors;   // unused by mesh path; retained for outline path compat
+		PackedVector2Array tri_uvs;      // mesh path: edge-distance slots 0-1
+		PackedVector2Array tri_uv2s;     // mesh path: edge-distance slots 2-3
+
+		// Pass-2 bary-method overlay surface. Same geometry as the
+		// pass-1 (4-distance) tri arrays but with per-triangle
+		// bary*h attributes for the OLD bary shader. Used by the
+		// thin-line bary overlay that fills any visible artifact the
+		// pass-1 4-distance min-of-4 painting can leave on a face.
+		PackedVector3Array tri_bary_verts;
+		PackedVector3Array tri_bary_normals;
+		PackedColorArray   tri_bary_colors;   // bary tags (1,0,0)/(0,1,0)/(0,0,1)
+		PackedVector2Array tri_bary_uvs;      // (h0, h1)
+		PackedVector2Array tri_bary_uv2s;     // (h2, 0)
 
 		// --- Helpers ---
 		void add_line(const Vector3 &a, const Vector3 &b);
@@ -506,6 +544,21 @@ private:
 			const Vector3 &p0, const Vector3 &p1,
 			const Vector3 &p2, const Vector3 &p3,
 			const Vector3 &center,
+			bool e01_boundary, bool e12_boundary,
+			bool e23_boundary, bool e30_boundary) const;
+
+	/// Quad face emitted as a 2-triangle diagonal split where each
+	/// vertex carries the perpendicular distance to all FOUR perimeter
+	/// edges of the quad (not the local triangle's edges). The shader
+	/// interpolates those distances linearly within each triangle, so
+	/// the strip math sees the full quad geometry and outlines stay
+	/// rectangular all the way to the corners — the diagonal becomes
+	/// invisible to the strip painting. Use for tall narrow rectangles
+	/// (e.g. cylinder lateral facets) where the bary-times-height
+	/// scheme tapers strips at the diagonal endpoints.
+	void _add_mesh_quad_face(GeoBuf &geo,
+			const Vector3 &p0, const Vector3 &p1,
+			const Vector3 &p2, const Vector3 &p3,
 			bool e01_boundary, bool e12_boundary,
 			bool e23_boundary, bool e30_boundary) const;
 	void _gen_arrow(GeoBuf &geo) const;

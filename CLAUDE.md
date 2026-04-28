@@ -17,7 +17,7 @@ SuperMarker3D-Working/
     src/
       register_types.{cpp,h}           single-class registration
       super_marker_3d.{cpp,h}          the node
-    icons/super_marker_3d.svg          inspector icon
+    Assets/                            inspector icon, figure model reference, textures
     doc_classes/SuperMarker3D.xml      F1 class help
     bin/                               compiled .dll/.so output
   demos/
