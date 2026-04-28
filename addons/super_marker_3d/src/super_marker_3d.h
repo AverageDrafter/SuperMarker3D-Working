@@ -159,15 +159,6 @@ public:
 
 	void set_outline_color(const Color &p);   Color get_outline_color() const;
 	void set_outline_thickness(float p);      float get_outline_thickness() const;
-	/// Pass-2 bary-method overlay strip width (world units). The pass-1
-	/// quad-method strip on a face can leave a 1-pixel hairline along
-	/// the diagonals where its min-of-4-edges function has a crease;
-	/// this overlay paints a thin bary-method strip on top of pass 1
-	/// to clean that up. Set to 0 to disable the overlay entirely.
-	/// The overlay is also auto-disabled whenever
-	/// `outline_thickness <= bary_thickness` (otherwise the overlay
-	/// would be wider than the user's chosen outline).
-	void set_bary_thickness(float p);         float get_bary_thickness() const;
 
 	void set_fill_enabled(bool p);  bool get_fill_enabled() const;
 	void set_fill_color(const Color &p); Color get_fill_color() const;
@@ -181,13 +172,6 @@ public:
 	void set_axis_color_y_neg(const Color &p); Color get_axis_color_y_neg() const;
 	void set_axis_color_z_pos(const Color &p); Color get_axis_color_z_pos() const;
 	void set_axis_color_z_neg(const Color &p); Color get_axis_color_z_neg() const;
-
-	// Universal wireframe flag for the Mesh category. ON: a thick
-	// outline-color wireframe is drawn on top of the lit fill mesh
-	// (tubes when `outline_thickness > 0`, 1px lines at 0). OFF:
-	// just the fill (with the outline-color backing silhouette still
-	// poking out around the screen-space edges if thickness > 0).
-	void set_mesh_wireframe(bool p);  bool get_mesh_wireframe() const;
 
 	/// Number of longitudinal segments on cylinder + cone, controlling
 	/// both fill tessellation and wireframe segmentation. Range 5..24.
@@ -281,7 +265,6 @@ private:
 
 	Color _outline_color = Color(0.0f, 1.0f, 0.8f, 1.0f);
 	float _outline_thickness = 0.0f;
-	float _bary_thickness    = 0.005f;
 
 	bool  _fill_enabled = false;
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);
@@ -300,9 +283,6 @@ private:
 	float _axis_arrow_length = 0.15f;
 	float _axis_arrow_width = 0.075f; // splay radius — half of length default
 
-	// Mesh category overlay toggle. Default ON — thick wireframe gives
-	// the bold "travel-agent globe" look out of the box.
-	bool _mesh_wireframe = true;
 	// Round-mesh longitudinal segmentation (cylinder, cone, diamond).
 	// Default 8 reads as a nice low-poly shape; clamped 3..24 at every
 	// entry point. 3 = triangular prism / tetrahedron / triangular
@@ -376,36 +356,25 @@ private:
 	Ref<ArrayMesh>         _mesh;
 	Ref<StandardMaterial3D> _outline_material;
 	Ref<StandardMaterial3D> _fill_material;
-	/// Mesh-category shader material — paints fill_color across each
-	/// triangle and outline_color along edges that were flagged as real
-	/// face boundaries during mesh build (per-vertex bary + height
-	/// attribs in COLOR + UV). Replaces the dual-surface fill+wireframe
-	/// model entirely for mesh subtypes; non-mesh subtypes still use
-	/// the StandardMaterial3D pair above.
+	/// Pass A material for non-sphere mesh subtypes — paints fill_color
+	/// across the whole mesh body, no edge math. Sphere reuses this
+	/// slot for its single-pass analytic shader (which paints both
+	/// fill and outline). Non-mesh subtypes don't touch this material.
 	Ref<ShaderMaterial>     _mesh_material;
-	/// Pass-2 bary-method overlay material. Uses the OLD bary*h
-	/// shader (`_bary_shader`) and a fixed thin outline_thickness so
-	/// the overlay strip is a thin line that cleans up any artifact
-	/// the pass-1 quad-method painting leaves at min-of-4 creases on
-	/// a face.
+	/// Pass B material for non-sphere mesh subtypes — paints the
+	/// per-triangle bary*h outline strip and `discard`s every fragment
+	/// outside a strip, leaving pass A's fill visible. Attached to
+	/// `_mesh_material` via `set_next_pass` so a single ArrayMesh
+	/// surface renders both.
 	Ref<ShaderMaterial>     _bary_material;
-	/// Singleton Shader resource shared by every SuperMarker3D's
-	/// `_mesh_material`. Built lazily on first use; uniforms are
-	/// per-instance via the ShaderMaterial. The mesh shader paints
-	/// outlines along flagged triangle edges (cube/cylinder/cone/etc.)
-	/// — for sphere we swap in `_sphere_shader` instead.
+	/// Singleton fill shader for non-sphere mesh subtypes. Built
+	/// lazily; uniforms are per-instance via the ShaderMaterial.
 	static Ref<Shader>      _mesh_shader;
-	/// Singleton Shader resource for the pass-2 bary-method overlay.
-	/// OLD `bary[v_opp] * h_opp_edge` strip math, one boundary edge
-	/// painted per triangle — no min-of-multiple-edges fold and so no
-	/// crease artifact on a face.
+	/// Singleton bary outline shader for non-sphere mesh subtypes.
 	static Ref<Shader>      _bary_shader;
-	/// Singleton Shader resource for sphere subtype. Computes lat/lon
-	/// wireframe lines analytically from each fragment's local
-	/// position so the visible grid is independent of the fill
-	/// triangulation. Both shaders share the same uniform names where
-	/// they overlap (fill_color, outline_color, etc.) plus marker_size
-	/// for the sphere's arc-length math.
+	/// Singleton sphere shader. Computes lat/lon wireframe lines
+	/// analytically from each fragment's local position so the visible
+	/// grid is independent of the fill triangulation.
 	static Ref<Shader>      _sphere_shader;
 	RID _instance;
 
@@ -420,18 +389,24 @@ private:
 	// ---------------------------------------------------------------------------
 	// GeoBuf: geometry accumulator passed through shape generators.
 	//
-	//  line_verts        — PRIMITIVE_LINES (Cross, Axis, arrows, sil outlines)
-	//  outline_verts     — PRIMITIVE_TRIANGLES, thin quads WITH face normals.
-	//                      CULL_BACK on the material provides camera culling.
-	//  tri_verts         — PRIMITIVE_TRIANGLES fill (backface culled).
-	//                      For mesh subtypes, every fill vertex carries a
-	//                      barycentric weight (in tri_colors.rgb) plus three
-	//                      world-space "perpendicular height to opposite
-	//                      edge" values (tri_colors.a + tri_uvs.xy). The
-	//                      mesh shader uses these to paint outline_color
-	//                      within outline_thickness of any flagged-as-real
-	//                      face-boundary edge — height = -1 marks an edge
-	//                      as internal triangulation (skip outlining it).
+	//  line_verts     — PRIMITIVE_LINES (Cross, Axis, arrows, sil outlines)
+	//  outline_verts  — PRIMITIVE_TRIANGLES, thin quads WITH face normals.
+	//                   CULL_BACK on the material provides camera culling.
+	//  tri_verts      — PRIMITIVE_TRIANGLES fill for non-mesh subtypes
+	//                   (backface culled). Mesh subtypes leave this empty
+	//                   and write to the tri_bary_* arrays instead.
+	//  tri_bary_verts — Mesh-subtype surface. COLOR.rgb carries the
+	//                   per-vertex barycentric tag (1,0,0)/(0,1,0)/
+	//                   (0,0,1); UV.xy + UV2.x carry the constant
+	//                   per-tri edge heights (h0, h1, h2). The bary
+	//                   pass paints `bary[i] * h_i` strips against
+	//                   outline_thickness; h = -1 marks edge i as
+	//                   internal triangulation (the shader skips it).
+	//                   For quad faces, `_add_mesh_quad_face` emits a
+	//                   dual-diagonal split — every fragment ends up
+	//                   in 2 sub-triangles, so at least one owns the
+	//                   nearest quad edge and the strip extends across
+	//                   the whole face.
 	// ---------------------------------------------------------------------------
 	struct GeoBuf {
 		// Thin-line outline (shapes without a closed 3D volume, or silhouette mode).
@@ -449,26 +424,14 @@ private:
 		PackedColorArray   outline_colors;
 		bool use_outline_colors = false;
 
-		// Fill triangles — solid 3D mesh body. For mesh subtypes the
-		// per-vertex perpendicular distances to the (up to) 4 face edges
-		// are split between `tri_uvs` (slots 0-1) and `tri_uv2s` (slots
-		// 2-3). Both are 32-bit-float vertex attributes, so the -1
-		// "skip this slot" sentinel survives. (COLOR was used for slots
-		// 0-3 in an earlier revision but ArrayMesh quantises COLOR to
-		// 8-bit normalised, clamping -1 to 0 and turning the sentinel
-		// into a valid zero-distance edge — the mesh painted entirely
-		// outline color.) Other subtypes leave the tri_* arrays empty.
+		// Fill triangles for non-mesh subtypes — solid 3D body, backface
+		// culled. Mesh subtypes leave these empty and use tri_bary_*
+		// instead.
 		PackedVector3Array tri_verts;
 		PackedVector3Array tri_normals;
-		PackedColorArray   tri_colors;   // unused by mesh path; retained for outline path compat
-		PackedVector2Array tri_uvs;      // mesh path: edge-distance slots 0-1
-		PackedVector2Array tri_uv2s;     // mesh path: edge-distance slots 2-3
+		PackedColorArray   tri_colors;
 
-		// Pass-2 bary-method overlay surface. Same geometry as the
-		// pass-1 (4-distance) tri arrays but with per-triangle
-		// bary*h attributes for the OLD bary shader. Used by the
-		// thin-line bary overlay that fills any visible artifact the
-		// pass-1 4-distance min-of-4 painting can leave on a face.
+		// Mesh-subtype surface. See block comment above.
 		PackedVector3Array tri_bary_verts;
 		PackedVector3Array tri_bary_normals;
 		PackedColorArray   tri_bary_colors;   // bary tags (1,0,0)/(0,1,0)/(0,0,1)

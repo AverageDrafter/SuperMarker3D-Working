@@ -38,105 +38,80 @@ static const int SIL_SEGS = 32;
 static const int CONE_SEGS = 16;
 
 // ---------------------------------------------------------------------------
-// Mesh shader source — paints fill_color across the mesh and outline_color
-// along edges flagged as real face boundaries during build.
+// Mesh-category rendering uses TWO chained passes for non-sphere subtypes
+// (sphere uses its own analytic shader, see SPHERE_SHADER_SRC below):
 //
-// Vertex format: UV.xy + UV2.xy carry up to 4 per-vertex perpendicular
-// world-space distances — one slot per face edge. UV holds slots 0-1,
-// UV2 holds slots 2-3. A negative value in any slot means that slot is
-// unused (no edge there) or the edge is internal triangulation (skip
-// painting). The shader interpolates these across each triangle and
-// takes the minimum positive value as the fragment's distance to the
-// nearest real edge.
+//   Pass A — FILL_SHADER_SRC: paints fill_color across every fragment of
+//            the mesh body. No edge math, no discard. Provides the
+//            colored fill underneath.
+//   Pass B — BARY_SHADER_SRC: paints outline_color in a per-triangle
+//            bary*h strip of perpendicular world width
+//            `outline_thickness` along each flagged face-boundary edge,
+//            and `discard`s every fragment that isn't inside a strip.
 //
-// (COLOR was tried for the four slots but ArrayMesh quantises it to
-// 8-bit normalised, which clamped the -1 sentinels to 0 and turned
-// every "skip this slot" into a fake zero-distance edge — the mesh
-// painted entirely outline color. UV/UV2 are 32-bit floats; -1
-// survives.)
+// They're chained on the same ArrayMesh surface via
+// ShaderMaterial::set_next_pass — pass A renders first to the depth +
+// color buffers, pass B renders second on top, only writing color where
+// it actually paints an outline.
 //
-// For triangle faces the 4th slot is always -1 (only 3 edges). For
-// quad faces emitted via `_add_mesh_quad_face` all 4 slots carry the
-// perpendicular distance to the four perimeter edges of the parent
-// quad — so the shader sees the full quad geometry even though the
-// quad is rendered as 2 triangles, and outline strips stay rectangular
-// all the way to the corners (no diagonal-split tapers).
+// Why this split (rather than one shader doing both):
+//   - The bary shader's strip math is per-LOCAL-triangle (`bary[i] * h_i`
+//     is the fragment's perpendicular distance to edge i inside the
+//     sub-triangle). It produces clean strips with no min-of-4 crease.
+//   - For quad faces (e.g. cylinder lateral facets) split into 2 sub-
+//     triangles by an internal diagonal, the strip on a quad edge only
+//     extends to the diagonal in the sub-triangle that owns that edge.
+//     The DUAL-DIAGONAL SPLIT in `_add_mesh_quad_face` covers the gap by
+//     emitting the quad twice with different diagonals; each fragment
+//     ends up in 2 sub-triangles (one per layer), and at least one of
+//     the two owns whichever quad edge is closest. The other sub-tri
+//     `discard`s, so there's no z-fight between fill and outline at the
+//     same depth — fill comes from pass A, outline from pass B.
 //
 // Lit/unlit toggled by the `unlit` uniform via the EMISSION-vs-ALBEDO
 // trick (Godot doesn't allow conditional render_mode). When `unlit` is
-// true, ALBEDO is zero and EMISSION carries the marker color, so the
-// surface reads at full color regardless of scene lighting; when false
+// true, ALBEDO is zero and EMISSION carries the marker color; when false
 // (in-game-object mode), ALBEDO carries the color and the standard
 // lighting / shadow pipeline applies.
-static const char *MESH_SHADER_SRC = R"(
+//
+// Outline at thickness 0: pass B early-discards every fragment, so the
+// mesh renders as pure fill_color from pass A. No AA bleed.
+static const char *FILL_SHADER_SRC = R"(
 shader_type spatial;
 render_mode blend_mix, cull_back, depth_draw_opaque;
 
-uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
-uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
-uniform float outline_thickness            = 0.05;
-uniform bool  unlit                        = true;
-uniform bool  show_edges                   = true;
-
-varying vec2 v_d01;
-varying vec2 v_d23;
-
-void vertex() {
-	v_d01 = UV;
-	v_d23 = UV2;
-}
+uniform vec4 fill_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
+uniform bool unlit                     = true;
 
 void fragment() {
-	float min_dist = 1.0e9;
-	if (show_edges) {
-		if (v_d01.x >= 0.0) min_dist = min(min_dist, v_d01.x);
-		if (v_d01.y >= 0.0) min_dist = min(min_dist, v_d01.y);
-		if (v_d23.x >= 0.0) min_dist = min(min_dist, v_d23.x);
-		if (v_d23.y >= 0.0) min_dist = min(min_dist, v_d23.y);
-	}
-
-	float aa = max(fwidth(min_dist), 1.0e-5);
-	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
-
-	vec4 col = mix(fill_color, outline_color, edge);
-
 	if (unlit) {
 		ALBEDO   = vec3(0.0);
-		EMISSION = col.rgb;
+		EMISSION = fill_color.rgb;
 	} else {
-		ALBEDO = col.rgb;
+		ALBEDO = fill_color.rgb;
 	}
-	ALPHA = col.a;
+	ALPHA = fill_color.a;
 }
 )";
 
 Ref<Shader> SuperMarker3D::_mesh_shader;
 
-// Pass-2 bary-method shader. Per-triangle (bary, h0, h1, h2) attributes
-// stored as COLOR.rgb (bary), UV.xy (h0, h1), UV2.xy (h2, ·). Negative
-// h_i means "internal edge — skip". The strip math paints up to
-// outline_thickness perpendicular distance from each *flagged* edge of
-// the local triangle, which is the original pre-quad-method painting.
-//
-// Why pass 2 exists: the new 4-distance shader takes min over up to 4
-// perimeter edges of a face. Where two of those edges are equally close
-// to the fragment (the diagonal lines on a square face, for example)
-// the min function has a crease and fwidth(min) spikes there, leaving
-// a visible 1-pixel artifact in the smoothstep transition. The bary
-// shader on a *triangle's own* boundary edges has only one boundary
-// edge per triangle when the triangulation is a 4-fan, so its
-// min-over-flagged-edges has nothing to fold against — no crease.
-// Drawn second with a fixed thin outline_thickness it cleans up the
-// pass-1 hairline without re-thickening the user's outline.
+// Per-triangle bary strip shader. Vertex attributes:
+//   COLOR.rgb = barycentric tag (1,0,0)/(0,1,0)/(0,0,1)
+//   UV.xy     = (h0, h1)  — perpendicular heights v0/v1 → opposite edge
+//   UV2.x     = h2        — perpendicular height v2 → opposite edge
+// Heights are constant per triangle. h_i = -1 marks edge i as INTERNAL
+// triangulation (e.g. a quad's diagonal); the strip math skips it.
+// Distance to edge i = bary[i] * h_i; min over flagged edges → distance
+// to the nearest real boundary inside this sub-triangle. Fragments
+// outside every strip discard so pass A's fill remains visible.
 static const char *BARY_SHADER_SRC = R"(
 shader_type spatial;
 render_mode blend_mix, cull_back, depth_draw_opaque;
 
-uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
-uniform float outline_thickness            = 0.005;
+uniform float outline_thickness            = 0.05;
 uniform bool  unlit                        = true;
-uniform bool  show_edges                   = true;
 
 varying vec3 v_bary;
 varying vec3 v_heights;
@@ -147,40 +122,28 @@ void vertex() {
 }
 
 void fragment() {
+	if (outline_thickness <= 0.0) discard;
+
 	float min_dist = 1.0e9;
-	if (show_edges) {
-		if (v_heights.x >= 0.0) min_dist = min(min_dist, v_bary.x * v_heights.x);
-		if (v_heights.y >= 0.0) min_dist = min(min_dist, v_bary.y * v_heights.y);
-		if (v_heights.z >= 0.0) min_dist = min(min_dist, v_bary.z * v_heights.z);
-	}
+	if (v_heights.x >= 0.0) min_dist = min(min_dist, v_bary.x * v_heights.x);
+	if (v_heights.y >= 0.0) min_dist = min(min_dist, v_bary.y * v_heights.y);
+	if (v_heights.z >= 0.0) min_dist = min(min_dist, v_bary.z * v_heights.z);
 
 	float aa = max(fwidth(min_dist), 1.0e-5);
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
-
-	// Pass 2 only contributes outline color — its job is to overpaint
-	// the pass-1 hairline. Where edge=0 (fill region) the fragment is
-	// fully transparent so pass 1's painting underneath is preserved.
 	if (edge < 0.001) discard;
 
-	vec4 col = outline_color;
 	if (unlit) {
 		ALBEDO   = vec3(0.0);
-		EMISSION = col.rgb;
+		EMISSION = outline_color.rgb;
 	} else {
-		ALBEDO = col.rgb;
+		ALBEDO = outline_color.rgb;
 	}
-	ALPHA = col.a * edge;
+	ALPHA = outline_color.a * edge;
 }
 )";
 
 Ref<Shader> SuperMarker3D::_bary_shader;
-
-// Fixed thickness for pass 2's bary strip — small enough that it
-// reads as a thin overlay line on top of the pass-1 strip. If the
-// user's outline_thickness is at or below this, pass 2 is skipped
-// entirely (otherwise it would paint a wider strip than the user
-// asked for).
-static const float BARY_PASS_THICKNESS = 0.005f;
 
 // Sphere shader — paints lat/lon wireframe lines analytically from each
 // fragment's local-space position. Independent of the fill triangulation,
@@ -202,7 +165,6 @@ uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
 uniform bool  unlit                        = true;
-uniform bool  show_edges                   = true;
 uniform float marker_size                  = 1.0;
 
 const float SPHERE_PI = 3.14159265359;
@@ -215,8 +177,9 @@ void vertex() {
 }
 
 void fragment() {
-	float min_dist = 1.0e9;
-	if (show_edges) {
+	float edge = 0.0;
+	if (outline_thickness > 0.0) {
+		float min_dist = 1.0e9;
 		float r = length(v_local_pos);
 		if (r > 1.0e-5) {
 			float phi   = acos(clamp(v_local_pos.y / r, -1.0, 1.0));
@@ -243,10 +206,10 @@ void fragment() {
 
 			min_dist = min(lat_w, mer_w);
 		}
-	}
 
-	float aa = max(fwidth(min_dist), 1.0e-5);
-	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+		float aa = max(fwidth(min_dist), 1.0e-5);
+		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+	}
 
 	vec4 col = mix(fill_color, outline_color, edge);
 	if (unlit) {
@@ -357,12 +320,6 @@ void SuperMarker3D::_bind_methods() {
 			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
 			"set_axis_arrow_width", "get_axis_arrow_width");
 
-	// Mesh-category overlay flag — sits right under Subtype on the Mesh
-	// type, same role as `axis_arrows` does on Axis.
-	ClassDB::bind_method(D_METHOD("set_mesh_wireframe", "enabled"), &SuperMarker3D::set_mesh_wireframe);
-	ClassDB::bind_method(D_METHOD("get_mesh_wireframe"), &SuperMarker3D::get_mesh_wireframe);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mesh_wireframe"),
-			"set_mesh_wireframe", "get_mesh_wireframe");
 	// Side count for cylinder, cone, and diamond. Range 3..24 — 3 makes
 	// a triangular prism / tetrahedron / triangular bipyramid; 24 is
 	// near-round. Default 8 reads as a nicely faceted "low-poly" shape.
@@ -381,21 +338,15 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_outline_color"), &SuperMarker3D::get_outline_color);
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "outline_color"), "set_outline_color", "get_outline_color");
 	ClassDB::bind_method(D_METHOD("set_outline_thickness", "thickness"), &SuperMarker3D::set_outline_thickness);
-	ClassDB::bind_method(D_METHOD("set_bary_thickness", "thickness"), &SuperMarker3D::set_bary_thickness);
-	ClassDB::bind_method(D_METHOD("get_bary_thickness"), &SuperMarker3D::get_bary_thickness);
 	ClassDB::bind_method(D_METHOD("get_outline_thickness"), &SuperMarker3D::get_outline_thickness);
 	// Range goes "or_greater" so users can crank thickness past 1m for
-	// dramatic stand-ins (overthick green burr = bush, etc.). Pixel
-	// line at 0; tube otherwise.
+	// dramatic stand-ins (overthick green burr = bush, etc.). Universal
+	// outline width: axis tubes, arrowheads, silhouette outlines, and
+	// the mesh-face strip painted by the mesh shader all read this one
+	// value. At 0, no outline strip is painted on any subtype.
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outline_thickness",
 			PROPERTY_HINT_RANGE, "0.0,1.0,0.001,or_greater,suffix:m"),
 			"set_outline_thickness", "get_outline_thickness");
-	// Pass-2 bary-method overlay width — same range/step as
-	// outline_thickness so the two methods can be compared at
-	// equivalent values. Set to 0 to disable the overlay entirely.
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bary_thickness",
-			PROPERTY_HINT_RANGE, "0.0,1.0,0.001,or_greater,suffix:m"),
-			"set_bary_thickness", "get_bary_thickness");
 
 	// ---- Type-specific groups below; ordering shows up in the
 	// inspector regardless of which type is currently selected, but
@@ -691,8 +642,6 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Fill Color stays visible on Mesh (drives the fill body) and on
 	// Arrow / Curve Flat (when their fill_enabled toggle is on).
 	if (name == "fill_color" && !(is_mesh || is_arrow || _shape == CURVE_FLAT)) hide();
-	// Mesh-category wireframe toggle.
-	if (name == "mesh_wireframe" && !is_mesh) hide();
 	// Side count is only meaningful on the round-bodied mesh subtypes
 	// (cylinder, cone, and the multisided bipyramid diamond).
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
@@ -872,15 +821,17 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 	// outline_color as a single albedo.
 	if (_outline_material.is_valid() && _shape != AXIS_XYZ)
 		_outline_material->set_albedo(_outline_color);
-	// Mesh subtypes route through the shader material — push the new
-	// outline color into its uniform so the inspector edit is live.
-	if (_mesh_material.is_valid())
+	// Mesh subtypes route through the shader material(s). Sphere keeps
+	// outline_color on `_mesh_material` (its analytic shader handles
+	// both fill and outline); other meshes paint outlines via the
+	// chained `_bary_material` next-pass.
+	if (_shape == MESH_SPHERE && _mesh_material.is_valid())
 		_mesh_material->set_shader_parameter("outline_color", _outline_color);
+	if (_bary_material.is_valid())
+		_bary_material->set_shader_parameter("outline_color", _outline_color);
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
-void SuperMarker3D::set_bary_thickness(float p) { _bary_thickness = MAX(0.0f, p); SM_REBUILD(); }
-float SuperMarker3D::get_bary_thickness() const { return _bary_thickness; }
 float SuperMarker3D::get_outline_thickness() const { return _outline_thickness; }
 
 void SuperMarker3D::set_fill_enabled(bool p) { _fill_enabled = p; SM_REBUILD(); }
@@ -928,12 +879,6 @@ void SuperMarker3D::set_axis_arrow_width(float p) {
 	if (get_type() == TYPE_AXIS && _axis_arrows) SM_REBUILD();
 }
 float SuperMarker3D::get_axis_arrow_width() const { return _axis_arrow_width; }
-
-void SuperMarker3D::set_mesh_wireframe(bool p) {
-	_mesh_wireframe = p;
-	if (get_type() == TYPE_MESH) SM_REBUILD();
-}
-bool SuperMarker3D::get_mesh_wireframe() const { return _mesh_wireframe; }
 
 void SuperMarker3D::set_mesh_sides(int p) {
 	_mesh_sides = CLAMP(p, 3, 24);
@@ -1360,13 +1305,15 @@ void SuperMarker3D::_build_materials() {
 			? BaseMaterial3D::BILLBOARD_ENABLED
 			: BaseMaterial3D::BILLBOARD_DISABLED);
 
-	// --- Mesh shader material (TYPE_MESH only) ---
-	// The mesh subtypes paint fill_color + outline_color directly on
-	// the fill surface via a custom shader, replacing the dual-surface
-	// fill+wireframe model. Sphere uses an analytical lat/lon shader
-	// (no triangulation dependency); every other mesh subtype uses the
-	// generic edge-from-bary shader. Non-mesh subtypes never touch
-	// this material.
+	// --- Mesh shader materials (TYPE_MESH only) ---
+	// Sphere uses one analytic shader (fill + lat/lon outlines in one
+	// pass). Every other mesh subtype renders TWO surfaces of identical
+	// geometry: surface 0 carries the fill shader (no edge math),
+	// surface 1 carries the bary outline shader (discards every
+	// fragment outside an outline strip, so pass A's fill stays
+	// visible underneath). Two surfaces (rather than `next_pass`) so
+	// the renderer treats them as ordinary back-to-back draws — the
+	// bary surface's discards keep them from competing on depth.
 	if (is_mesh_type) {
 		const bool use_sphere_shader = (_shape == MESH_SPHERE);
 		if (use_sphere_shader) {
@@ -1377,54 +1324,37 @@ void SuperMarker3D::_build_materials() {
 		} else {
 			if (_mesh_shader.is_null()) {
 				_mesh_shader.instantiate();
-				_mesh_shader->set_code(MESH_SHADER_SRC);
+				_mesh_shader->set_code(FILL_SHADER_SRC);
+			}
+			if (_bary_shader.is_null()) {
+				_bary_shader.instantiate();
+				_bary_shader->set_code(BARY_SHADER_SRC);
 			}
 		}
 		if (_mesh_material.is_null()) _mesh_material.instantiate();
 		_mesh_material->set_shader(use_sphere_shader ? _sphere_shader : _mesh_shader);
 		_mesh_material->set_shader_parameter("fill_color", _fill_color);
-		_mesh_material->set_shader_parameter("outline_color", _outline_color);
-		_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
 		_mesh_material->set_shader_parameter("unlit", !_in_game_object);
-		_mesh_material->set_shader_parameter("show_edges", _mesh_wireframe);
 		if (use_sphere_shader) {
+			_mesh_material->set_shader_parameter("outline_color", _outline_color);
+			_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
 			_mesh_material->set_shader_parameter("marker_size", _marker_size);
-		}
-		_mesh_material->set_render_priority(0);
-
-		// Pass-2 bary-method overlay material — only set up for non-
-		// sphere mesh subtypes (sphere has its own analytical shader
-		// with no min-of-edges crease, so it doesn't need the overlay).
-		if (!use_sphere_shader) {
-			if (_bary_shader.is_null()) {
-				_bary_shader.instantiate();
-				_bary_shader->set_code(BARY_SHADER_SRC);
-			}
+		} else {
 			if (_bary_material.is_null()) _bary_material.instantiate();
 			_bary_material->set_shader(_bary_shader);
-			_bary_material->set_shader_parameter("fill_color", _fill_color);
 			_bary_material->set_shader_parameter("outline_color", _outline_color);
-			_bary_material->set_shader_parameter("outline_thickness", _bary_thickness);
+			_bary_material->set_shader_parameter("outline_thickness", _outline_thickness);
 			_bary_material->set_shader_parameter("unlit", !_in_game_object);
-			_bary_material->set_shader_parameter("show_edges", _mesh_wireframe);
-			// Render after pass 1 so the thin overlay sits on top of
-			// the main strip wherever its discard threshold is met.
 			_bary_material->set_render_priority(1);
 		}
+		_mesh_material->set_render_priority(0);
 	}
 
-	// Apply to surfaces. Mesh subtypes have one surface (fill) carrying
-	// the shader material; everything else keeps the previous
-	// outline → optional fill ordering on its StandardMaterial3D pair.
+	// Apply to surfaces.
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
 		if (is_mesh_type) {
 			if (sc > 0) _mesh->surface_set_material(0, _mesh_material);
-			// Surface 1 (when present) is the bary-method second pass —
-			// re-renders the same triangulation with the per-triangle
-			// bary*h shader and a thin outline_thickness, so the strip
-			// it paints is a thin overlay on top of the quad-method
-			// strip from pass 1.
 			if (sc > 1 && _bary_material.is_valid())
 				_mesh->surface_set_material(1, _bary_material);
 		} else {
@@ -1440,86 +1370,29 @@ void SuperMarker3D::_build_materials() {
 	}
 }
 
-// Helper used by every Mesh subtype generator. Pushes one fill
-// triangle into `tri_verts` with the (v0, v2, v1) flipped winding
-// the rest of the renderer expects — natural CCW from outside under
-// Godot's CULL_BACK convention.
+// Quad-face helper. Per sub-triangle, writes the per-vertex barycentric
+// tag + the constant per-tri (h0, h1, h2) heights the bary shader uses
+// to paint outline strips on the sub-triangle's flagged boundary edges.
+// Edges of the SUB-triangle that aren't real face boundaries (the
+// diagonal in particular) get h = -1 so the shader skips them.
 //
-// Also pushes per-vertex barycentric + edge-height attributes the
-// mesh shader uses to paint outlines on the face. Per vertex:
-//   tri_colors.rgb = barycentric weight (1,0,0)/(0,1,0)/(0,0,1)
-//   tri_colors.a   = h0 = perpendicular world height from v0 to edge (v1,v2)
-//   tri_uvs.x      = h1 = perpendicular world height from v1 to edge (v0,v2)
-//   tri_uvs.y      = h2 = perpendicular world height from v2 to edge (v0,v1)
-// h_i is set to -1 if the corresponding edge is INTERNAL triangulation
-// (e.g. the diagonal between a quad's two triangles); the shader
-// treats -1 as "skip outlining this edge."
+// Triangulation is a DUAL DIAGONAL SPLIT — emit the quad twice, once
+// with the p0→p2 diagonal and once with the p1→p3 diagonal. Each fragment
+// ends up inside 2 sub-triangles (one per layer); at least one of the
+// two owns the quad edge it's closest to, so its strip extends across
+// the whole quad even though each individual sub-triangle's bary*h math
+// only covers its own edges. The other sub-triangle's fragment-shader
+// run discards (no edge close enough), so there's no z-fight between
+// fill (pass A) and outline (this pass) at the same depth.
 void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 		const Vector3 &p0, const Vector3 &p1, const Vector3 &p2, const Vector3 &p3,
 		bool e01, bool e12, bool e23, bool e30) const {
-	// Perpendicular distance from a point to a line through (a, b).
-	auto perp = [](const Vector3 &p, const Vector3 &a, const Vector3 &b) -> float {
-		const Vector3 dir = b - a;
-		const float dlen2 = dir.length_squared();
-		if (dlen2 < 1e-12f) return 0.0f;
-		const Vector3 v = p - a;
-		return (v - dir * (v.dot(dir) / dlen2)).length();
-	};
-	auto edge_d = [&](const Vector3 &v, const Vector3 &a, const Vector3 &b, bool flag) -> float {
-		return flag ? perp(v, a, b) : -1.0f;
-	};
-
-	// 4 perpendicular distances per quad vertex, one slot per perimeter
-	// edge (e01, e12, e23, e30). UV.xy = (d_e01, d_e12); UV2.xy =
-	// (d_e23, d_e30). These are linear functions over the quad's plane,
-	// so any triangulation interpolates them correctly — the quad's
-	// 4-edge strip math is independent of how we cut up the quad.
-	//
-	// Triangulation: DUAL DIAGONAL SPLIT — emit the quad twice, once
-	// with the p0→p2 diagonal and once with the p1→p3 diagonal. Any
-	// triangulation has internal edges, and rasterisation can leave a
-	// 1-pixel hairline at those edges where neither adjacent triangle
-	// claims the pixel under the diamond rule. The two diagonals only
-	// intersect at the quad's centre, so a gap pixel along one
-	// triangulation's diagonal is safely covered by a triangle of the
-	// other triangulation. Both layers paint identical strip math, so
-	// overlap is invisible — pixels not covered by the first layer are
-	// filled by the second. Costs ~2× the fragment shader runs per quad
-	// pixel, which is negligible for a marker.
-	const Vector2 uv_p0  (edge_d(p0, p0, p1, e01), edge_d(p0, p1, p2, e12));
-	const Vector2 uv2_p0 (edge_d(p0, p2, p3, e23), edge_d(p0, p3, p0, e30));
-	const Vector2 uv_p1  (edge_d(p1, p0, p1, e01), edge_d(p1, p1, p2, e12));
-	const Vector2 uv2_p1 (edge_d(p1, p2, p3, e23), edge_d(p1, p3, p0, e30));
-	const Vector2 uv_p2  (edge_d(p2, p0, p1, e01), edge_d(p2, p1, p2, e12));
-	const Vector2 uv2_p2 (edge_d(p2, p2, p3, e23), edge_d(p2, p3, p0, e30));
-	const Vector2 uv_p3  (edge_d(p3, p0, p1, e01), edge_d(p3, p1, p2, e12));
-	const Vector2 uv2_p3 (edge_d(p3, p2, p3, e23), edge_d(p3, p3, p0, e30));
-
-	// Each tri input (v0, v1, v2) emits as (v0, v2, v1) with
-	// face_n = (v2-v0)×(v1-v0) — same winding-flip convention as
-	// `_add_mesh_face`, front-facing from outside the quad given a
-	// CCW-from-outside p0..p3 input order. Also emits the pass-2
-	// bary-method overlay surface for the same triangle: per-vertex
-	// bary tag + per-tri (h0, h1, h2) heights, with -1 for any edge
-	// of THIS sub-triangle that isn't a real face boundary (the
-	// diagonal in particular).
-	auto emit = [&](const Vector3 &v0, const Vector2 &uv_v0, const Vector2 &uv2_v0,
-			const Vector3 &v1, const Vector2 &uv_v1, const Vector2 &uv2_v1,
-			const Vector3 &v2, const Vector2 &uv_v2, const Vector2 &uv2_v2,
+	auto emit = [&](const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
 			bool e0_b, bool e1_b, bool e2_b) {
 		const Vector3 face_n = ((v2 - v0).cross(v1 - v0)).normalized();
-		geo.tri_verts.push_back(v0); geo.tri_normals.push_back(face_n);
-		geo.tri_uvs.push_back(uv_v0); geo.tri_uv2s.push_back(uv2_v0);
-		geo.tri_verts.push_back(v2); geo.tri_normals.push_back(face_n);
-		geo.tri_uvs.push_back(uv_v2); geo.tri_uv2s.push_back(uv2_v2);
-		geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
-		geo.tri_uvs.push_back(uv_v1); geo.tri_uv2s.push_back(uv2_v1);
-
-		// Pass-2 bary geometry for THIS sub-triangle. Heights are this
-		// triangle's own perpendicular heights (not the parent quad's).
-		const float NN = -1.0f;
 		const float dbl_area = (v1 - v0).cross(v2 - v0).length();
 		if (dbl_area < 1e-9f) return;
+		const float NN = -1.0f;
 		const float h0 = dbl_area / MAX(1e-9f, (v2 - v1).length());
 		const float h1 = dbl_area / MAX(1e-9f, (v2 - v0).length());
 		const float h2 = dbl_area / MAX(1e-9f, (v1 - v0).length());
@@ -1528,6 +1401,8 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 		const Color bary_v2(0, 0, 1, 1);
 		const Vector2 bary_uv (e0_b ? h0 : NN, e1_b ? h1 : NN);
 		const Vector2 bary_uv2(e2_b ? h2 : NN, 0.0f);
+		// Winding-flip (v0, v2, v1) — same convention as `_add_mesh_face`,
+		// front-facing from outside given CCW-from-outside (v0, v1, v2).
 		geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 		geo.tri_bary_colors.push_back(bary_v0);
 		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
@@ -1543,27 +1418,15 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 	// opposite v0/v1/v2 of the *sub*-triangle, not the parent quad):
 	//
 	//   Layer 1 (diagonal p0→p2):
-	//     Tri (p0, p1, p2): e0 opp p0 = (p1, p2) = e12; e1 opp p1 =
-	//       (p0, p2) = diagonal (internal); e2 opp p2 = (p0, p1) = e01.
-	//     Tri (p0, p2, p3): e0 opp p0 = (p2, p3) = e23; e1 opp p2 =
-	//       (p0, p3) = e30; e2 opp p3 = (p0, p2) = diagonal (internal).
-	//
+	//     Tri (p0, p1, p2): e0 = (p1, p2) = e12; e1 = (p0, p2) = diag; e2 = (p0, p1) = e01.
+	//     Tri (p0, p2, p3): e0 = (p2, p3) = e23; e1 = (p0, p3) = e30; e2 = (p0, p2) = diag.
 	//   Layer 2 (diagonal p1→p3):
-	//     Tri (p0, p1, p3): e0 opp p0 = (p1, p3) = diagonal (internal);
-	//       e1 opp p1 = (p0, p3) = e30; e2 opp p3 = (p0, p1) = e01.
-	//     Tri (p1, p2, p3): e0 opp p1 = (p2, p3) = e23; e1 opp p2 =
-	//       (p1, p3) = diagonal (internal); e2 opp p3 = (p1, p2) = e12.
-
-	// Layer 1 — diagonal p0→p2.
-	emit(p0, uv_p0, uv2_p0, p1, uv_p1, uv2_p1, p2, uv_p2, uv2_p2,
-			e12, false, e01);
-	emit(p0, uv_p0, uv2_p0, p2, uv_p2, uv2_p2, p3, uv_p3, uv2_p3,
-			e23, e30,  false);
-	// Layer 2 — diagonal p1→p3.
-	emit(p0, uv_p0, uv2_p0, p1, uv_p1, uv2_p1, p3, uv_p3, uv2_p3,
-			false, e30, e01);
-	emit(p1, uv_p1, uv2_p1, p2, uv_p2, uv2_p2, p3, uv_p3, uv2_p3,
-			e23, false, e12);
+	//     Tri (p0, p1, p3): e0 = (p1, p3) = diag; e1 = (p0, p3) = e30; e2 = (p0, p1) = e01.
+	//     Tri (p1, p2, p3): e0 = (p2, p3) = e23; e1 = (p1, p3) = diag; e2 = (p1, p2) = e12.
+	emit(p0, p1, p2, e12, false, e01);
+	emit(p0, p2, p3, e23, e30,  false);
+	emit(p0, p1, p3, false, e30, e01);
+	emit(p1, p2, p3, e23, false, e12);
 }
 
 void SuperMarker3D::_add_mesh_quad(GeoBuf &geo,
@@ -1581,53 +1444,33 @@ void SuperMarker3D::_add_mesh_quad(GeoBuf &geo,
 	_add_mesh_face(geo, center, p3, p0, e30, false, false);
 }
 
+// Mesh subtype face helper for triangle faces. Pushes one triangle with
+// per-vertex barycentric tag in COLOR.rgb plus the constant per-tri
+// heights (h0, h1, h2) in UV.xy + UV2.x. h_i = -1 marks edge i as
+// INTERNAL (the bary shader skips it).
+//
+// Winding is flipped to (v0, v2, v1) — front-facing from outside under
+// Godot's CULL_BACK convention given a CCW-from-outside (v0, v1, v2)
+// caller-side input.
 void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
 		const Vector3 &v2, bool e0_boundary, bool e1_boundary, bool e2_boundary) const {
 	const Vector3 face_n = ((v2 - v0).cross(v1 - v0)).normalized();
 
-	// Triangle area × 2 for height computation. h_i = (2·area) / |edge_opposite_i|.
 	const float double_area = (v1 - v0).cross(v2 - v0).length();
 	if (double_area < 1e-9f) return; // degenerate
 
-	const float len_e0 = (v2 - v1).length(); // edge opposite v0
-	const float len_e1 = (v2 - v0).length(); // edge opposite v1
-	const float len_e2 = (v1 - v0).length(); // edge opposite v2
-	const float h0 = double_area / MAX(1e-9f, len_e0);
-	const float h1 = double_area / MAX(1e-9f, len_e1);
-	const float h2 = double_area / MAX(1e-9f, len_e2);
+	const float h0 = double_area / MAX(1e-9f, (v2 - v1).length()); // height to edge opp v0
+	const float h1 = double_area / MAX(1e-9f, (v2 - v0).length()); // height to edge opp v1
+	const float h2 = double_area / MAX(1e-9f, (v1 - v0).length()); // height to edge opp v2
 
-	// Per-vertex distance vectors. UV.xy = (d_e0, d_e1); UV2.xy = (d_e2, d_e3).
-	// For each edge:
-	//   - vertex opposite that edge: h_i (its height to the edge).
-	//   - vertex on the edge: 0.
-	//   - if the edge is internal: -1 at every vertex.
-	// Slot 3 is unused for triangle faces (always -1).
 	const float NN = -1.0f;
-	const Vector2 uv_v0 (e0_boundary ? h0   : NN, e1_boundary ? 0.0f : NN);
-	const Vector2 uv2_v0(e2_boundary ? 0.0f : NN, NN);
-	const Vector2 uv_v1 (e0_boundary ? 0.0f : NN, e1_boundary ? h1   : NN);
-	const Vector2 uv2_v1(e2_boundary ? 0.0f : NN, NN);
-	const Vector2 uv_v2 (e0_boundary ? 0.0f : NN, e1_boundary ? 0.0f : NN);
-	const Vector2 uv2_v2(e2_boundary ? h2   : NN, NN);
-
-	// Emit (v0, v2, v1) winding flip.
-	geo.tri_verts.push_back(v0); geo.tri_normals.push_back(face_n);
-	geo.tri_uvs.push_back(uv_v0); geo.tri_uv2s.push_back(uv2_v0);
-	geo.tri_verts.push_back(v2); geo.tri_normals.push_back(face_n);
-	geo.tri_uvs.push_back(uv_v2); geo.tri_uv2s.push_back(uv2_v2);
-	geo.tri_verts.push_back(v1); geo.tri_normals.push_back(face_n);
-	geo.tri_uvs.push_back(uv_v1); geo.tri_uv2s.push_back(uv2_v1);
-
-	// Pass-2 bary-method overlay — same triangle, same winding flip,
-	// but per-vertex bary tag (1,0,0)/(0,1,0)/(0,0,1) plus the constant
-	// per-tri (h0, h1, h2) heights. The bary shader paints
-	// `bary[v_opp] * h_opp < outline_thickness` on each flagged
-	// boundary edge. Internal edges get h = -1 → the shader skips them.
 	const Color bary_v0(1, 0, 0, 1);
 	const Color bary_v1(0, 1, 0, 1);
 	const Color bary_v2(0, 0, 1, 1);
 	const Vector2 bary_uv (e0_boundary ? h0 : NN, e1_boundary ? h1 : NN);
 	const Vector2 bary_uv2(e2_boundary ? h2 : NN, 0.0f);
+
+	// Emit (v0, v2, v1) winding flip.
 	geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 	geo.tri_bary_colors.push_back(bary_v0);
 	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
@@ -2800,38 +2643,12 @@ void SuperMarker3D::_rebuild_mesh() {
 	const bool is_mesh = (get_type() == TYPE_MESH);
 
 	if (is_mesh) {
-		// Mesh subtypes: ONE surface (fill triangles). Per-vertex 4-edge
-		// perpendicular-distance attributes are split across UV (slots
-		// 0-1) and UV2 (slots 2-3) — both 32-bit floats so the -1
-		// "skip this slot" sentinel survives. COLOR is unused.
-		if (geo.tri_verts.size() > 0) {
-			Array a; a.resize(Mesh::ARRAY_MAX);
-			a[Mesh::ARRAY_VERTEX]   = geo.tri_verts;
-			a[Mesh::ARRAY_NORMAL]   = geo.tri_normals;
-			a[Mesh::ARRAY_TEX_UV]   = geo.tri_uvs;
-			a[Mesh::ARRAY_TEX_UV2]  = geo.tri_uv2s;
-			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
-		}
-		// Pass 2 — bary-method overlay surface. Re-emits the same
-		// triangulation with per-triangle bary*h vertex attributes and
-		// uses a separate shader+material configured with a thin fixed
-		// outline_thickness. The bary method paints each edge's strip
-		// inside its owning triangle (no min-of-multiple-edges fold),
-		// so its strip has no diagonal creases the way the 4-distance
-		// quad method does — pass 2 cleans up any hairline that pass 1
-		// leaves visible at the crease lines on a face.
-		//
-		// Skipped when outline_thickness is at or below the bary pass's
-		// thin width (BARY_PASS_THICKNESS): in that regime the bary
-		// strip would be wider than the user's chosen outline, so it
-		// would over-thicken instead of cleaning up.
-		// Pass-2 visibility is controlled solely by `bary_thickness > 0`
-		// — the auto-disable when `outline_thickness <= bary_thickness`
-		// is intentionally NOT enforced here so the two methods can be
-		// compared independently (set outline_thickness to 0 to view
-		// the bary pass alone, or set bary_thickness to 0 to view the
-		// quad pass alone).
-		if (geo.tri_bary_verts.size() > 0 && _bary_thickness > 0.0f) {
+		// Mesh subtypes: surface 0 = fill, surface 1 = bary outline
+		// (skipped for sphere whose analytic shader handles both).
+		// Both surfaces carry identical vertex data — bary tag in
+		// COLOR.rgb, per-tri heights in UV.xy + UV2.x — so we build
+		// the array once and emit it twice.
+		if (geo.tri_bary_verts.size() > 0) {
 			Array a; a.resize(Mesh::ARRAY_MAX);
 			a[Mesh::ARRAY_VERTEX]  = geo.tri_bary_verts;
 			a[Mesh::ARRAY_NORMAL]  = geo.tri_bary_normals;
@@ -2839,6 +2656,9 @@ void SuperMarker3D::_rebuild_mesh() {
 			a[Mesh::ARRAY_TEX_UV]  = geo.tri_bary_uvs;
 			a[Mesh::ARRAY_TEX_UV2] = geo.tri_bary_uv2s;
 			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			if (_shape != MESH_SPHERE) {
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			}
 		}
 		return;
 	}
