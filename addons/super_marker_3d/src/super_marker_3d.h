@@ -63,6 +63,7 @@ public:
 		MESH_PYRAMID = 13,      // 4-sided pyramid (square base + apex)
 		MESH_CYLINDER = 14,     // capped cylinder
 		MESH_CONE = 15,         // round-base cone
+		MESH_CAPSULE = 16,      // cylinder body + hemisphere caps
 
 		// Shape category — reserved for future flat 2D iconography.
 		// (Cross used to live here pre-1.0; it migrated to Axis.)
@@ -173,6 +174,10 @@ public:
 	void set_axis_color_z_pos(const Color &p); Color get_axis_color_z_pos() const;
 	void set_axis_color_z_neg(const Color &p); Color get_axis_color_z_neg() const;
 
+	/// Capsule-only — cylinder body height between the two hemisphere
+	/// caps. Radius (and the hemispheres) follow `marker_size`.
+	void set_capsule_height(float p);  float get_capsule_height() const;
+
 	/// Number of longitudinal segments on cylinder + cone, controlling
 	/// both fill tessellation and wireframe segmentation. Range 5..24.
 	void set_mesh_sides(int p);   int get_mesh_sides() const;
@@ -252,7 +257,7 @@ public:
 	/// in for a bush, a tall mesh box stands in for a building, etc.
 	/// Off (default): unshaded, no shadows — best for editor cues,
 	/// HUD overlays, and pure design markers.
-	void set_in_game_object(bool p);  bool get_in_game_object() const;
+	void set_lights_and_shadows(bool p);  bool get_lights_and_shadows() const;
 
 	void set_template_mode(bool p);
 	bool is_template_mode() const { return _template_mode; }
@@ -288,6 +293,8 @@ private:
 	// entry point. 3 = triangular prism / tetrahedron / triangular
 	// bipyramid, 24 = effectively round.
 	int  _mesh_sides = 8;
+	// Capsule-only — cylinder body height between the hemisphere caps.
+	float _capsule_height = 1.0f;
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -344,13 +351,13 @@ private:
 	float _length_fraction = 1.0f;
 
 	// Renderer state. Defaults: visible at runtime, depth-tested,
-	// unshaded (debug-marker behavior). `_in_game_object=true` flips
+	// unshaded (debug-marker behavior). `_lights_and_shadows=true` flips
 	// it into "treat me like a real mesh" mode — lit shading, casts &
 	// receives shadows. `_shows_in_play` is the public name for the
 	// runtime-visibility flag (the old `editor_only`, inverted).
 	bool _shows_in_play  = true;
 	bool _always_on_top  = false;
-	bool _in_game_object = false;
+	bool _lights_and_shadows = false;
 	bool _template_mode  = false;
 
 	Ref<ArrayMesh>         _mesh;
@@ -367,15 +374,23 @@ private:
 	/// `_mesh_material` via `set_next_pass` so a single ArrayMesh
 	/// surface renders both.
 	Ref<ShaderMaterial>     _bary_material;
-	/// Singleton fill shader for non-sphere mesh subtypes. Built
-	/// lazily; uniforms are per-instance via the ShaderMaterial.
+	/// Capsule top + bottom hemisphere materials. Each holds the sphere
+	/// shader with its own `sphere_center` uniform offset so phi/theta
+	/// is computed relative to that hemisphere's true centre rather
+	/// than the marker origin.
+	Ref<ShaderMaterial>     _cap_top_material;
+	Ref<ShaderMaterial>     _cap_bot_material;
+	/// Two render_mode variants per mesh shader — `_*_shader` is
+	/// `unshaded` (HUD-flat, ignores environment lights) and
+	/// `_*_shader_lit` is the default shaded mode (receives lights and
+	/// casts shadows like a real mesh). `_build_materials` picks based
+	/// on `_lights_and_shadows`.
 	static Ref<Shader>      _mesh_shader;
-	/// Singleton bary outline shader for non-sphere mesh subtypes.
+	static Ref<Shader>      _mesh_shader_lit;
 	static Ref<Shader>      _bary_shader;
-	/// Singleton sphere shader. Computes lat/lon wireframe lines
-	/// analytically from each fragment's local position so the visible
-	/// grid is independent of the fill triangulation.
+	static Ref<Shader>      _bary_shader_lit;
 	static Ref<Shader>      _sphere_shader;
+	static Ref<Shader>      _sphere_shader_lit;
 	RID _instance;
 
 	// Per-arm renderables for Axis subtypes. Each arm (and each Burr
@@ -435,6 +450,15 @@ private:
 		PackedVector3Array tri_bary_verts;
 		PackedVector3Array tri_bary_normals;
 		PackedColorArray   tri_bary_colors;   // bary tags (1,0,0)/(0,1,0)/(0,0,1)
+
+		// Capsule hemisphere caps — geometry only (no bary attribs);
+		// rendered with the sphere shader against a per-hemisphere
+		// `sphere_center` so analytic lat/lon stays accurate even when
+		// the cap isn't centred at the marker origin.
+		PackedVector3Array cap_top_verts;
+		PackedVector3Array cap_top_normals;
+		PackedVector3Array cap_bot_verts;
+		PackedVector3Array cap_bot_normals;
 		PackedVector2Array tri_bary_uvs;      // (h0, h1)
 		PackedVector2Array tri_bary_uv2s;     // (h2, 0)
 
@@ -477,6 +501,7 @@ private:
 	void _gen_cube(GeoBuf &geo) const;
 	void _gen_cylinder(GeoBuf &geo) const;
 	void _gen_cone(GeoBuf &geo) const;
+	void _gen_capsule(GeoBuf &geo) const;
 	/// Helper used by every Mesh subtype's generator. Pushes one fill
 	/// triangle (with the flipped winding the rest of the renderer
 	/// expects) plus the per-vertex barycentric + edge-height attribs

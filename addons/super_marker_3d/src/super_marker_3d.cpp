@@ -39,79 +39,43 @@ static const int CONE_SEGS = 16;
 
 // ---------------------------------------------------------------------------
 // Mesh-category rendering uses TWO chained passes for non-sphere subtypes
-// (sphere uses its own analytic shader, see SPHERE_SHADER_SRC below):
+// (sphere uses its own analytic shader, see SPHERE_SHADER_BODY below):
 //
-//   Pass A — FILL_SHADER_SRC: paints fill_color across every fragment of
-//            the mesh body. No edge math, no discard. Provides the
-//            colored fill underneath.
-//   Pass B — BARY_SHADER_SRC: paints outline_color in a per-triangle
+//   Pass A — FILL shader: paints fill_color across every fragment.
+//   Pass B — BARY shader: paints outline_color in a per-triangle
 //            bary*h strip of perpendicular world width
 //            `outline_thickness` along each flagged face-boundary edge,
-//            and `discard`s every fragment that isn't inside a strip.
+//            and `discard`s every fragment outside a strip so pass A's
+//            fill remains visible.
 //
-// They're chained on the same ArrayMesh surface via
-// ShaderMaterial::set_next_pass — pass A renders first to the depth +
-// color buffers, pass B renders second on top, only writing color where
-// it actually paints an outline.
+// Each shader has TWO render_mode variants — UNSHADED (HUD-flat, no
+// environment lighting) and LIT (default shading, receives lights and
+// casts shadows like a normal mesh). Variant is chosen by
+// `_lights_and_shadows` at material-build time so the same node can
+// be either a clean design marker or a stand-in game object.
 //
-// Why this split (rather than one shader doing both):
-//   - The bary shader's strip math is per-LOCAL-triangle (`bary[i] * h_i`
-//     is the fragment's perpendicular distance to edge i inside the
-//     sub-triangle). It produces clean strips with no min-of-4 crease.
-//   - For quad faces (e.g. cylinder lateral facets) split into 2 sub-
-//     triangles by an internal diagonal, the strip on a quad edge only
-//     extends to the diagonal in the sub-triangle that owns that edge.
-//     The DUAL-DIAGONAL SPLIT in `_add_mesh_quad_face` covers the gap by
-//     emitting the quad twice with different diagonals; each fragment
-//     ends up in 2 sub-triangles (one per layer), and at least one of
-//     the two owns whichever quad edge is closest. The other sub-tri
-//     `discard`s, so there's no z-fight between fill and outline at the
-//     same depth — fill comes from pass A, outline from pass B.
-//
-// Lit/unlit toggled by the `unlit` uniform via the EMISSION-vs-ALBEDO
-// trick (Godot doesn't allow conditional render_mode). When `unlit` is
-// true, ALBEDO is zero and EMISSION carries the marker color; when false
-// (in-game-object mode), ALBEDO carries the color and the standard
-// lighting / shadow pipeline applies.
+// Pass B's strip math: bary[i] * h_i is the fragment's perpendicular
+// world distance to edge i inside the local sub-triangle. Quad faces
+// are emitted with a DUAL-DIAGONAL SPLIT (`_add_mesh_quad_face`) so
+// every fragment lives in two sub-triangles — at least one owns
+// whichever quad edge is nearest, and the other discards.
 //
 // Outline at thickness 0: pass B early-discards every fragment, so the
-// mesh renders as pure fill_color from pass A. No AA bleed.
-static const char *FILL_SHADER_SRC = R"(
-shader_type spatial;
-render_mode blend_mix, cull_back, depth_draw_opaque;
+// mesh renders as pure fill from pass A. No AA bleed.
 
+// Bodies — render_mode line is concatenated at runtime (see RM_*).
+static const char *FILL_SHADER_BODY = R"(
 uniform vec4 fill_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
-uniform bool unlit                     = true;
 
 void fragment() {
-	if (unlit) {
-		ALBEDO   = vec3(0.0);
-		EMISSION = fill_color.rgb;
-	} else {
-		ALBEDO = fill_color.rgb;
-	}
-	ALPHA = fill_color.a;
+	ALBEDO = fill_color.rgb;
+	ALPHA  = fill_color.a;
 }
 )";
 
-Ref<Shader> SuperMarker3D::_mesh_shader;
-
-// Per-triangle bary strip shader. Vertex attributes:
-//   COLOR.rgb = barycentric tag (1,0,0)/(0,1,0)/(0,0,1)
-//   UV.xy     = (h0, h1)  — perpendicular heights v0/v1 → opposite edge
-//   UV2.x     = h2        — perpendicular height v2 → opposite edge
-// Heights are constant per triangle. h_i = -1 marks edge i as INTERNAL
-// triangulation (e.g. a quad's diagonal); the strip math skips it.
-// Distance to edge i = bary[i] * h_i; min over flagged edges → distance
-// to the nearest real boundary inside this sub-triangle. Fragments
-// outside every strip discard so pass A's fill remains visible.
-static const char *BARY_SHADER_SRC = R"(
-shader_type spatial;
-render_mode blend_mix, cull_back, depth_draw_opaque;
-
+static const char *BARY_SHADER_BODY = R"(
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
-uniform bool  unlit                        = true;
 
 varying vec3 v_bary;
 varying vec3 v_heights;
@@ -133,17 +97,19 @@ void fragment() {
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	if (edge < 0.001) discard;
 
-	if (unlit) {
-		ALBEDO   = vec3(0.0);
-		EMISSION = outline_color.rgb;
-	} else {
-		ALBEDO = outline_color.rgb;
-	}
-	ALPHA = outline_color.a * edge;
+	ALBEDO = outline_color.rgb;
+	ALPHA  = outline_color.a * edge;
 }
 )";
 
+// render_mode prefixes — `unshaded` for HUD-flat, default for lit.
+static const char *RM_UNSHADED = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_back, depth_draw_opaque;\n";
+static const char *RM_LIT      = "shader_type spatial;\nrender_mode blend_mix, cull_back, depth_draw_opaque;\n";
+
+Ref<Shader> SuperMarker3D::_mesh_shader;
+Ref<Shader> SuperMarker3D::_mesh_shader_lit;
 Ref<Shader> SuperMarker3D::_bary_shader;
+Ref<Shader> SuperMarker3D::_bary_shader_lit;
 
 // Sphere shader — paints lat/lon wireframe lines analytically from each
 // fragment's local-space position. Independent of the fill triangulation,
@@ -157,15 +123,15 @@ Ref<Shader> SuperMarker3D::_bary_shader;
 // Wireframe pattern: 5 latitudes (equator, ±30°, ±60°) and 12 meridians
 // (every 30° — 6 great-circles drawn, one through each fill-mesh edge
 // when SPHERE_FILL_LON = 12).
-static const char *SPHERE_SHADER_SRC = R"(
-shader_type spatial;
-render_mode blend_mix, cull_back, depth_draw_opaque;
-
+static const char *SPHERE_SHADER_BODY = R"(
 uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
-uniform bool  unlit                        = true;
 uniform float marker_size                  = 1.0;
+// Sphere centre in object space. Default (0,0,0) for plain sphere; for
+// the capsule's hemisphere caps the caller passes the hemisphere's
+// true centre so phi/theta are computed relative to it.
+uniform vec3  sphere_center                = vec3(0.0);
 
 const float SPHERE_PI = 3.14159265359;
 const float MER_STEP  = SPHERE_PI / 6.0; // 30° between adjacent meridians (12 total)
@@ -173,7 +139,7 @@ const float MER_STEP  = SPHERE_PI / 6.0; // 30° between adjacent meridians (12 
 varying vec3 v_local_pos;
 
 void vertex() {
-	v_local_pos = VERTEX;
+	v_local_pos = VERTEX - sphere_center;
 }
 
 void fragment() {
@@ -212,17 +178,13 @@ void fragment() {
 	}
 
 	vec4 col = mix(fill_color, outline_color, edge);
-	if (unlit) {
-		ALBEDO   = vec3(0.0);
-		EMISSION = col.rgb;
-	} else {
-		ALBEDO = col.rgb;
-	}
-	ALPHA = col.a;
+	ALBEDO = col.rgb;
+	ALPHA  = col.a;
 }
 )";
 
 Ref<Shader> SuperMarker3D::_sphere_shader;
+Ref<Shader> SuperMarker3D::_sphere_shader_lit;
 
 // ---------------------------------------------------------------------------
 // GeoBuf helpers
@@ -330,6 +292,13 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_sides",
 			PROPERTY_HINT_RANGE, "3,24,1"),
 			"set_mesh_sides", "get_mesh_sides");
+	// Capsule cylinder body height. Hidden by `_validate_property` on
+	// every other subtype.
+	ClassDB::bind_method(D_METHOD("set_capsule_height", "height"), &SuperMarker3D::set_capsule_height);
+	ClassDB::bind_method(D_METHOD("get_capsule_height"), &SuperMarker3D::get_capsule_height);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "capsule_height",
+			PROPERTY_HINT_RANGE, "0.0,50.0,0.001,or_greater,suffix:m"),
+			"set_capsule_height", "get_capsule_height");
 
 	// Outline color + thickness apply to every shape that has an
 	// outline (which is all of them in some form). Thickness > 0 turns
@@ -530,9 +499,9 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_always_on_top", "enabled"), &SuperMarker3D::set_always_on_top);
 	ClassDB::bind_method(D_METHOD("get_always_on_top"), &SuperMarker3D::get_always_on_top);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "always_on_top"), "set_always_on_top", "get_always_on_top");
-	ClassDB::bind_method(D_METHOD("set_in_game_object", "enabled"), &SuperMarker3D::set_in_game_object);
-	ClassDB::bind_method(D_METHOD("get_in_game_object"), &SuperMarker3D::get_in_game_object);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "in_game_object"), "set_in_game_object", "get_in_game_object");
+	ClassDB::bind_method(D_METHOD("set_lights_and_shadows", "enabled"), &SuperMarker3D::set_lights_and_shadows);
+	ClassDB::bind_method(D_METHOD("get_lights_and_shadows"), &SuperMarker3D::get_lights_and_shadows);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lights_and_shadows"), "set_lights_and_shadows", "get_lights_and_shadows");
 
 	ClassDB::bind_method(D_METHOD("set_template_mode", "template_mode"), &SuperMarker3D::set_template_mode);
 	ClassDB::bind_method(D_METHOD("is_template_mode"), &SuperMarker3D::is_template_mode);
@@ -559,6 +528,7 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(MESH_PYRAMID);
 	BIND_ENUM_CONSTANT(MESH_CYLINDER);
 	BIND_ENUM_CONSTANT(MESH_CONE);
+	BIND_ENUM_CONSTANT(MESH_CAPSULE);
 	BIND_ENUM_CONSTANT(CURVE_FLAT);
 	BIND_ENUM_CONSTANT(CURVE_LINE_3D);
 	BIND_ENUM_CONSTANT(ARROW_EXTRUDED);
@@ -609,7 +579,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				// Pyramid (subtype 13) is a deprecated alias — it now
 				// renders as a 4-sided Cone. Hidden from new selections;
 				// existing scenes still load and render correctly.
-				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Cylinder:14,Cone:15";
+				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16";
 				break;
 			case TYPE_SHAPE:
 				// No subtypes yet — placeholder slot for future flat 2D
@@ -647,6 +617,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
 			|| _shape == MESH_DIAMOND);
 	if (name == "mesh_sides" && !is_round_mesh) hide();
+	if (name == "capsule_height" && _shape != MESH_CAPSULE) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
 	// is editable depends on the link mode; whether it's visible at all
@@ -783,7 +754,7 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 		case AXIS_CROSS: case AXIS_PLAIN: case AXIS_BURR: case AXIS_XYZ:
 			return TYPE_AXIS;
 		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND: case MESH_PYRAMID:
-		case MESH_CYLINDER: case MESH_CONE:
+		case MESH_CYLINDER: case MESH_CONE: case MESH_CAPSULE:
 			return TYPE_MESH;
 		case CURVE_FLAT: case CURVE_LINE_3D:
 			return TYPE_CURVE;
@@ -821,14 +792,18 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 	// outline_color as a single albedo.
 	if (_outline_material.is_valid() && _shape != AXIS_XYZ)
 		_outline_material->set_albedo(_outline_color);
-	// Mesh subtypes route through the shader material(s). Sphere keeps
-	// outline_color on `_mesh_material` (its analytic shader handles
-	// both fill and outline); other meshes paint outlines via the
-	// chained `_bary_material` next-pass.
+	// Mesh subtypes route through the shader material(s). Sphere paints
+	// outlines from its analytic shader on `_mesh_material`; other
+	// meshes via the bary surface; capsule additionally has two cap
+	// materials (sphere shader, one per hemisphere).
 	if (_shape == MESH_SPHERE && _mesh_material.is_valid())
 		_mesh_material->set_shader_parameter("outline_color", _outline_color);
 	if (_bary_material.is_valid())
 		_bary_material->set_shader_parameter("outline_color", _outline_color);
+	if (_cap_top_material.is_valid())
+		_cap_top_material->set_shader_parameter("outline_color", _outline_color);
+	if (_cap_bot_material.is_valid())
+		_cap_bot_material->set_shader_parameter("outline_color", _outline_color);
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
@@ -845,6 +820,10 @@ void SuperMarker3D::set_fill_color(const Color &p) {
 	}
 	if (_mesh_material.is_valid())
 		_mesh_material->set_shader_parameter("fill_color", _fill_color);
+	if (_cap_top_material.is_valid())
+		_cap_top_material->set_shader_parameter("fill_color", _fill_color);
+	if (_cap_bot_material.is_valid())
+		_cap_bot_material->set_shader_parameter("fill_color", _fill_color);
 }
 Color SuperMarker3D::get_fill_color() const { return _fill_color; }
 
@@ -887,6 +866,12 @@ void SuperMarker3D::set_mesh_sides(int p) {
 	}
 }
 int SuperMarker3D::get_mesh_sides() const { return _mesh_sides; }
+
+void SuperMarker3D::set_capsule_height(float p) {
+	_capsule_height = MAX(0.0f, p);
+	if (_shape == MESH_CAPSULE) SM_REBUILD();
+}
+float SuperMarker3D::get_capsule_height() const { return _capsule_height; }
 
 void SuperMarker3D::set_axis_link_mode(int p) {
 	_axis_link_mode = p;
@@ -1034,8 +1019,8 @@ void SuperMarker3D::set_always_on_top(bool p) {
 	if (_fill_material.is_valid()) _fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, p);
 }
 bool SuperMarker3D::get_always_on_top() const { return _always_on_top; }
-void SuperMarker3D::set_in_game_object(bool p) {
-	_in_game_object = p;
+void SuperMarker3D::set_lights_and_shadows(bool p) {
+	_lights_and_shadows = p;
 	if (is_inside_tree()) {
 		_build_materials();
 		// Refresh shadow casting on the RS instance — only valid when
@@ -1043,13 +1028,13 @@ void SuperMarker3D::set_in_game_object(bool p) {
 		if (_instance.is_valid()) {
 			RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(
 					_instance,
-					_in_game_object
+					_lights_and_shadows
 							? RenderingServer::SHADOW_CASTING_SETTING_ON
 							: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 		}
 	}
 }
-bool SuperMarker3D::get_in_game_object() const { return _in_game_object; }
+bool SuperMarker3D::get_lights_and_shadows() const { return _lights_and_shadows; }
 void SuperMarker3D::set_template_mode(bool p) { _template_mode = p; _update_visibility(); }
 RID  SuperMarker3D::get_mesh_rid() const { return _mesh.is_valid() ? _mesh->get_rid() : RID(); }
 
@@ -1064,11 +1049,11 @@ void SuperMarker3D::_ensure_instance() {
 	if (_mesh.is_valid()) rs->instance_set_base(_instance, _mesh->get_rid());
 	Ref<World3D> w = get_world_3d();
 	if (w.is_valid()) rs->instance_set_scenario(_instance, w->get_scenario());
-	// Honor `in_game_object` for shadow casting on every refresh —
+	// Honor `lights_and_shadows` for shadow casting on every refresh —
 	// the flag toggle calls `_ensure_instance` indirectly via SM_REBUILD,
 	// so this is the single place that has to keep the RS state in sync.
 	rs->instance_geometry_set_cast_shadows_setting(_instance,
-			_in_game_object
+			_lights_and_shadows
 					? RenderingServer::SHADOW_CASTING_SETTING_ON
 					: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 }
@@ -1182,7 +1167,7 @@ void SuperMarker3D::_build_axis_per_arm(const Vector<Vector3> &dirs,
 				is_visible_in_tree() && !_template_mode
 				&& (_shows_in_play || Engine::get_singleton()->is_editor_hint()));
 		rs->instance_geometry_set_cast_shadows_setting(_arm_instances[i],
-				_in_game_object
+				_lights_and_shadows
 						? RenderingServer::SHADOW_CASTING_SETTING_ON
 						: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 	}
@@ -1230,7 +1215,7 @@ void SuperMarker3D::_build_materials() {
 
 	// --- Outline material ---
 	// The outline / wireframe is artificially unshaded and unshadowed —
-	// it's a highlight, not a real surface. Even when `in_game_object`
+	// it's a highlight, not a real surface. Even when `lights_and_shadows`
 	// is on (which routes the FILL through lit shading + shadows), the
 	// outline stays flat unshaded so it reads as a bold marker overlay.
 	if (_outline_material.is_null()) _outline_material.instantiate();
@@ -1278,7 +1263,7 @@ void SuperMarker3D::_build_materials() {
 
 	// --- Fill material ---
 	if (_fill_material.is_null()) _fill_material.instantiate();
-	_fill_material->set_shading_mode(_in_game_object
+	_fill_material->set_shading_mode(_lights_and_shadows
 			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
 			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
@@ -1316,38 +1301,66 @@ void SuperMarker3D::_build_materials() {
 	// bary surface's discards keep them from competing on depth.
 	if (is_mesh_type) {
 		const bool use_sphere_shader = (_shape == MESH_SPHERE);
-		if (use_sphere_shader) {
-			if (_sphere_shader.is_null()) {
-				_sphere_shader.instantiate();
-				_sphere_shader->set_code(SPHERE_SHADER_SRC);
-			}
-		} else {
-			if (_mesh_shader.is_null()) {
-				_mesh_shader.instantiate();
-				_mesh_shader->set_code(FILL_SHADER_SRC);
-			}
-			if (_bary_shader.is_null()) {
-				_bary_shader.instantiate();
-				_bary_shader->set_code(BARY_SHADER_SRC);
+		const bool is_capsule        = (_shape == MESH_CAPSULE);
+		// Lazily compile each render_mode variant on first use.
+		auto ensure_shader = [](Ref<Shader> &s, const String &code) {
+			if (s.is_null()) { s.instantiate(); s->set_code(code); }
+		};
+		if (use_sphere_shader || is_capsule) {
+			if (_lights_and_shadows)
+				ensure_shader(_sphere_shader_lit, String(RM_LIT) + SPHERE_SHADER_BODY);
+			else
+				ensure_shader(_sphere_shader,     String(RM_UNSHADED) + SPHERE_SHADER_BODY);
+		}
+		if (!use_sphere_shader) {
+			if (_lights_and_shadows) {
+				ensure_shader(_mesh_shader_lit, String(RM_LIT) + FILL_SHADER_BODY);
+				ensure_shader(_bary_shader_lit, String(RM_LIT) + BARY_SHADER_BODY);
+			} else {
+				ensure_shader(_mesh_shader,     String(RM_UNSHADED) + FILL_SHADER_BODY);
+				ensure_shader(_bary_shader,     String(RM_UNSHADED) + BARY_SHADER_BODY);
 			}
 		}
+		Ref<Shader> fill_s   = _lights_and_shadows ? _mesh_shader_lit   : _mesh_shader;
+		Ref<Shader> bary_s   = _lights_and_shadows ? _bary_shader_lit   : _bary_shader;
+		Ref<Shader> sphere_s = _lights_and_shadows ? _sphere_shader_lit : _sphere_shader;
+
 		if (_mesh_material.is_null()) _mesh_material.instantiate();
-		_mesh_material->set_shader(use_sphere_shader ? _sphere_shader : _mesh_shader);
+		_mesh_material->set_shader(use_sphere_shader ? sphere_s : fill_s);
 		_mesh_material->set_shader_parameter("fill_color", _fill_color);
-		_mesh_material->set_shader_parameter("unlit", !_in_game_object);
 		if (use_sphere_shader) {
 			_mesh_material->set_shader_parameter("outline_color", _outline_color);
 			_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
 			_mesh_material->set_shader_parameter("marker_size", _marker_size);
+			_mesh_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 		} else {
 			if (_bary_material.is_null()) _bary_material.instantiate();
-			_bary_material->set_shader(_bary_shader);
+			_bary_material->set_shader(bary_s);
 			_bary_material->set_shader_parameter("outline_color", _outline_color);
 			_bary_material->set_shader_parameter("outline_thickness", _outline_thickness);
-			_bary_material->set_shader_parameter("unlit", !_in_game_object);
 			_bary_material->set_render_priority(1);
 		}
 		_mesh_material->set_render_priority(0);
+
+		// Capsule hemisphere materials. Each carries a sphere_center
+		// uniform that offsets phi/theta evaluation to the
+		// hemisphere's true centre.
+		if (is_capsule) {
+			const float cyl_half = _capsule_height * 0.5f;
+			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
+			if (_cap_bot_material.is_null()) _cap_bot_material.instantiate();
+			Ref<ShaderMaterial> caps[2] = { _cap_top_material, _cap_bot_material };
+			const float ys[2] = { +cyl_half, -cyl_half };
+			for (int i = 0; i < 2; i++) {
+				caps[i]->set_shader(sphere_s);
+				caps[i]->set_shader_parameter("fill_color", _fill_color);
+				caps[i]->set_shader_parameter("outline_color", _outline_color);
+				caps[i]->set_shader_parameter("outline_thickness", _outline_thickness);
+				caps[i]->set_shader_parameter("marker_size", _marker_size);
+				caps[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
+				caps[i]->set_render_priority(0);
+			}
+		}
 	}
 
 	// Apply to surfaces.
@@ -1357,6 +1370,13 @@ void SuperMarker3D::_build_materials() {
 			if (sc > 0) _mesh->surface_set_material(0, _mesh_material);
 			if (sc > 1 && _bary_material.is_valid())
 				_mesh->surface_set_material(1, _bary_material);
+			// Capsule hemisphere surfaces, when present.
+			if (_shape == MESH_CAPSULE) {
+				if (sc > 2 && _cap_top_material.is_valid())
+					_mesh->surface_set_material(2, _cap_top_material);
+				if (sc > 3 && _cap_bot_material.is_valid())
+					_mesh->surface_set_material(3, _cap_bot_material);
+			}
 		} else {
 			for (int i = 0; i < sc; i++) {
 				_mesh->surface_set_material(i, _outline_material);
@@ -1817,6 +1837,113 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 		// opp v1=(bc,base[j]) radial, opp v2=(bc,base[i]) radial.
 		_add_mesh_face(geo, bc, base[i], base[j], true, false, false);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Capsule — top hemisphere + cylinder body + bottom hemisphere. Radius
+// = `marker_size`, cylinder body length = `_capsule_height`. The
+// hemispheres share their equator vertices with the cylinder's top /
+// bottom rings, so the lat ring drawn at each hemisphere's equator
+// (by the sphere shader) lines up exactly with the corresponding
+// outline-painted ring of the cylinder body — the user sees one
+// continuous horizontal line where the cap meets the body.
+//
+// Surfaces emitted (in `_rebuild_mesh`):
+//   0  cylinder body fill   (FILL_SHADER)
+//   1  cylinder body bary   (BARY_SHADER, vertical seams flagged
+//                            internal so only the top + bottom rings
+//                            paint as outline strips)
+//   2  top hemisphere       (SPHERE_SHADER, sphere_center = +cyl_half)
+//   3  bottom hemisphere    (SPHERE_SHADER, sphere_center = -cyl_half)
+// ---------------------------------------------------------------------------
+
+void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
+	const float r = _marker_size;
+	const float cyl_half = _capsule_height * 0.5f;
+	const int LON = SPHERE_FILL_LON;
+	const int LAT = SPHERE_FILL_LAT; // half this many quads per hemisphere
+	const int W   = LON + 1;
+
+	// --- Cylinder body lateral facets ---------------------------------
+	// Use the same LON count as the sphere so meridian seams align with
+	// hemisphere meridian columns at the equator.
+	PackedVector3Array top_ring, bot_ring;
+	top_ring.resize(LON); bot_ring.resize(LON);
+	for (int i = 0; i < LON; i++) {
+		const float a = SM_TAU * (float)i / LON;
+		const float cx = std::cos(a) * r, cz = std::sin(a) * r;
+		top_ring.set(i, Vector3(cx,  cyl_half, cz));
+		bot_ring.set(i, Vector3(cx, -cyl_half, cz));
+	}
+	if (_capsule_height > 0.0f) {
+		// Quad order (bot_i, top_i, top_j, bot_j) is CCW from outside.
+		// Edges in slot order: e01 = vertical seam (left), e12 = top
+		// ring chord, e23 = vertical seam (right), e30 = bottom ring
+		// chord. All four flagged boundary so meridian seams paint
+		// continuously from the top hemisphere's meridians, through
+		// the cylinder body, into the bottom hemisphere's meridians.
+		for (int i = 0; i < LON; i++) {
+			const int j = (i + 1) % LON;
+			_add_mesh_quad_face(geo,
+					bot_ring[i], top_ring[i], top_ring[j], bot_ring[j],
+					/*e01 seam=*/true, /*e12 top=*/true,
+					/*e23 seam=*/true, /*e30 bot=*/true);
+		}
+	}
+
+	// --- Hemisphere caps ----------------------------------------------
+	// Build a full UV sphere of (LAT+1) latitude rings × (LON+1) columns,
+	// then partition into upper/lower halves by phi <= π/2 / phi >= π/2.
+	// Each hemisphere is offset along Y by ±cyl_half so its equator sits
+	// at the corresponding cylinder ring.
+	auto emit_hemisphere = [&](bool top_half, float y_offset,
+			PackedVector3Array &out_verts, PackedVector3Array &out_normals) {
+		// Phi range: top → [0, π/2], bottom → [π/2, π]. We iterate the
+		// LAT rings spanning that range and emit two triangles per quad
+		// cell, same as the sphere generator.
+		const int half_lat = LAT / 2;
+		const int phi_start = top_half ? 0 : half_lat;
+		const int phi_end   = top_half ? half_lat : LAT;
+		PackedVector3Array verts;
+		verts.resize((phi_end - phi_start + 1) * W);
+		for (int i = phi_start; i <= phi_end; i++) {
+			const float phi = SM_PI * (float)i / LAT;
+			const float sp = std::sin(phi), cp = std::cos(phi);
+			for (int j = 0; j <= LON; j++) {
+				const float theta = SM_TAU * (float)j / LON;
+				const float st = std::sin(theta), ct = std::cos(theta);
+				const Vector3 v(sp * ct * r, cp * r + y_offset, sp * st * r);
+				verts.set((i - phi_start) * W + j, v);
+			}
+		}
+		const float center_y = y_offset;
+		for (int i = 0; i < phi_end - phi_start; i++) {
+			for (int j = 0; j < LON; j++) {
+				const int ia = i * W + j;
+				const int ib = ia + 1;
+				const int ic = ia + W;
+				const int id = ic + 1;
+				const Vector3 va = verts[ia], vb = verts[ib], vc = verts[ic], vd = verts[id];
+				// Flipped winding (v0, v2, v1) so the front face points
+				// outward from the hemisphere centre, matching CULL_BACK.
+				auto push = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2) {
+					const Vector3 n = (p0 - Vector3(0, center_y, 0)).normalized();
+					out_verts.push_back(p0);
+					out_verts.push_back(p2);
+					out_verts.push_back(p1);
+					Vector3 n1 = (p1 - Vector3(0, center_y, 0)).normalized();
+					Vector3 n2 = (p2 - Vector3(0, center_y, 0)).normalized();
+					out_normals.push_back(n);
+					out_normals.push_back(n2);
+					out_normals.push_back(n1);
+				};
+				push(va, vb, vd);
+				push(va, vd, vc);
+			}
+		}
+	};
+	emit_hemisphere(true,  +cyl_half, geo.cap_top_verts, geo.cap_top_normals);
+	emit_hemisphere(false, -cyl_half, geo.cap_bot_verts, geo.cap_bot_normals);
 }
 
 // ---------------------------------------------------------------------------
@@ -2623,6 +2750,7 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_PYRAMID:    _gen_cone(geo);        break; // 4-sided cone fallback
 		case MESH_CYLINDER:   _gen_cylinder(geo);    break;
 		case MESH_CONE:       _gen_cone(geo);        break;
+		case MESH_CAPSULE:    _gen_capsule(geo);     break;
 		case ARROW_EXTRUDED:  _gen_arrow(geo);       break;
 		case ARROW_FLAT:      _gen_flat_arrow(geo);  break;
 		case CURVE_FLAT:      _gen_curve(geo);       break;
@@ -2657,6 +2785,23 @@ void SuperMarker3D::_rebuild_mesh() {
 			a[Mesh::ARRAY_TEX_UV2] = geo.tri_bary_uv2s;
 			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 			if (_shape != MESH_SPHERE) {
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			}
+		}
+		// Capsule hemisphere caps — surfaces 2 and 3 (rendered with
+		// the sphere shader against per-hemisphere `sphere_center`
+		// uniforms set in `_build_materials`).
+		if (_shape == MESH_CAPSULE) {
+			if (geo.cap_top_verts.size() > 0) {
+				Array a; a.resize(Mesh::ARRAY_MAX);
+				a[Mesh::ARRAY_VERTEX] = geo.cap_top_verts;
+				a[Mesh::ARRAY_NORMAL] = geo.cap_top_normals;
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			}
+			if (geo.cap_bot_verts.size() > 0) {
+				Array a; a.resize(Mesh::ARRAY_MAX);
+				a[Mesh::ARRAY_VERTEX] = geo.cap_bot_verts;
+				a[Mesh::ARRAY_NORMAL] = geo.cap_bot_normals;
 				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 			}
 		}
