@@ -522,6 +522,18 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_two_sided"), &SuperMarker3D::get_two_sided);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "two_sided"), "set_two_sided", "get_two_sided");
 
+	// Shape category
+	ClassDB::bind_method(D_METHOD("set_shape_orientation", "orientation"), &SuperMarker3D::set_shape_orientation);
+	ClassDB::bind_method(D_METHOD("get_shape_orientation"), &SuperMarker3D::get_shape_orientation);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "shape_orientation",
+			PROPERTY_HINT_ENUM, "Billboard,Ground (XZ)"),
+			"set_shape_orientation", "get_shape_orientation");
+	ClassDB::bind_method(D_METHOD("set_shape_sides", "sides"), &SuperMarker3D::set_shape_sides);
+	ClassDB::bind_method(D_METHOD("get_shape_sides"), &SuperMarker3D::get_shape_sides);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "shape_sides",
+			PROPERTY_HINT_RANGE, "6,64,1"),
+			"set_shape_sides", "get_shape_sides");
+
 	ClassDB::bind_method(D_METHOD("set_template_mode", "template_mode"), &SuperMarker3D::set_template_mode);
 	ClassDB::bind_method(D_METHOD("is_template_mode"), &SuperMarker3D::is_template_mode);
 	ClassDB::bind_method(D_METHOD("get_mesh_rid"), &SuperMarker3D::get_mesh_rid);
@@ -548,6 +560,12 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(MESH_CYLINDER);
 	BIND_ENUM_CONSTANT(MESH_CONE);
 	BIND_ENUM_CONSTANT(MESH_CAPSULE);
+	BIND_ENUM_CONSTANT(FLAT_CIRCLE);
+	BIND_ENUM_CONSTANT(FLAT_SQUARE);
+	BIND_ENUM_CONSTANT(FLAT_DIAMOND);
+	BIND_ENUM_CONSTANT(FLAT_TRIANGLE);
+	BIND_ENUM_CONSTANT(FLAT_CAPSULE);
+	BIND_ENUM_CONSTANT(FLAT_X);
 	BIND_ENUM_CONSTANT(CURVE_FLAT);
 	BIND_ENUM_CONSTANT(CURVE_LINE_3D);
 	BIND_ENUM_CONSTANT(ARROW_EXTRUDED);
@@ -569,15 +587,18 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(LEGS_TOGETHER);
 	BIND_ENUM_CONSTANT(LEGS_LEFT_FWD);
 	BIND_ENUM_CONSTANT(LEGS_RIGHT_FWD);
+	BIND_ENUM_CONSTANT(ORIENT_BILLBOARD);
+	BIND_ENUM_CONSTANT(ORIENT_GROUND);
 }
 
 void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	const String name = p_property.name;
 	const int t = get_type();
-	const bool is_axis = (t == TYPE_AXIS);
-	const bool is_mesh = (t == TYPE_MESH);
+	const bool is_axis  = (t == TYPE_AXIS);
+	const bool is_mesh  = (t == TYPE_MESH);
 	const bool is_curve = (t == TYPE_CURVE);
 	const bool is_arrow = (t == TYPE_ARROW);
+	const bool is_shape = (t == TYPE_SHAPE);
 	const bool is_axis_xyz = (_shape == AXIS_XYZ);
 	const bool is_axis_2d  = (_shape == AXIS_CROSS); // 4 arms, no Z
 	const bool is_axis_burr = (_shape == AXIS_BURR);
@@ -601,11 +622,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16";
 				break;
 			case TYPE_SHAPE:
-				// No subtypes yet — placeholder slot for future flat 2D
-				// iconography. Disable the dropdown so the user sees
-				// the type exists but can't pick a non-existent variant.
-				p_property.hint_string = "(none yet)";
-				read_only();
+				p_property.hint_string = "Circle:17,Square:18,Diamond:19,Triangle:20,Capsule:21,X:22";
 				break;
 			case TYPE_CURVE:
 				p_property.hint_string = "Flat Ribbon:7,3D Line:9";
@@ -627,16 +644,15 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Fill Enabled is also gone for Mesh (fill is always on now). Keep
 	// it visible only on Arrow / Curve Flat where the user still
 	// chooses whether to fill.
-	if (name == "fill_enabled" && !(is_arrow || _shape == CURVE_FLAT)) hide();
-	// Fill Color stays visible on Mesh (drives the fill body) and on
-	// Arrow / Curve Flat (when their fill_enabled toggle is on).
-	if (name == "fill_color" && !(is_mesh || is_arrow || _shape == CURVE_FLAT)) hide();
-	// Side count is only meaningful on the round-bodied mesh subtypes
-	// (cylinder, cone, and the multisided bipyramid diamond).
+	if (name == "fill_enabled" && !(is_arrow || _shape == CURVE_FLAT || is_shape)) hide();
+	if (name == "fill_color"   && !(is_mesh || is_arrow || _shape == CURVE_FLAT || is_shape)) hide();
+	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
 			|| _shape == MESH_DIAMOND);
-	if (name == "mesh_sides" && !is_round_mesh) hide();
-	if (name == "capsule_height" && _shape != MESH_CAPSULE) hide();
+	if (name == "mesh_sides"  && !is_round_mesh) hide();
+	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
+	if (name == "shape_orientation" && !is_shape) hide();
+	if (name == "capsule_height" && _shape != MESH_CAPSULE && _shape != FLAT_CAPSULE) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
 	// is editable depends on the link mode; whether it's visible at all
@@ -775,6 +791,9 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND: case MESH_PYRAMID:
 		case MESH_CYLINDER: case MESH_CONE: case MESH_CAPSULE:
 			return TYPE_MESH;
+		case FLAT_CIRCLE: case FLAT_SQUARE: case FLAT_DIAMOND:
+		case FLAT_TRIANGLE: case FLAT_CAPSULE: case FLAT_X:
+			return TYPE_SHAPE;
 		case CURVE_FLAT: case CURVE_LINE_3D:
 			return TYPE_CURVE;
 		case ARROW_EXTRUDED: case ARROW_FLAT:
@@ -790,8 +809,7 @@ int SuperMarker3D::_type_first_subtype(int p_type) {
 	switch (p_type) {
 		case TYPE_AXIS:   return AXIS_CROSS;
 		case TYPE_MESH:   return MESH_SPHERE;
-		case TYPE_SHAPE:  return AXIS_CROSS; // Shape type is empty in 1.0-beta;
-		                                     // fall back to Axis Cross visually.
+		case TYPE_SHAPE:  return FLAT_CIRCLE;
 		case TYPE_CURVE:  return CURVE_FLAT;
 		case TYPE_ARROW:  return ARROW_EXTRUDED;
 		case TYPE_FIGURE: return FIGURE;
@@ -891,6 +909,18 @@ void SuperMarker3D::set_capsule_height(float p) {
 	if (_shape == MESH_CAPSULE) SM_REBUILD();
 }
 float SuperMarker3D::get_capsule_height() const { return _capsule_height; }
+
+void SuperMarker3D::set_shape_orientation(int p) {
+	_shape_orientation = p;
+	if (get_type() == TYPE_SHAPE) SM_REBUILD();
+}
+int SuperMarker3D::get_shape_orientation() const { return _shape_orientation; }
+
+void SuperMarker3D::set_shape_sides(int p) {
+	_shape_sides = CLAMP(p, 6, 64);
+	if (_shape == FLAT_CIRCLE) SM_REBUILD();
+}
+int SuperMarker3D::get_shape_sides() const { return _shape_sides; }
 
 void SuperMarker3D::set_axis_link_mode(int p) {
 	_axis_link_mode = p;
@@ -1257,9 +1287,11 @@ void SuperMarker3D::_build_materials() {
 	// CULL_BACK then so face culling alone keeps the silhouette honest.
 	// Flat arrow + curve ribbons stay CULL_DISABLED unconditionally
 	// (they're flat surfaces, both sides are intentional).
-	const bool is_mesh_type = (get_type() == TYPE_MESH);
+	const bool is_mesh_type  = (get_type() == TYPE_MESH);
+	const bool is_shape_type = (get_type() == TYPE_SHAPE);
+	// Shape-category icons and flat arrows/curves are always two-sided.
 	BaseMaterial3D::CullMode wire_cull = BaseMaterial3D::CULL_BACK;
-	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT) {
+	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type) {
 		wire_cull = BaseMaterial3D::CULL_DISABLED;
 	} else if (is_mesh_type) {
 		wire_cull = _always_on_top
@@ -1280,8 +1312,9 @@ void SuperMarker3D::_build_materials() {
 				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
 	}
 
-	// Silhouette mode: billboard so 2D shapes always face the camera.
-	_outline_material->set_billboard_mode(billboard
+	// Billboard: silhouette mesh shapes, or Shape-category icons in ORIENT_BILLBOARD mode.
+	const bool use_billboard = billboard || (is_shape_type && _shape_orientation == ORIENT_BILLBOARD);
+	_outline_material->set_billboard_mode(use_billboard
 			? BaseMaterial3D::BILLBOARD_ENABLED
 			: BaseMaterial3D::BILLBOARD_DISABLED);
 
@@ -1297,7 +1330,7 @@ void SuperMarker3D::_build_materials() {
 	// so both sides render. 3D fills use CULL_BACK by default — closed
 	// convex shapes self-occlude correctly via face culling alone, even
 	// in always-on-top mode where depth test is off.
-	const bool flat_shape = (billboard || _shape == ARROW_FLAT || _shape == CURVE_FLAT);
+	const bool flat_shape = (billboard || _shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type);
 	_fill_material->set_cull_mode(flat_shape
 			? BaseMaterial3D::CULL_DISABLED
 			: BaseMaterial3D::CULL_BACK);
@@ -1310,7 +1343,7 @@ void SuperMarker3D::_build_materials() {
 	// fill — at full transparency you see a complete circle of outline
 	// color, at partial alpha you see the back arc blended with the fill.
 	_fill_material->set_depth_draw_mode(BaseMaterial3D::DEPTH_DRAW_OPAQUE_ONLY);
-	_fill_material->set_billboard_mode(billboard
+	_fill_material->set_billboard_mode(use_billboard
 			? BaseMaterial3D::BILLBOARD_ENABLED
 			: BaseMaterial3D::BILLBOARD_DISABLED);
 
@@ -1495,7 +1528,7 @@ void SuperMarker3D::_build_materials() {
 				_mesh->surface_set_material(i, _outline_material);
 			}
 			const bool any_fill_capable = (_shape == ARROW_EXTRUDED || _shape == ARROW_FLAT
-					|| _shape == CURVE_FLAT);
+					|| _shape == CURVE_FLAT || is_shape_type);
 			if (any_fill_capable && _fill_enabled && sc > 0) {
 				_mesh->surface_set_material(sc - 1, _fill_material);
 			}
@@ -2329,6 +2362,183 @@ void SuperMarker3D::_gen_arrow(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
+// Shape-category generators — flat 2D polygon icons.
+//
+// Shared orientation logic: ORIENT_BILLBOARD generates geometry in the XY
+// plane (z=0, normal=+Z) and relies on BILLBOARD_ENABLED on the material to
+// always face the camera. ORIENT_GROUND generates in the XZ plane (y=0,
+// normal=+Y) as a flat floor marker with no billboard rotation.
+//
+// Each generator uses two lambdas:
+//   pt(x, y)       → Vector3 in the correct plane
+//   edge(a, b)     → thick quad (outline_verts) or thin line (line_verts)
+//   blob(p)        → disc corner blob for miter-join rounding
+// ---------------------------------------------------------------------------
+
+// Shared setup macro for flat shape generators.
+#define FLAT_SHAPE_SETUP                                                           \
+    const bool ground = (_shape_orientation == ORIENT_GROUND);                     \
+    const float ew = _outline_thickness;                                           \
+    auto pt = [&](float x, float y) -> Vector3 {                                  \
+        return ground ? Vector3(x, 0.0f, y) : Vector3(x, y, 0.0f);               \
+    };                                                                             \
+    auto edge = [&](const Vector3 &a, const Vector3 &b) {                         \
+        if (ew > 0.0f) {                                                           \
+            if (ground) geo.add_flat_edge_quad(a, b, ew);                         \
+            else _add_sil_edge_quad(geo, a, b, ew);                               \
+        } else { geo.add_line(a, b); }                                            \
+    };                                                                             \
+    auto blob = [&](const Vector3 &p, int segs = 8) {                             \
+        if (ew > 0.0f) {                                                           \
+            if (ground) _add_disc_blob(geo, p, ew * 0.5f, segs);                 \
+            else _add_sil_disc(geo, p, ew * 0.5f, segs);                         \
+        }                                                                          \
+    };
+
+void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
+    FLAT_SHAPE_SETUP
+    const int N = _shape_sides;
+    const float r = _marker_size;
+    Vector<Vector3> ring; ring.resize(N);
+    for (int i = 0; i < N; i++) {
+        float a = SM_TAU * (float)i / N;
+        ring.set(i, pt(std::cos(a) * r, std::sin(a) * r));
+    }
+    const Vector3 ctr = pt(0, 0);
+    if (_fill_enabled) {
+        for (int i = 0; i < N; i++)
+            geo.add_triangle(ctr, ring[i], ring[(i + 1) % N]);
+    }
+    for (int i = 0; i < N; i++)
+        edge(ring[i], ring[(i + 1) % N]);
+    // No corner blobs on a smooth polygon — the segments are dense enough.
+}
+
+void SuperMarker3D::_gen_flat_square(GeoBuf &geo) const {
+    FLAT_SHAPE_SETUP
+    const float h = _marker_size;
+    const Vector3 TL = pt(-h,  h), TR = pt( h,  h);
+    const Vector3 BR = pt( h, -h), BL = pt(-h, -h);
+    if (_fill_enabled) {
+        geo.add_triangle(TL, TR, BR);
+        geo.add_triangle(TL, BR, BL);
+    }
+    edge(TL, TR); edge(TR, BR); edge(BR, BL); edge(BL, TL);
+    blob(TL); blob(TR); blob(BR); blob(BL);
+}
+
+void SuperMarker3D::_gen_flat_diamond(GeoBuf &geo) const {
+    FLAT_SHAPE_SETUP
+    const float h = _marker_size;
+    const Vector3 T = pt(0,  h), R = pt( h, 0);
+    const Vector3 B = pt(0, -h), L = pt(-h, 0);
+    if (_fill_enabled) {
+        geo.add_triangle(T, R, B);
+        geo.add_triangle(T, B, L);
+    }
+    edge(T, R); edge(R, B); edge(B, L); edge(L, T);
+    blob(T); blob(R); blob(B); blob(L);
+}
+
+void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
+    FLAT_SHAPE_SETUP
+    const float r = _marker_size;
+    const float s60 = 0.86602540f; // sin(60°)
+    const Vector3 T  = pt(0,          r);
+    const Vector3 BL = pt(-r * s60, -r * 0.5f);
+    const Vector3 BR = pt( r * s60, -r * 0.5f);
+    if (_fill_enabled)
+        geo.add_triangle(T, BL, BR);
+    edge(T, BL); edge(BL, BR); edge(BR, T);
+    blob(T); blob(BL); blob(BR);
+}
+
+void SuperMarker3D::_gen_flat_capsule(GeoBuf &geo) const {
+    FLAT_SHAPE_SETUP
+    const float r    = _marker_size;
+    const float half = _capsule_height * r * 0.5f; // half body length
+    const int SEGS   = 12; // semicircle segments
+    const Vector3 ctr_top = pt(0,  half);
+    const Vector3 ctr_bot = pt(0, -half);
+
+    // Top semicircle: angles 0..π (right side to left side, going up).
+    // Bottom semicircle: angles π..2π (left to right, going down).
+    Vector<Vector3> top_arc, bot_arc;
+    top_arc.resize(SEGS + 1); bot_arc.resize(SEGS + 1);
+    for (int i = 0; i <= SEGS; i++) {
+        float a_t = SM_PI * (float)i / SEGS;       // 0 → π
+        float a_b = SM_PI + SM_PI * (float)i / SEGS; // π → 2π
+        top_arc.set(i, pt(std::cos(a_t) * r, half + std::sin(a_t) * r));
+        bot_arc.set(i, pt(std::cos(a_b) * r, -half + std::sin(a_b) * r));
+    }
+    // Fill: rectangle body + two semicircle fans.
+    if (_fill_enabled) {
+        const Vector3 TL = pt(-r,  half), TR = pt(r,  half);
+        const Vector3 BL = pt(-r, -half), BR = pt(r, -half);
+        geo.add_triangle(TL, TR, BR);
+        geo.add_triangle(TL, BR, BL);
+        for (int i = 0; i < SEGS; i++) {
+            geo.add_triangle(ctr_top, top_arc[i], top_arc[i + 1]);
+            geo.add_triangle(ctr_bot, bot_arc[i], bot_arc[i + 1]);
+        }
+    }
+    // Outline: two straight sides + two arcs.
+    edge(pt( r,  half), pt( r, -half)); // right side
+    edge(pt(-r, -half), pt(-r,  half)); // left side
+    for (int i = 0; i < SEGS; i++) {
+        edge(top_arc[i], top_arc[i + 1]);
+        edge(bot_arc[i], bot_arc[i + 1]);
+    }
+}
+
+void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
+    FLAT_SHAPE_SETUP
+    const float hl = _marker_size;          // half bar length (center to tip)
+    const float hw = _marker_size * 0.22f;  // half bar width
+    const float cs = 0.70710678f;           // cos/sin of 45°
+
+    // Two bars at ±45°. Each bar is a rectangle in bar-local space,
+    // rotated into world XY (or XZ for ground). Rotation by +45°:
+    //   world = cs * (local_x - local_y, local_x + local_y)
+    // Rotation by -45°:
+    //   world = cs * (local_x + local_y, -local_x + local_y)
+    auto rot_pos = [&](float x, float y) -> Vector3 { return pt(cs*(x-y), cs*(x+y)); };
+    auto rot_neg = [&](float x, float y) -> Vector3 { return pt(cs*(x+y), cs*(-x+y)); };
+
+    // Bar 1 corners (NE–SW diagonal, +45°)
+    const Vector3 b1[4] = {
+        rot_pos(-hl, -hw), rot_pos( hl, -hw),
+        rot_pos( hl,  hw), rot_pos(-hl,  hw),
+    };
+    // Bar 2 corners (NW–SE diagonal, -45°)
+    const Vector3 b2[4] = {
+        rot_neg(-hl, -hw), rot_neg( hl, -hw),
+        rot_neg( hl,  hw), rot_neg(-hl,  hw),
+    };
+
+    if (_fill_enabled) {
+        geo.add_triangle(b1[0], b1[1], b1[2]);
+        geo.add_triangle(b1[0], b1[2], b1[3]);
+        geo.add_triangle(b2[0], b2[1], b2[2]);
+        geo.add_triangle(b2[0], b2[2], b2[3]);
+    }
+    // Outline: perimeter of each bar rectangle.
+    // Corner blobs only at the four outer tips (pairs of corners at ±hl).
+    for (int i = 0; i < 2; i++) {
+        const Vector3 *b = (i == 0) ? b1 : b2;
+        edge(b[0], b[1]); edge(b[1], b[2]);
+        edge(b[2], b[3]); edge(b[3], b[0]);
+    }
+    // Blobs at the 4 arm tips (outer corners of each bar).
+    blob(b1[1]); blob(b1[2]); // NE tip
+    blob(b1[0]); blob(b1[3]); // SW tip
+    blob(b2[1]); blob(b2[2]); // SE tip
+    blob(b2[0]); blob(b2[3]); // NW tip
+}
+
+#undef FLAT_SHAPE_SETUP
+
+// ---------------------------------------------------------------------------
 // Flat Arrow — completely 2D in the XZ plane (Y = 0), points +Z.
 // Outline with thickness > 0 uses flat edge quads (NOT 3D tubes).
 // ---------------------------------------------------------------------------
@@ -2865,6 +3075,12 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_CONE:       _gen_cone(geo);        break;
 		case MESH_CAPSULE:    _gen_capsule(geo);     break;
 		case ARROW_EXTRUDED:  _gen_arrow(geo);       break;
+		case FLAT_CIRCLE:     _gen_flat_circle(geo);   break;
+		case FLAT_SQUARE:     _gen_flat_square(geo);   break;
+		case FLAT_DIAMOND:    _gen_flat_diamond(geo);  break;
+		case FLAT_TRIANGLE:   _gen_flat_triangle(geo); break;
+		case FLAT_CAPSULE:    _gen_flat_capsule(geo);  break;
+		case FLAT_X:          _gen_flat_x(geo);        break;
 		case ARROW_FLAT:      _gen_flat_arrow(geo);  break;
 		case CURVE_FLAT:      _gen_curve(geo);       break;
 		case CURVE_LINE_3D:   _gen_curve_line_3d(geo); break;

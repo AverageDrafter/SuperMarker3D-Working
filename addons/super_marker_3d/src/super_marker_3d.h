@@ -65,8 +65,16 @@ public:
 		MESH_CONE = 15,         // round-base cone
 		MESH_CAPSULE = 16,      // cylinder body + hemisphere caps
 
-		// Shape category — reserved for future flat 2D iconography.
-		// (Cross used to live here pre-1.0; it migrated to Axis.)
+		// Shape category — flat 2D polygon icons. Values frozen for
+		// scene-file compatibility. (Cross used to live here pre-1.0;
+		// it migrated to Axis. The SHAPE_* deprecated aliases below
+		// keep using their old numeric values unchanged.)
+		FLAT_CIRCLE   = 17,   // regular N-gon, N = shape_sides
+		FLAT_SQUARE   = 18,   // axis-aligned square
+		FLAT_DIAMOND  = 19,   // rhombus (square rotated 45°)
+		FLAT_TRIANGLE = 20,   // equilateral triangle, apex up
+		FLAT_CAPSULE  = 21,   // 2D pill — two semicircles + rect body
+		FLAT_X        = 22,   // X / close icon (two crossed bars)
 
 		// Curve category — geometry stamped along a Curve3D resource.
 		CURVE_FLAT = 7,         // billboarded flat ribbon with caps
@@ -133,6 +141,12 @@ public:
 		CURVE_CAP_LINE = 3,
 	};
 
+	/// Orientation of flat Shape-category icons in world space.
+	enum ShapeOrientation {
+		ORIENT_BILLBOARD = 0,  // always faces camera (Godot BILLBOARD_ENABLED)
+		ORIENT_GROUND    = 1,  // flat in XZ plane, normal = +Y (floor marker)
+	};
+
 	enum FigureLegPose {
 		LEGS_TOGETHER = 0,    // both legs straight down (rest pose)
 		LEGS_LEFT_FWD = 1,    // left leg rotated forward at hip, right back
@@ -176,7 +190,15 @@ public:
 
 	/// Capsule-only — cylinder body height between the two hemisphere
 	/// caps. Radius (and the hemispheres) follow `marker_size`.
+	/// Also used by FLAT_CAPSULE for the 2D pill body length.
 	void set_capsule_height(float p);  float get_capsule_height() const;
+
+	/// Shape-category orientation: ORIENT_BILLBOARD (always faces camera)
+	/// or ORIENT_GROUND (flat in XZ plane). Hidden for non-Shape types.
+	void set_shape_orientation(int p);  int get_shape_orientation() const;
+	/// Polygon segment count for FLAT_CIRCLE. Range 6–64. Hidden for all
+	/// other subtypes.
+	void set_shape_sides(int p);  int get_shape_sides() const;
 
 	/// Number of longitudinal segments on cylinder + cone, controlling
 	/// both fill tessellation and wireframe segmentation. Range 5..24.
@@ -301,7 +323,11 @@ private:
 	int  _mesh_sides = 8;
 	// Capsule-only — cylinder body length as a multiplier of marker_size.
 	// Default 2 → body = sphere diameter, giving a 4:1 pill at any size.
+	// Reused by FLAT_CAPSULE for the 2D pill body length.
 	float _capsule_height = 2.0f;
+	// Shape-category state.
+	int   _shape_orientation = ORIENT_BILLBOARD;
+	int   _shape_sides       = 24;   // FLAT_CIRCLE polygon segment count
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -572,6 +598,12 @@ private:
 			const Vector3 &p2, const Vector3 &p3,
 			bool e01_boundary, bool e12_boundary,
 			bool e23_boundary, bool e30_boundary) const;
+	void _gen_flat_circle(GeoBuf &geo) const;
+	void _gen_flat_square(GeoBuf &geo) const;
+	void _gen_flat_diamond(GeoBuf &geo) const;
+	void _gen_flat_triangle(GeoBuf &geo) const;
+	void _gen_flat_capsule(GeoBuf &geo) const;
+	void _gen_flat_x(GeoBuf &geo) const;
 	void _gen_arrow(GeoBuf &geo) const;
 	void _gen_flat_arrow(GeoBuf &geo) const;
 	void _gen_curve(GeoBuf &geo) const;
@@ -657,5 +689,6 @@ VARIANT_ENUM_CAST(SuperMarker3D::TailStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::CurvePattern);
 VARIANT_ENUM_CAST(SuperMarker3D::CurveCapStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::FigureLegPose);
+VARIANT_ENUM_CAST(SuperMarker3D::ShapeOrientation);
 
 #endif // SUPER_MARKER_3D_H
