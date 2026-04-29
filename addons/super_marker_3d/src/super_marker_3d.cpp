@@ -523,11 +523,15 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "two_sided"), "set_two_sided", "get_two_sided");
 
 	// Shape category
-	ClassDB::bind_method(D_METHOD("set_shape_orientation", "orientation"), &SuperMarker3D::set_shape_orientation);
-	ClassDB::bind_method(D_METHOD("get_shape_orientation"), &SuperMarker3D::get_shape_orientation);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "shape_orientation",
-			PROPERTY_HINT_ENUM, "Billboard,Ground (XZ)"),
-			"set_shape_orientation", "get_shape_orientation");
+	ClassDB::bind_method(D_METHOD("set_billboard_xz", "enabled"), &SuperMarker3D::set_billboard_xz);
+	ClassDB::bind_method(D_METHOD("get_billboard_xz"), &SuperMarker3D::get_billboard_xz);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_xz"), "set_billboard_xz", "get_billboard_xz");
+	ClassDB::bind_method(D_METHOD("set_billboard_y", "enabled"), &SuperMarker3D::set_billboard_y);
+	ClassDB::bind_method(D_METHOD("get_billboard_y"), &SuperMarker3D::get_billboard_y);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_y"), "set_billboard_y", "get_billboard_y");
+	ClassDB::bind_method(D_METHOD("set_rounded_corners", "enabled"), &SuperMarker3D::set_rounded_corners);
+	ClassDB::bind_method(D_METHOD("get_rounded_corners"), &SuperMarker3D::get_rounded_corners);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rounded_corners"), "set_rounded_corners", "get_rounded_corners");
 	ClassDB::bind_method(D_METHOD("set_shape_sides", "sides"), &SuperMarker3D::set_shape_sides);
 	ClassDB::bind_method(D_METHOD("get_shape_sides"), &SuperMarker3D::get_shape_sides);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shape_sides",
@@ -587,8 +591,6 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(LEGS_TOGETHER);
 	BIND_ENUM_CONSTANT(LEGS_LEFT_FWD);
 	BIND_ENUM_CONSTANT(LEGS_RIGHT_FWD);
-	BIND_ENUM_CONSTANT(ORIENT_BILLBOARD);
-	BIND_ENUM_CONSTANT(ORIENT_GROUND);
 }
 
 void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
@@ -651,7 +653,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 			|| _shape == MESH_DIAMOND);
 	if (name == "mesh_sides"  && !is_round_mesh) hide();
 	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
-	if (name == "shape_orientation" && !is_shape) hide();
+	if ((name == "billboard_xz" || name == "billboard_y" || name == "rounded_corners") && !is_shape) hide();
 	if (name == "capsule_height" && _shape != MESH_CAPSULE && _shape != FLAT_CAPSULE) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
@@ -910,11 +912,23 @@ void SuperMarker3D::set_capsule_height(float p) {
 }
 float SuperMarker3D::get_capsule_height() const { return _capsule_height; }
 
-void SuperMarker3D::set_shape_orientation(int p) {
-	_shape_orientation = p;
+void SuperMarker3D::set_billboard_xz(bool p) {
+	_billboard_xz = p;
+	if (get_type() == TYPE_SHAPE) { _build_materials(); }
+}
+bool SuperMarker3D::get_billboard_xz() const { return _billboard_xz; }
+
+void SuperMarker3D::set_billboard_y(bool p) {
+	_billboard_y = p;
+	if (get_type() == TYPE_SHAPE) { _build_materials(); }
+}
+bool SuperMarker3D::get_billboard_y() const { return _billboard_y; }
+
+void SuperMarker3D::set_rounded_corners(bool p) {
+	_rounded_corners = p;
 	if (get_type() == TYPE_SHAPE) SM_REBUILD();
 }
-int SuperMarker3D::get_shape_orientation() const { return _shape_orientation; }
+bool SuperMarker3D::get_rounded_corners() const { return _rounded_corners; }
 
 void SuperMarker3D::set_shape_sides(int p) {
 	_shape_sides = CLAMP(p, 6, 64);
@@ -1312,11 +1326,16 @@ void SuperMarker3D::_build_materials() {
 				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
 	}
 
-	// Billboard: silhouette mesh shapes, or Shape-category icons in ORIENT_BILLBOARD mode.
-	const bool use_billboard = billboard || (is_shape_type && _shape_orientation == ORIENT_BILLBOARD);
-	_outline_material->set_billboard_mode(use_billboard
-			? BaseMaterial3D::BILLBOARD_ENABLED
-			: BaseMaterial3D::BILLBOARD_DISABLED);
+	// Billboard mode: silhouette mesh shapes always fully billboard. Shape-category
+	// icons use independent xz/y flags — xz = FIXED_Y (thin from above), y = ENABLED.
+	BaseMaterial3D::BillboardMode bb_mode = BaseMaterial3D::BILLBOARD_DISABLED;
+	if (billboard) {
+		bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
+	} else if (is_shape_type) {
+		if (_billboard_y)       bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
+		else if (_billboard_xz) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
+	}
+	_outline_material->set_billboard_mode(bb_mode);
 
 	// --- Fill material ---
 	if (_fill_material.is_null()) _fill_material.instantiate();
@@ -1343,9 +1362,7 @@ void SuperMarker3D::_build_materials() {
 	// fill — at full transparency you see a complete circle of outline
 	// color, at partial alpha you see the back arc blended with the fill.
 	_fill_material->set_depth_draw_mode(BaseMaterial3D::DEPTH_DRAW_OPAQUE_ONLY);
-	_fill_material->set_billboard_mode(use_billboard
-			? BaseMaterial3D::BILLBOARD_ENABLED
-			: BaseMaterial3D::BILLBOARD_DISABLED);
+	_fill_material->set_billboard_mode(bb_mode);
 
 	// --- Mesh shader materials (TYPE_MESH only) ---
 	// Sphere uses one analytic shader (fill + lat/lon outlines in one
@@ -2375,24 +2392,18 @@ void SuperMarker3D::_gen_arrow(GeoBuf &geo) const {
 //   blob(p)        → disc corner blob for miter-join rounding
 // ---------------------------------------------------------------------------
 
-// Shared setup macro for flat shape generators.
+// Shared setup macro for flat shape generators (all in XY plane, Z=0).
+// Billboard mode is handled entirely by the material — geometry always stays in XY.
 #define FLAT_SHAPE_SETUP                                                           \
-    const bool ground = (_shape_orientation == ORIENT_GROUND);                     \
     const float ew = _outline_thickness;                                           \
-    auto pt = [&](float x, float y) -> Vector3 {                                  \
-        return ground ? Vector3(x, 0.0f, y) : Vector3(x, y, 0.0f);               \
-    };                                                                             \
+    auto pt = [&](float x, float y) -> Vector3 { return Vector3(x, y, 0.0f); }; \
     auto edge = [&](const Vector3 &a, const Vector3 &b) {                         \
-        if (ew > 0.0f) {                                                           \
-            if (ground) geo.add_flat_edge_quad(a, b, ew);                         \
-            else _add_sil_edge_quad(geo, a, b, ew);                               \
-        } else { geo.add_line(a, b); }                                            \
+        if (ew > 0.0f) _add_sil_edge_quad(geo, a, b, ew);                        \
+        else geo.add_line(a, b);                                                   \
     };                                                                             \
     auto blob = [&](const Vector3 &p, int segs = 8) {                             \
-        if (ew > 0.0f) {                                                           \
-            if (ground) _add_disc_blob(geo, p, ew * 0.5f, segs);                 \
-            else _add_sil_disc(geo, p, ew * 0.5f, segs);                         \
-        }                                                                          \
+        if (_rounded_corners && ew > 0.0f)                                         \
+            _add_sil_disc(geo, p, ew * 0.5f, segs);                               \
     };
 
 void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
@@ -2411,7 +2422,8 @@ void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
     }
     for (int i = 0; i < N; i++)
         edge(ring[i], ring[(i + 1) % N]);
-    // No corner blobs on a smooth polygon — the segments are dense enough.
+    for (int i = 0; i < N; i++)
+        blob(ring[i]);
 }
 
 void SuperMarker3D::_gen_flat_square(GeoBuf &geo) const {
@@ -2489,51 +2501,55 @@ void SuperMarker3D::_gen_flat_capsule(GeoBuf &geo) const {
         edge(top_arc[i], top_arc[i + 1]);
         edge(bot_arc[i], bot_arc[i + 1]);
     }
+    // Blobs at every arc vertex for smooth miter joins on the semicircles.
+    for (int i = 0; i <= SEGS; i++) {
+        blob(top_arc[i]);
+        blob(bot_arc[i]);
+    }
 }
 
 void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
     FLAT_SHAPE_SETUP
-    const float hl = _marker_size;          // half bar length (center to tip)
+    const float hl = _marker_size;          // center to arm tip
     const float hw = _marker_size * 0.22f;  // half bar width
-    const float cs = 0.70710678f;           // cos/sin of 45°
+    const float cs = 0.70710678f;           // cos/sin 45°
+    // inner = perpendicular distance from center to the concave notch vertex.
+    // At the notch, two bar edges meet at 90°; the notch sits hw*sqrt(2) from center.
+    const float inner = hw * 1.41421356f;
 
-    // Two bars at ±45°. Each bar is a rectangle in bar-local space,
-    // rotated into world XY (or XZ for ground). Rotation by +45°:
-    //   world = cs * (local_x - local_y, local_x + local_y)
-    // Rotation by -45°:
-    //   world = cs * (local_x + local_y, -local_x + local_y)
-    auto rot_pos = [&](float x, float y) -> Vector3 { return pt(cs*(x-y), cs*(x+y)); };
-    auto rot_neg = [&](float x, float y) -> Vector3 { return pt(cs*(x+y), cs*(-x+y)); };
+    // rp: rotate (x,y) by +45°  → pt(cs*(x-y), cs*(x+y))
+    // rn: rotate (x,y) by -45°  → pt(cs*(x+y), cs*(-x+y))
+    auto rp = [&](float x, float y) -> Vector3 { return pt(cs*(x-y), cs*(x+y)); };
+    auto rn = [&](float x, float y) -> Vector3 { return pt(cs*(x+y), cs*(-x+y)); };
 
-    // Bar 1 corners (NE–SW diagonal, +45°)
-    const Vector3 b1[4] = {
-        rot_pos(-hl, -hw), rot_pos( hl, -hw),
-        rot_pos( hl,  hw), rot_pos(-hl,  hw),
+    // 12-point perimeter, CCW from NW arm upper edge:
+    //   outer tips (4 arm pairs) + concave notches (4 inner corners)
+    const Vector3 poly[12] = {
+        rn(-hl,  hw),    //  0: NW tip upper
+        pt(0,  inner),   //  1: concave top
+        rp( hl,  hw),    //  2: NE tip upper
+        rp( hl, -hw),    //  3: NE tip lower
+        pt( inner, 0),   //  4: concave right
+        rn( hl,  hw),    //  5: SE tip upper (right side)
+        rn( hl, -hw),    //  6: SE tip lower
+        pt(0, -inner),   //  7: concave bottom
+        rp(-hl, -hw),    //  8: SW tip lower
+        rp(-hl,  hw),    //  9: SW tip upper (left side)
+        pt(-inner, 0),   // 10: concave left
+        rn(-hl, -hw),    // 11: NW tip lower
     };
-    // Bar 2 corners (NW–SE diagonal, -45°)
-    const Vector3 b2[4] = {
-        rot_neg(-hl, -hw), rot_neg( hl, -hw),
-        rot_neg( hl,  hw), rot_neg(-hl,  hw),
-    };
-
+    const Vector3 ctr = pt(0, 0);
     if (_fill_enabled) {
-        geo.add_triangle(b1[0], b1[1], b1[2]);
-        geo.add_triangle(b1[0], b1[2], b1[3]);
-        geo.add_triangle(b2[0], b2[1], b2[2]);
-        geo.add_triangle(b2[0], b2[2], b2[3]);
+        for (int i = 0; i < 12; i++)
+            geo.add_triangle(ctr, poly[(i + 1) % 12], poly[i]);
     }
-    // Outline: perimeter of each bar rectangle.
-    // Corner blobs only at the four outer tips (pairs of corners at ±hl).
-    for (int i = 0; i < 2; i++) {
-        const Vector3 *b = (i == 0) ? b1 : b2;
-        edge(b[0], b[1]); edge(b[1], b[2]);
-        edge(b[2], b[3]); edge(b[3], b[0]);
+    for (int i = 0; i < 12; i++)
+        edge(poly[i], poly[(i + 1) % 12]);
+    // Blobs at outer tip vertices only — not at concave notches 1,4,7,10.
+    for (int i = 0; i < 12; i++) {
+        if (i != 1 && i != 4 && i != 7 && i != 10)
+            blob(poly[i]);
     }
-    // Blobs at the 4 arm tips (outer corners of each bar).
-    blob(b1[1]); blob(b1[2]); // NE tip
-    blob(b1[0]); blob(b1[3]); // SW tip
-    blob(b2[1]); blob(b2[2]); // SE tip
-    blob(b2[0]); blob(b2[3]); // NW tip
 }
 
 #undef FLAT_SHAPE_SETUP

@@ -141,12 +141,6 @@ public:
 		CURVE_CAP_LINE = 3,
 	};
 
-	/// Orientation of flat Shape-category icons in world space.
-	enum ShapeOrientation {
-		ORIENT_BILLBOARD = 0,  // always faces camera (Godot BILLBOARD_ENABLED)
-		ORIENT_GROUND    = 1,  // flat in XZ plane, normal = +Y (floor marker)
-	};
-
 	enum FigureLegPose {
 		LEGS_TOGETHER = 0,    // both legs straight down (rest pose)
 		LEGS_LEFT_FWD = 1,    // left leg rotated forward at hip, right back
@@ -193,9 +187,14 @@ public:
 	/// Also used by FLAT_CAPSULE for the 2D pill body length.
 	void set_capsule_height(float p);  float get_capsule_height() const;
 
-	/// Shape-category orientation: ORIENT_BILLBOARD (always faces camera)
-	/// or ORIENT_GROUND (flat in XZ plane). Hidden for non-Shape types.
-	void set_shape_orientation(int p);  int get_shape_orientation() const;
+	/// Shape-category billboard flags. Independent: xz = BILLBOARD_FIXED_Y
+	/// (shape appears thin from above), y = BILLBOARD_ENABLED (fully faces camera).
+	/// Both default false (shape stays in its authored XY plane, no billboard).
+	void set_billboard_xz(bool p);  bool get_billboard_xz() const;
+	void set_billboard_y(bool p);   bool get_billboard_y() const;
+	/// When true, arc joints and polygon corners get a disc blob to
+	/// produce smooth rounded joins. Default true.
+	void set_rounded_corners(bool p);  bool get_rounded_corners() const;
 	/// Polygon segment count for FLAT_CIRCLE. Range 6–64. Hidden for all
 	/// other subtypes.
 	void set_shape_sides(int p);  int get_shape_sides() const;
@@ -326,8 +325,10 @@ private:
 	// Reused by FLAT_CAPSULE for the 2D pill body length.
 	float _capsule_height = 2.0f;
 	// Shape-category state.
-	int   _shape_orientation = ORIENT_BILLBOARD;
-	int   _shape_sides       = 24;   // FLAT_CIRCLE polygon segment count
+	bool  _billboard_xz    = false;  // BILLBOARD_FIXED_Y — thin from above
+	bool  _billboard_y     = false;  // BILLBOARD_ENABLED — fully faces camera
+	bool  _rounded_corners = true;   // disc blobs at arc joints / corners
+	int   _shape_sides     = 24;     // FLAT_CIRCLE polygon segment count
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -689,6 +690,5 @@ VARIANT_ENUM_CAST(SuperMarker3D::TailStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::CurvePattern);
 VARIANT_ENUM_CAST(SuperMarker3D::CurveCapStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::FigureLegPose);
-VARIANT_ENUM_CAST(SuperMarker3D::ShapeOrientation);
 
 #endif // SUPER_MARKER_3D_H
