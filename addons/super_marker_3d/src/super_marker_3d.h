@@ -295,21 +295,20 @@ private:
 	float _marker_size = 0.5f;
 	int   _detail_mode = DETAIL_WIREFRAME;
 
-	Color _outline_color = Color(0.0f, 1.0f, 0.8f, 1.0f);
+	Color _outline_color = Color(1.0f, 1.0f, 0.0f, 1.0f);   // pure yellow
 	float _outline_thickness = 0.0f;
 
 	bool  _fill_enabled = false;
-	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);
+	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);     // teal/cyan
 
-	// Six direction colors for AXIS_XYZ. Defaults: bright RGB on
-	// positives, darker on negatives. Stored explicitly (no
-	// auto-darken at render time) so the user has full control.
-	Color _axis_color_x_pos = Color(1.0f, 0.3f, 0.3f, 1.0f);
-	Color _axis_color_x_neg = Color(0.5f, 0.15f, 0.15f, 1.0f);
-	Color _axis_color_y_pos = Color(0.3f, 1.0f, 0.3f, 1.0f);
-	Color _axis_color_y_neg = Color(0.15f, 0.5f, 0.15f, 1.0f);
-	Color _axis_color_z_pos = Color(0.3f, 0.3f, 1.0f, 1.0f);
-	Color _axis_color_z_neg = Color(0.15f, 0.15f, 0.5f, 1.0f);
+	// Six direction colors for AXIS_XYZ. Pure primaries on positives,
+	// dark versions on negatives (10/255 ≈ 0.039, 40/255 ≈ 0.157).
+	Color _axis_color_x_pos = Color(1.00f, 0.04f, 0.04f, 1.0f);
+	Color _axis_color_x_neg = Color(0.16f, 0.04f, 0.04f, 1.0f);
+	Color _axis_color_y_pos = Color(0.04f, 1.00f, 0.04f, 1.0f);
+	Color _axis_color_y_neg = Color(0.04f, 0.16f, 0.04f, 1.0f);
+	Color _axis_color_z_pos = Color(0.04f, 0.04f, 1.00f, 1.0f);
+	Color _axis_color_z_neg = Color(0.04f, 0.04f, 0.16f, 1.0f);
 
 	bool _axis_arrows = false;
 	float _axis_arrow_length = 0.15f;

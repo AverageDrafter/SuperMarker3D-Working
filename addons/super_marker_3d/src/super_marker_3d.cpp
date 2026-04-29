@@ -1317,13 +1317,12 @@ void SuperMarker3D::_update_transform() {
 
 void SuperMarker3D::_build_materials() {
 	// --- Outline material ---
-	// The outline / wireframe is artificially unshaded and unshadowed —
-	// it's a highlight, not a real surface. Even when `lights_and_shadows`
-	// is on (which routes the FILL through lit shading + shadows), the
-	// outline stays flat unshaded so it reads as a bold marker overlay.
+	// Shading follows `lights_and_shadows` consistently with the fill and mesh materials.
 	if (_outline_material.is_null()) _outline_material.instantiate();
-	_outline_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
-	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, true);
+	_outline_material->set_shading_mode(_lights_and_shadows
+			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
+			: BaseMaterial3D::SHADING_MODE_UNSHADED);
+	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !_lights_and_shadows);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
 	// Mesh wireframe — default CULL_DISABLED so edge quads render from
