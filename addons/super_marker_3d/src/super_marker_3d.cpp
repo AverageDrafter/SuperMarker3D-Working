@@ -616,7 +616,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				// Pyramid (subtype 13) is a deprecated alias — it now
 				// renders as a 4-sided Cone. Hidden from new selections;
 				// existing scenes still load and render correctly.
-				p_property.hint_string = "Sphere:2,Box:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16";
+				p_property.hint_string = "Sphere:2,Cube:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16";
 				break;
 			case TYPE_SHAPE:
 				p_property.hint_string = "Circle:17,Square:18,Diamond:19,Triangle:20,Capsule:21,X:22";
@@ -774,10 +774,32 @@ int  SuperMarker3D::get_subtype() const { return _shape; }
 void SuperMarker3D::set_type(int p) {
 	if (_type == p && _subtype_to_type(_shape) == p) return;
 	_type = p;
-	// If the current subtype doesn't belong to the new type, snap to
-	// that type's first variant so the marker stays renderable.
 	if (_subtype_to_type(_shape) != p) {
-		_shape = _type_first_subtype(p);
+		// Shape ↔ Mesh: preserve semantic intent (circle=sphere, square=cube, etc.)
+		int prev = _shape;
+		if (p == TYPE_MESH && _subtype_to_type(prev) == TYPE_SHAPE) {
+			switch (prev) {
+				case FLAT_CIRCLE:   _shape = MESH_SPHERE;   break;
+				case FLAT_SQUARE:   _shape = MESH_BOX;      break;
+				case FLAT_DIAMOND:  _shape = MESH_DIAMOND;  break;
+				case FLAT_TRIANGLE: _shape = MESH_CONE;     break;
+				case FLAT_CAPSULE:  _shape = MESH_CAPSULE;  break;
+				case FLAT_X:        _shape = MESH_CYLINDER; break;
+				default:            _shape = _type_first_subtype(p); break;
+			}
+		} else if (p == TYPE_SHAPE && _subtype_to_type(prev) == TYPE_MESH) {
+			switch (prev) {
+				case MESH_SPHERE:   _shape = FLAT_CIRCLE;   break;
+				case MESH_BOX:      _shape = FLAT_SQUARE;   break;
+				case MESH_DIAMOND:  _shape = FLAT_DIAMOND;  break;
+				case MESH_CONE:     _shape = FLAT_TRIANGLE; break;
+				case MESH_CAPSULE:  _shape = FLAT_CAPSULE;  break;
+				case MESH_CYLINDER: _shape = FLAT_X;        break;
+				default:            _shape = _type_first_subtype(p); break;
+			}
+		} else {
+			_shape = _type_first_subtype(p);
+		}
 	}
 	notify_property_list_changed();
 	SM_REBUILD();
@@ -925,7 +947,7 @@ int SuperMarker3D::get_mesh_sides() const { return _mesh_sides; }
 
 void SuperMarker3D::set_capsule_height(float p) {
 	_capsule_height = MAX(0.0f, p);
-	if (_shape == MESH_CAPSULE) SM_REBUILD();
+	if (_shape == MESH_CAPSULE || _shape == FLAT_CAPSULE) SM_REBUILD();
 }
 float SuperMarker3D::get_capsule_height() const { return _capsule_height; }
 
@@ -2495,30 +2517,49 @@ void SuperMarker3D::_gen_flat_diamond(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
-    FLAT_SHAPE_SETUP
-    const float r = _marker_size;
-    const float s60 = 0.86602540f; // sin(60°)
-    const Vector3 T  = pt(0,          r);
-    const Vector3 BL = pt(-r * s60, -r * 0.5f);
-    const Vector3 BR = pt( r * s60, -r * 0.5f);
+    // Triangle uses non-extending edge quads (unlike square/diamond which use extension
+    // to fill 90° corners). Acute angles need explicit per-corner handling instead.
+    const float ew  = _outline_thickness;
+    const float r   = _marker_size;
+    const float s60 = 0.86602540f;
+    const Vector3 T  = Vector3(0,          r,        0.0f);
+    const Vector3 BL = Vector3(-r * s60, -r * 0.5f, 0.0f);
+    const Vector3 BR = Vector3( r * s60, -r * 0.5f, 0.0f);
+
     geo.add_triangle(T, BL, BR);
-    edge(T, BL); edge(BL, BR); edge(BR, T);
+
+    if (ew <= 0.0f) {
+        geo.add_line(T, BL); geo.add_line(BL, BR); geo.add_line(BR, T);
+        return;
+    }
+
+    _add_sil_edge_quad(geo, T, BL, ew);
+    _add_sil_edge_quad(geo, BL, BR, ew);
+    _add_sil_edge_quad(geo, BR, T, ew);
+
     if (_rounded_corners) {
-        blob(T); blob(BL); blob(BR);
-    } else if (ew > 0.0f) {
-        // Miter-fill at each corner: small triangle from the vertex to the two
-        // outer-stroke corners of its adjacent extended edge quads, painted in
-        // outline_color (pushed to outline_verts, not tri_verts/fill_color).
-        // Outward perp for CCW triangle = 90° CW from edge dir = (dir.y, -dir.x).
+        // Rounded cap at each corner: disc centered at the outer miter point
+        // (V + bisector*ew/2) rather than at V, so the disc aligns flush with
+        // both adjacent arm edges rather than bulging inward.
+        auto corner_blob = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
+            Vector3 d_in  = (v - prev_v).normalized();
+            Vector3 d_out = (next_v - v).normalized();
+            Vector3 bisector = (Vector3(d_in.y, -d_in.x, 0.0f)
+                              + Vector3(d_out.y, -d_out.x, 0.0f)).normalized();
+            _add_sil_disc(geo, v + bisector * (ew * 0.5f), ew * 0.5f, 12);
+        };
+        corner_blob(T,  BR, BL);
+        corner_blob(BL, T,  BR);
+        corner_blob(BR, BL, T);
+    } else {
+        // Sharp corner: fill the gap triangle between the outer endpoints of the
+        // two adjacent edge quads at each vertex (in outline_verts = outline_color).
         const Vector3 cnrm(0.0f, 0.0f, 1.0f);
         auto corner_fill = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
             Vector3 d_in  = (v - prev_v).normalized();
             Vector3 d_out = (next_v - v).normalized();
-            Vector3 out_in  = Vector3(d_in.y,  -d_in.x,  0.0f) * (ew * 0.5f);
-            Vector3 out_out = Vector3(d_out.y, -d_out.x, 0.0f) * (ew * 0.5f);
-            Vector3 p1 = v + d_in  * (ew * 0.5f) + out_in;
-            Vector3 p2 = v - d_out * (ew * 0.5f) + out_out;
-            // Emit CCW (+Z normal); flip vertex order if needed.
+            Vector3 p1 = v + Vector3(d_in.y,  -d_in.x,  0.0f) * (ew * 0.5f);
+            Vector3 p2 = v + Vector3(d_out.y, -d_out.x, 0.0f) * (ew * 0.5f);
             bool flip = (p1 - v).cross(p2 - v).z < 0;
             const Vector3 &va = flip ? p2 : p1;
             const Vector3 &vb = flip ? p1 : p2;
