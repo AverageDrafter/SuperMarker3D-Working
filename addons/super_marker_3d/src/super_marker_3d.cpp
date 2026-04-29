@@ -1325,27 +1325,20 @@ void SuperMarker3D::_build_materials() {
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !_lights_and_shadows);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
-	// Mesh wireframe — default CULL_DISABLED so edge quads render from
-	// both sides and the fill body's depth occludes the back ones. With
-	// opaque fill (DEPTH_DRAW_OPAQUE_ONLY writes depth), only camera-
-	// front edges are visible; with transparent fill (no depth written)
-	// the back edges show through, which is exactly the see-through
-	// look we want for alpha < 1. When `always_on_top` is on we lose
-	// depth test, so we'd see all edges stack up regardless; switch to
-	// CULL_BACK then so face culling alone keeps the silhouette honest.
-	// Flat arrow + curve ribbons stay CULL_DISABLED unconditionally
-	// (they're flat surfaces, both sides are intentional).
+	// CULL_DISABLED everywhere except mesh+always_on_top. Depth buffer
+	// handles correct surface occlusion for all opaque 3D geometry. With
+	// CULL_BACK, near-grazing triangles drop out on 6-sided tubes, leaving
+	// surface gaps; adjacent overlapping geometry (other arms, adjacent
+	// mesh edge quads) fills those gaps with a different shade, causing
+	// entire objects to visually pop when PER_PIXEL shading is on.
+	// Exception: mesh+always_on_top loses the depth test entirely, so
+	// CULL_BACK is the only thing suppressing back-half edge quads.
 	const bool is_mesh_type  = (get_type() == TYPE_MESH);
 	const bool is_shape_type = (get_type() == TYPE_SHAPE);
-	// Shape-category icons and flat arrows/curves are always two-sided.
-	BaseMaterial3D::CullMode wire_cull = BaseMaterial3D::CULL_BACK;
-	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type) {
-		wire_cull = BaseMaterial3D::CULL_DISABLED;
-	} else if (is_mesh_type) {
-		wire_cull = _always_on_top
-				? BaseMaterial3D::CULL_BACK
-				: BaseMaterial3D::CULL_DISABLED;
-	}
+	const BaseMaterial3D::CullMode wire_cull =
+			(is_mesh_type && _always_on_top)
+			? BaseMaterial3D::CULL_BACK
+			: BaseMaterial3D::CULL_DISABLED;
 	_outline_material->set_cull_mode(wire_cull);
 
 	if (_shape == AXIS_XYZ) {
