@@ -258,6 +258,12 @@ public:
 	/// Off (default): unshaded, no shadows — best for editor cues,
 	/// HUD overlays, and pure design markers.
 	void set_lights_and_shadows(bool p);  bool get_lights_and_shadows() const;
+	/// When true, back faces are rendered in a separate earlier pass so the
+	/// mesh reads correctly from all angles at any fill alpha. Front faces
+	/// keep the current cull_back + depth_write behavior; back faces use
+	/// cull_front + depth_draw_never and lower render_priority so they draw
+	/// first and are overwritten where front faces overlap them.
+	void set_two_sided(bool p);  bool get_two_sided() const;
 
 	void set_template_mode(bool p);
 	bool is_template_mode() const { return _template_mode; }
@@ -293,8 +299,9 @@ private:
 	// entry point. 3 = triangular prism / tetrahedron / triangular
 	// bipyramid, 24 = effectively round.
 	int  _mesh_sides = 8;
-	// Capsule-only — cylinder body height between the hemisphere caps.
-	float _capsule_height = 1.0f;
+	// Capsule-only — cylinder body length as a multiplier of marker_size.
+	// Default 2 → body = sphere diameter, giving a 4:1 pill at any size.
+	float _capsule_height = 2.0f;
 
 	// Axis-category state.
 	int _axis_link_mode = LINK_ALL;
@@ -358,6 +365,7 @@ private:
 	bool _shows_in_play  = true;
 	bool _always_on_top  = false;
 	bool _lights_and_shadows = false;
+	bool _two_sided      = false;
 	bool _template_mode  = false;
 
 	Ref<ArrayMesh>         _mesh;
@@ -380,6 +388,14 @@ private:
 	/// than the marker origin.
 	Ref<ShaderMaterial>     _cap_top_material;
 	Ref<ShaderMaterial>     _cap_bot_material;
+	/// Back-face counterparts used when `_two_sided` is on. Each mirrors
+	/// the corresponding front-face material but uses cull_front +
+	/// depth_draw_never and a lower render_priority so back faces draw
+	/// first and front faces overwrite them where they overlap.
+	Ref<ShaderMaterial>     _mesh_material_back;
+	Ref<ShaderMaterial>     _bary_material_back;
+	Ref<ShaderMaterial>     _cap_top_material_back;
+	Ref<ShaderMaterial>     _cap_bot_material_back;
 	/// Two render_mode variants per mesh shader — `_*_shader` is
 	/// `unshaded` (HUD-flat, ignores environment lights) and
 	/// `_*_shader_lit` is the default shaded mode (receives lights and
@@ -391,6 +407,13 @@ private:
 	static Ref<Shader>      _bary_shader_lit;
 	static Ref<Shader>      _sphere_shader;
 	static Ref<Shader>      _sphere_shader_lit;
+	/// Back-face shader variants (cull_front + depth_draw_never).
+	static Ref<Shader>      _mesh_shader_back;
+	static Ref<Shader>      _mesh_shader_back_lit;
+	static Ref<Shader>      _bary_shader_back;
+	static Ref<Shader>      _bary_shader_back_lit;
+	static Ref<Shader>      _sphere_shader_back;
+	static Ref<Shader>      _sphere_shader_back_lit;
 	RID _instance;
 
 	// Per-arm renderables for Axis subtypes. Each arm (and each Burr

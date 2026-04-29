@@ -103,13 +103,21 @@ void fragment() {
 )";
 
 // render_mode prefixes — `unshaded` for HUD-flat, default for lit.
-static const char *RM_UNSHADED = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_back, depth_draw_opaque;\n";
-static const char *RM_LIT      = "shader_type spatial;\nrender_mode blend_mix, cull_back, depth_draw_opaque;\n";
+static const char *RM_UNSHADED      = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_back, depth_draw_opaque;\n";
+static const char *RM_LIT           = "shader_type spatial;\nrender_mode blend_mix, cull_back, depth_draw_opaque;\n";
+// Back-face variants: cull_front so only back faces rasterize; depth_draw_never
+// so the depth buffer stays clear for the front-face pass that follows.
+static const char *RM_UNSHADED_BACK = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_front, depth_draw_never;\n";
+static const char *RM_LIT_BACK      = "shader_type spatial;\nrender_mode blend_mix, cull_front, depth_draw_never;\n";
 
 Ref<Shader> SuperMarker3D::_mesh_shader;
 Ref<Shader> SuperMarker3D::_mesh_shader_lit;
 Ref<Shader> SuperMarker3D::_bary_shader;
 Ref<Shader> SuperMarker3D::_bary_shader_lit;
+Ref<Shader> SuperMarker3D::_mesh_shader_back;
+Ref<Shader> SuperMarker3D::_mesh_shader_back_lit;
+Ref<Shader> SuperMarker3D::_bary_shader_back;
+Ref<Shader> SuperMarker3D::_bary_shader_back_lit;
 
 // Sphere shader — paints lat/lon wireframe lines analytically from each
 // fragment's local-space position. Independent of the fill triangulation,
@@ -185,6 +193,8 @@ void fragment() {
 
 Ref<Shader> SuperMarker3D::_sphere_shader;
 Ref<Shader> SuperMarker3D::_sphere_shader_lit;
+Ref<Shader> SuperMarker3D::_sphere_shader_back;
+Ref<Shader> SuperMarker3D::_sphere_shader_back_lit;
 
 // ---------------------------------------------------------------------------
 // GeoBuf helpers
@@ -297,7 +307,7 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_capsule_height", "height"), &SuperMarker3D::set_capsule_height);
 	ClassDB::bind_method(D_METHOD("get_capsule_height"), &SuperMarker3D::get_capsule_height);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "capsule_height",
-			PROPERTY_HINT_RANGE, "0.0,50.0,0.001,or_greater,suffix:m"),
+			PROPERTY_HINT_RANGE, "0.0,20.0,0.001,or_greater"),
 			"set_capsule_height", "get_capsule_height");
 
 	// Outline color + thickness apply to every shape that has an
@@ -502,6 +512,9 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_lights_and_shadows", "enabled"), &SuperMarker3D::set_lights_and_shadows);
 	ClassDB::bind_method(D_METHOD("get_lights_and_shadows"), &SuperMarker3D::get_lights_and_shadows);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lights_and_shadows"), "set_lights_and_shadows", "get_lights_and_shadows");
+	ClassDB::bind_method(D_METHOD("set_two_sided", "enabled"), &SuperMarker3D::set_two_sided);
+	ClassDB::bind_method(D_METHOD("get_two_sided"), &SuperMarker3D::get_two_sided);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "two_sided"), "set_two_sided", "get_two_sided");
 
 	ClassDB::bind_method(D_METHOD("set_template_mode", "template_mode"), &SuperMarker3D::set_template_mode);
 	ClassDB::bind_method(D_METHOD("is_template_mode"), &SuperMarker3D::is_template_mode);
@@ -1035,6 +1048,11 @@ void SuperMarker3D::set_lights_and_shadows(bool p) {
 	}
 }
 bool SuperMarker3D::get_lights_and_shadows() const { return _lights_and_shadows; }
+void SuperMarker3D::set_two_sided(bool p) {
+	_two_sided = p;
+	SM_REBUILD();
+}
+bool SuperMarker3D::get_two_sided() const { return _two_sided; }
 void SuperMarker3D::set_template_mode(bool p) { _template_mode = p; _update_visibility(); }
 RID  SuperMarker3D::get_mesh_rid() const { return _mesh.is_valid() ? _mesh->get_rid() : RID(); }
 
@@ -1306,6 +1324,7 @@ void SuperMarker3D::_build_materials() {
 		auto ensure_shader = [](Ref<Shader> &s, const String &code) {
 			if (s.is_null()) { s.instantiate(); s->set_code(code); }
 		};
+		// Front-face shaders (cull_back, depth_draw_opaque).
 		if (use_sphere_shader || is_capsule) {
 			if (_lights_and_shadows)
 				ensure_shader(_sphere_shader_lit, String(RM_LIT) + SPHERE_SHADER_BODY);
@@ -1321,10 +1340,33 @@ void SuperMarker3D::_build_materials() {
 				ensure_shader(_bary_shader,     String(RM_UNSHADED) + BARY_SHADER_BODY);
 			}
 		}
-		Ref<Shader> fill_s   = _lights_and_shadows ? _mesh_shader_lit   : _mesh_shader;
-		Ref<Shader> bary_s   = _lights_and_shadows ? _bary_shader_lit   : _bary_shader;
-		Ref<Shader> sphere_s = _lights_and_shadows ? _sphere_shader_lit : _sphere_shader;
+		// Back-face shaders (cull_front, depth_draw_never) — only compiled when needed.
+		if (_two_sided) {
+			if (use_sphere_shader || is_capsule) {
+				if (_lights_and_shadows)
+					ensure_shader(_sphere_shader_back_lit, String(RM_LIT_BACK) + SPHERE_SHADER_BODY);
+				else
+					ensure_shader(_sphere_shader_back,     String(RM_UNSHADED_BACK) + SPHERE_SHADER_BODY);
+			}
+			if (!use_sphere_shader) {
+				if (_lights_and_shadows) {
+					ensure_shader(_mesh_shader_back_lit, String(RM_LIT_BACK) + FILL_SHADER_BODY);
+					ensure_shader(_bary_shader_back_lit, String(RM_LIT_BACK) + BARY_SHADER_BODY);
+				} else {
+					ensure_shader(_mesh_shader_back,     String(RM_UNSHADED_BACK) + FILL_SHADER_BODY);
+					ensure_shader(_bary_shader_back,     String(RM_UNSHADED_BACK) + BARY_SHADER_BODY);
+				}
+			}
+		}
 
+		Ref<Shader> fill_s        = _lights_and_shadows ? _mesh_shader_lit         : _mesh_shader;
+		Ref<Shader> bary_s        = _lights_and_shadows ? _bary_shader_lit         : _bary_shader;
+		Ref<Shader> sphere_s      = _lights_and_shadows ? _sphere_shader_lit       : _sphere_shader;
+		Ref<Shader> fill_s_back   = _lights_and_shadows ? _mesh_shader_back_lit    : _mesh_shader_back;
+		Ref<Shader> bary_s_back   = _lights_and_shadows ? _bary_shader_back_lit    : _bary_shader_back;
+		Ref<Shader> sphere_s_back = _lights_and_shadows ? _sphere_shader_back_lit  : _sphere_shader_back;
+
+		// Front-face fill material (priority 0).
 		if (_mesh_material.is_null()) _mesh_material.instantiate();
 		_mesh_material->set_shader(use_sphere_shader ? sphere_s : fill_s);
 		_mesh_material->set_shader_parameter("fill_color", _fill_color);
@@ -1334,6 +1376,7 @@ void SuperMarker3D::_build_materials() {
 			_mesh_material->set_shader_parameter("marker_size", _marker_size);
 			_mesh_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 		} else {
+			// Front-face bary material (priority 1).
 			if (_bary_material.is_null()) _bary_material.instantiate();
 			_bary_material->set_shader(bary_s);
 			_bary_material->set_shader_parameter("outline_color", _outline_color);
@@ -1342,11 +1385,31 @@ void SuperMarker3D::_build_materials() {
 		}
 		_mesh_material->set_render_priority(0);
 
+		// Back-face materials (priorities -2 and -1 so they draw before front faces).
+		if (_two_sided) {
+			if (_mesh_material_back.is_null()) _mesh_material_back.instantiate();
+			_mesh_material_back->set_shader(use_sphere_shader ? sphere_s_back : fill_s_back);
+			_mesh_material_back->set_shader_parameter("fill_color", _fill_color);
+			if (use_sphere_shader) {
+				_mesh_material_back->set_shader_parameter("outline_color", _outline_color);
+				_mesh_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
+				_mesh_material_back->set_shader_parameter("marker_size", _marker_size);
+				_mesh_material_back->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
+				_mesh_material_back->set_render_priority(-1);
+			} else {
+				if (_bary_material_back.is_null()) _bary_material_back.instantiate();
+				_bary_material_back->set_shader(bary_s_back);
+				_bary_material_back->set_shader_parameter("outline_color", _outline_color);
+				_bary_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
+				_bary_material_back->set_render_priority(-1);
+				_mesh_material_back->set_render_priority(-2);
+			}
+		}
+
 		// Capsule hemisphere materials. Each carries a sphere_center
-		// uniform that offsets phi/theta evaluation to the
-		// hemisphere's true centre.
+		// uniform that offsets phi/theta evaluation to the hemisphere's true centre.
 		if (is_capsule) {
-			const float cyl_half = _capsule_height * 0.5f;
+			const float cyl_half = _capsule_height * _marker_size * 0.5f;
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			if (_cap_bot_material.is_null()) _cap_bot_material.instantiate();
 			Ref<ShaderMaterial> caps[2] = { _cap_top_material, _cap_bot_material };
@@ -1360,22 +1423,66 @@ void SuperMarker3D::_build_materials() {
 				caps[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
 				caps[i]->set_render_priority(0);
 			}
+			if (_two_sided) {
+				if (_cap_top_material_back.is_null()) _cap_top_material_back.instantiate();
+				if (_cap_bot_material_back.is_null()) _cap_bot_material_back.instantiate();
+				Ref<ShaderMaterial> caps_back[2] = { _cap_top_material_back, _cap_bot_material_back };
+				for (int i = 0; i < 2; i++) {
+					caps_back[i]->set_shader(sphere_s_back);
+					caps_back[i]->set_shader_parameter("fill_color", _fill_color);
+					caps_back[i]->set_shader_parameter("outline_color", _outline_color);
+					caps_back[i]->set_shader_parameter("outline_thickness", _outline_thickness);
+					caps_back[i]->set_shader_parameter("marker_size", _marker_size);
+					caps_back[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
+					caps_back[i]->set_render_priority(-1);
+				}
+			}
 		}
 	}
 
 	// Apply to surfaces.
+	// Surface layout depends on `_two_sided`:
+	//   one-sided non-sphere : [0]=fill,       [1]=bary
+	//   one-sided sphere     : [0]=sphere
+	//   one-sided capsule    : [0]=fill,[1]=bary,[2]=top cap,[3]=bot cap
+	//   two-sided non-sphere : [0]=back fill,[1]=back bary,[2]=front fill,[3]=front bary
+	//   two-sided sphere     : [0]=back sphere,[1]=front sphere
+	//   two-sided capsule    : [0]=back fill,[1]=back bary,[2]=front fill,[3]=front bary,
+	//                          [4]=back top,[5]=back bot,[6]=front top,[7]=front bot
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
 		if (is_mesh_type) {
-			if (sc > 0) _mesh->surface_set_material(0, _mesh_material);
-			if (sc > 1 && _bary_material.is_valid())
-				_mesh->surface_set_material(1, _bary_material);
-			// Capsule hemisphere surfaces, when present.
-			if (_shape == MESH_CAPSULE) {
-				if (sc > 2 && _cap_top_material.is_valid())
-					_mesh->surface_set_material(2, _cap_top_material);
-				if (sc > 3 && _cap_bot_material.is_valid())
-					_mesh->surface_set_material(3, _cap_bot_material);
+			const bool use_sphere_shader = (_shape == MESH_SPHERE);
+			if (_two_sided) {
+				if (use_sphere_shader) {
+					// 2 surfaces: back, front.
+					if (sc > 0 && _mesh_material_back.is_valid()) _mesh->surface_set_material(0, _mesh_material_back);
+					if (sc > 1) _mesh->surface_set_material(1, _mesh_material);
+				} else {
+					// 4 surfaces: back fill, back bary, front fill, front bary.
+					if (sc > 0 && _mesh_material_back.is_valid()) _mesh->surface_set_material(0, _mesh_material_back);
+					if (sc > 1 && _bary_material_back.is_valid()) _mesh->surface_set_material(1, _bary_material_back);
+					if (sc > 2) _mesh->surface_set_material(2, _mesh_material);
+					if (sc > 3 && _bary_material.is_valid())      _mesh->surface_set_material(3, _bary_material);
+					// Capsule: 8 surfaces total — back caps before front caps.
+					if (_shape == MESH_CAPSULE) {
+						if (sc > 4 && _cap_top_material_back.is_valid()) _mesh->surface_set_material(4, _cap_top_material_back);
+						if (sc > 5 && _cap_bot_material_back.is_valid()) _mesh->surface_set_material(5, _cap_bot_material_back);
+						if (sc > 6 && _cap_top_material.is_valid())      _mesh->surface_set_material(6, _cap_top_material);
+						if (sc > 7 && _cap_bot_material.is_valid())      _mesh->surface_set_material(7, _cap_bot_material);
+					}
+				}
+			} else {
+				if (sc > 0) _mesh->surface_set_material(0, _mesh_material);
+				if (sc > 1 && _bary_material.is_valid())
+					_mesh->surface_set_material(1, _bary_material);
+				// Capsule hemisphere surfaces, when present.
+				if (_shape == MESH_CAPSULE) {
+					if (sc > 2 && _cap_top_material.is_valid())
+						_mesh->surface_set_material(2, _cap_top_material);
+					if (sc > 3 && _cap_bot_material.is_valid())
+						_mesh->surface_set_material(3, _cap_bot_material);
+				}
 			}
 		} else {
 			for (int i = 0; i < sc; i++) {
@@ -1859,7 +1966,7 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 
 void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 	const float r = _marker_size;
-	const float cyl_half = _capsule_height * 0.5f;
+	const float cyl_half = _capsule_height * r * 0.5f;
 	const int LON = SPHERE_FILL_LON;
 	const int LAT = SPHERE_FILL_LAT; // half this many quads per hemisphere
 	const int W   = LON + 1;
@@ -2771,11 +2878,12 @@ void SuperMarker3D::_rebuild_mesh() {
 	const bool is_mesh = (get_type() == TYPE_MESH);
 
 	if (is_mesh) {
-		// Mesh subtypes: surface 0 = fill, surface 1 = bary outline
-		// (skipped for sphere whose analytic shader handles both).
-		// Both surfaces carry identical vertex data — bary tag in
-		// COLOR.rgb, per-tri heights in UV.xy + UV2.x — so we build
-		// the array once and emit it twice.
+		// Mesh subtypes — identical vertex data is emitted multiple times
+		// as separate surfaces, each receiving a different material.
+		// One-sided: fill surface + bary surface (sphere: just one surface).
+		// Two-sided: back fill, back bary, front fill, front bary
+		//            (sphere: back sphere, front sphere).
+		// Capsule caps follow the same pattern after the cylinder surfaces.
 		if (geo.tri_bary_verts.size() > 0) {
 			Array a; a.resize(Mesh::ARRAY_MAX);
 			a[Mesh::ARRAY_VERTEX]  = geo.tri_bary_verts;
@@ -2783,27 +2891,35 @@ void SuperMarker3D::_rebuild_mesh() {
 			a[Mesh::ARRAY_COLOR]   = geo.tri_bary_colors;
 			a[Mesh::ARRAY_TEX_UV]  = geo.tri_bary_uvs;
 			a[Mesh::ARRAY_TEX_UV2] = geo.tri_bary_uv2s;
-			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			if (_two_sided) {
+				// Back pass first (lower render_priority draws earlier).
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back fill / back sphere
+				if (_shape != MESH_SPHERE) {
+					_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back bary
+				}
+			}
+			// Front pass.
+			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front fill / sphere
 			if (_shape != MESH_SPHERE) {
-				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front bary
 			}
 		}
-		// Capsule hemisphere caps — surfaces 2 and 3 (rendered with
-		// the sphere shader against per-hemisphere `sphere_center`
-		// uniforms set in `_build_materials`).
+		// Capsule hemisphere caps.
 		if (_shape == MESH_CAPSULE) {
-			if (geo.cap_top_verts.size() > 0) {
+			auto emit_cap = [&](const PackedVector3Array &verts, const PackedVector3Array &norms) {
 				Array a; a.resize(Mesh::ARRAY_MAX);
-				a[Mesh::ARRAY_VERTEX] = geo.cap_top_verts;
-				a[Mesh::ARRAY_NORMAL] = geo.cap_top_normals;
+				a[Mesh::ARRAY_VERTEX] = verts;
+				a[Mesh::ARRAY_NORMAL] = norms;
 				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
+			};
+			if (_two_sided) {
+				// Back caps (cull_front, depth_draw_never).
+				if (geo.cap_top_verts.size() > 0) emit_cap(geo.cap_top_verts, geo.cap_top_normals);
+				if (geo.cap_bot_verts.size() > 0) emit_cap(geo.cap_bot_verts, geo.cap_bot_normals);
 			}
-			if (geo.cap_bot_verts.size() > 0) {
-				Array a; a.resize(Mesh::ARRAY_MAX);
-				a[Mesh::ARRAY_VERTEX] = geo.cap_bot_verts;
-				a[Mesh::ARRAY_NORMAL] = geo.cap_bot_normals;
-				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
-			}
+			// Front caps (cull_back, depth_draw_opaque).
+			if (geo.cap_top_verts.size() > 0) emit_cap(geo.cap_top_verts, geo.cap_top_normals);
+			if (geo.cap_bot_verts.size() > 0) emit_cap(geo.cap_bot_verts, geo.cap_bot_normals);
 		}
 		return;
 	}
