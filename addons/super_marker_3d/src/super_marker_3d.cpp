@@ -1317,11 +1317,21 @@ void SuperMarker3D::_update_transform() {
 
 void SuperMarker3D::_build_materials() {
 	// --- Outline material ---
-	// Shading follows `lights_and_shadows` consistently with the fill and mesh materials.
+	// Axis arms (tubes + hemisphere caps) use CULL_DISABLED so the depth
+	// buffer alone handles per-surface occlusion. Back faces are visible
+	// through near-grazing gaps between segments; with PER_PIXEL they are
+	// lit with inward normals and appear dark. PER_VERTEX computes
+	// lighting from the vertex-normal array (always outward), so back
+	// faces inherit the same shading as front faces — no dark hollows.
+	// Flat/mesh shapes use PER_PIXEL since they don't have overlapping
+	// back-face exposure from adjacent geometry.
 	if (_outline_material.is_null()) _outline_material.instantiate();
-	_outline_material->set_shading_mode(_lights_and_shadows
-			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
-			: BaseMaterial3D::SHADING_MODE_UNSHADED);
+	const bool is_axis_type_now = (get_type() == TYPE_AXIS);
+	BaseMaterial3D::ShadingMode out_shading;
+	if (!_lights_and_shadows)        out_shading = BaseMaterial3D::SHADING_MODE_UNSHADED;
+	else if (is_axis_type_now)       out_shading = BaseMaterial3D::SHADING_MODE_PER_VERTEX;
+	else                             out_shading = BaseMaterial3D::SHADING_MODE_PER_PIXEL;
+	_outline_material->set_shading_mode(out_shading);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !_lights_and_shadows);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
