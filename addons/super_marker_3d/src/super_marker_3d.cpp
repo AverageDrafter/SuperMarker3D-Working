@@ -185,9 +185,15 @@ void fragment() {
 		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	}
 
-	vec4 col = mix(fill_color, outline_color, edge);
-	ALBEDO = col.rgb;
-	ALPHA  = col.a;
+	// Alpha-weighted compositing: each layer contributes proportionally to
+	// its own alpha, so the outline's AA edge stays outline_color.rgb even
+	// when fill_color.a = 0 (no fill RGB bleed into the strip border).
+	float out_a  = outline_color.a * edge;
+	float fill_a = fill_color.a * (1.0 - edge);
+	ALPHA  = clamp(out_a + fill_a, 0.0, 1.0);
+	ALBEDO = (out_a * outline_color.rgb + fill_a * fill_color.rgb)
+	         / max(ALPHA, 1.0e-5);
+	if (ALPHA < 0.001) discard;
 }
 )";
 
