@@ -506,15 +506,12 @@ void SuperMarker3D::_bind_methods() {
 
 	// Shape group — billboard flags, corner style, circle sides. Hidden for non-Shape types.
 	ADD_GROUP("Shape", "");
-	ClassDB::bind_method(D_METHOD("set_billboard_x", "enabled"), &SuperMarker3D::set_billboard_x);
-	ClassDB::bind_method(D_METHOD("get_billboard_x"), &SuperMarker3D::get_billboard_x);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_x"), "set_billboard_x", "get_billboard_x");
+	ClassDB::bind_method(D_METHOD("set_billboard_xz", "enabled"), &SuperMarker3D::set_billboard_xz);
+	ClassDB::bind_method(D_METHOD("get_billboard_xz"), &SuperMarker3D::get_billboard_xz);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_xz"), "set_billboard_xz", "get_billboard_xz");
 	ClassDB::bind_method(D_METHOD("set_billboard_y", "enabled"), &SuperMarker3D::set_billboard_y);
 	ClassDB::bind_method(D_METHOD("get_billboard_y"), &SuperMarker3D::get_billboard_y);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_y"), "set_billboard_y", "get_billboard_y");
-	ClassDB::bind_method(D_METHOD("set_billboard_z", "enabled"), &SuperMarker3D::set_billboard_z);
-	ClassDB::bind_method(D_METHOD("get_billboard_z"), &SuperMarker3D::get_billboard_z);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_z"), "set_billboard_z", "get_billboard_z");
 	ClassDB::bind_method(D_METHOD("set_rounded_corners", "enabled"), &SuperMarker3D::set_rounded_corners);
 	ClassDB::bind_method(D_METHOD("get_rounded_corners"), &SuperMarker3D::get_rounded_corners);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rounded_corners"), "set_rounded_corners", "get_rounded_corners");
@@ -655,7 +652,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "mesh_sides" && !is_round_mesh) hide();
 	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
 	// Shape group: hide for non-Shape; rounded_corners has no effect on smooth curves.
-	if ((name == "billboard_x" || name == "billboard_y" || name == "billboard_z"
+	if ((name == "billboard_xz" || name == "billboard_y"
 			|| name == "rounded_corners" || name == "shape_sides") && !is_shape) hide();
 	if (name == "rounded_corners" && (_shape == FLAT_CIRCLE || _shape == FLAT_CAPSULE)) hide();
 	if (name == "capsule_height" && _shape != MESH_CAPSULE && _shape != FLAT_CAPSULE) hide();
@@ -954,23 +951,17 @@ void SuperMarker3D::set_capsule_height(float p) {
 }
 float SuperMarker3D::get_capsule_height() const { return _capsule_height; }
 
-void SuperMarker3D::set_billboard_x(bool p) {
-	_billboard_x = p;
+void SuperMarker3D::set_billboard_xz(bool p) {
+	_billboard_xz = p;
 	if (get_type() == TYPE_SHAPE) { _build_materials(); }
 }
-bool SuperMarker3D::get_billboard_x() const { return _billboard_x; }
+bool SuperMarker3D::get_billboard_xz() const { return _billboard_xz; }
 
 void SuperMarker3D::set_billboard_y(bool p) {
 	_billboard_y = p;
 	if (get_type() == TYPE_SHAPE) { _build_materials(); }
 }
 bool SuperMarker3D::get_billboard_y() const { return _billboard_y; }
-
-void SuperMarker3D::set_billboard_z(bool p) {
-	_billboard_z = p;
-	if (get_type() == TYPE_SHAPE) { _build_materials(); }
-}
-bool SuperMarker3D::get_billboard_z() const { return _billboard_z; }
 
 void SuperMarker3D::set_rounded_corners(bool p) {
 	_rounded_corners = p;
@@ -1370,12 +1361,11 @@ void SuperMarker3D::_build_materials() {
 				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
 	}
 
-	// Billboard mode: three independent X/Y/Z flags.
-	// Y = fully faces camera (ENABLED). X or Z without Y = rotate in XZ plane (FIXED_Y).
+	// Billboard mode: xz = BILLBOARD_FIXED_Y (rotates in XZ plane), y = BILLBOARD_ENABLED.
 	BaseMaterial3D::BillboardMode bb_mode = BaseMaterial3D::BILLBOARD_DISABLED;
 	if (is_shape_type) {
-		if (_billboard_y)                     bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
-		else if (_billboard_x || _billboard_z) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
+		if (_billboard_y)       bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
+		else if (_billboard_xz) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
 	}
 	_outline_material->set_billboard_mode(bb_mode);
 
@@ -2554,7 +2544,7 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
             Vector3 d_out = (next_v - v).normalized();
             Vector3 bisector = (Vector3(d_in.y, -d_in.x, 0.0f)
                               + Vector3(d_out.y, -d_out.x, 0.0f)).normalized();
-            _add_sil_disc(geo, v + Vector3(bisector.x * ew * 0.04f, 0.0f, 0.0f), ew * 0.5f, 12);
+            _add_sil_disc(geo, v + Vector3(-bisector.x * ew * 0.01f, 0.0f, 0.0f), ew * 0.5f, 12);
         };
         corner_blob(T,  BR, BL);
         corner_blob(BL, T,  BR);
