@@ -1784,42 +1784,43 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		Vector3 a0 = tip + dir0 * apex_r;
 		Vector3 a1 = tip + dir1 * apex_r;
 
-		// Slant face normal — outward radial + slight axial component
-		// because the surface tilts inward toward apex. Cross product
-		// of two edges gives the geometric face normal; orient outward
-		// using the segment midpoint's radial direction.
+		// Slant face normal — outward from the cone surface. Cross product
+		// gives a signed result; flip to outward using the segment
+		// midpoint's radial direction. face_n is used only for shading;
+		// culling is determined by the vertex winding order below.
 		Vector3 mid_radial = ((dir0 + dir1) * 0.5f);
 		Vector3 face_n = ((a1 - b0).cross(b1 - b0)).normalized();
 		if (face_n.dot(mid_radial) < 0.0f) face_n = -face_n;
 
-		// Side: two triangles per segment. Wind (b0, b1, a1) and
-		// (b0, a1, a0) — CCW from OUTSIDE the cone, matching the
-		// flipped tube/hemisphere convention.
+		// Side: two triangles per segment. Godot's CULL_BACK keeps faces
+		// that are CW from the camera; winding (b0, a1, b1) is CW when
+		// viewed from outside the cone (tip side), so the slant faces
+		// are front-facing from the outside and culled from inside.
 		geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-		geo.outline_verts.push_back(b1); geo.outline_normals.push_back(face_n);
 		geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
+		geo.outline_verts.push_back(b1); geo.outline_normals.push_back(face_n);
 		// Skip the second triangle when apex collapses to a point — it
 		// would be degenerate (zero area).
 		if (apex_r > 0.0f) {
 			geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-			geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
 			geo.outline_verts.push_back(a0); geo.outline_normals.push_back(face_n);
+			geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
 		}
 
-		// Apex disk — faces +d. Wind (tip, a0, a1) so the disk shows
-		// from the front under the flipped winding convention.
+		// Apex disk — faces +d, visible from tip side. (tip, a1, a0) is
+		// CW from the +d direction = front-facing toward the viewer.
 		if (apex_r > 0.0f) {
 			geo.outline_verts.push_back(tip); geo.outline_normals.push_back(d);
-			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
 			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
+			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
 		}
 
-		// Base disk — closes the back of the arrowhead, faces -d.
-		// Winding (base_center, b1, b0) under the flipped convention.
+		// Base disk — closes the back, faces -d, visible from arm side.
+		// (base_center, b0, b1) is CW from the -d direction.
 		Vector3 back_n = -d;
 		geo.outline_verts.push_back(base_center); geo.outline_normals.push_back(back_n);
-		geo.outline_verts.push_back(b1);          geo.outline_normals.push_back(back_n);
 		geo.outline_verts.push_back(b0);          geo.outline_normals.push_back(back_n);
+		geo.outline_verts.push_back(b1);          geo.outline_normals.push_back(back_n);
 	}
 	if (p_use_color) {
 		const int end = geo.outline_verts.size();
