@@ -1335,20 +1335,22 @@ void SuperMarker3D::_build_materials() {
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !_lights_and_shadows);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
-	// CULL_DISABLED everywhere except mesh+always_on_top. Depth buffer
-	// handles correct surface occlusion for all opaque 3D geometry. With
-	// CULL_BACK, near-grazing triangles drop out on 6-sided tubes, leaving
-	// surface gaps; adjacent overlapping geometry (other arms, adjacent
-	// mesh edge quads) fills those gaps with a different shade, causing
-	// entire objects to visually pop when PER_PIXEL shading is on.
-	// Exception: mesh+always_on_top loses the depth test entirely, so
-	// CULL_BACK is the only thing suppressing back-half edge quads.
+	// Cull mode: flat shapes and mesh fills are CULL_DISABLED (two-sided
+	// surfaces, or depth-occluded by fill body). Axis/arrow 3D geometry
+	// uses CULL_BACK to hide interiors and avoid Z-fighting at panel seams
+	// (CULL_DISABLED caused arrowhead hollow interiors to show, and caused
+	// Z-fighting at tube panel edges). Mesh+always_on_top also CULL_BACK
+	// (depth test disabled; face culling is the only occlusion).
 	const bool is_mesh_type  = (get_type() == TYPE_MESH);
 	const bool is_shape_type = (get_type() == TYPE_SHAPE);
-	const BaseMaterial3D::CullMode wire_cull =
-			(is_mesh_type && _always_on_top)
-			? BaseMaterial3D::CULL_BACK
-			: BaseMaterial3D::CULL_DISABLED;
+	BaseMaterial3D::CullMode wire_cull;
+	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type) {
+		wire_cull = BaseMaterial3D::CULL_DISABLED;
+	} else if (is_mesh_type) {
+		wire_cull = _always_on_top ? BaseMaterial3D::CULL_BACK : BaseMaterial3D::CULL_DISABLED;
+	} else {
+		wire_cull = BaseMaterial3D::CULL_BACK;
+	}
 	_outline_material->set_cull_mode(wire_cull);
 
 	if (_shape == AXIS_XYZ) {
@@ -1716,8 +1718,8 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 		const Color &p_color, bool p_use_color) const {
 	if (_outline_thickness > 0.0f) {
 		const float r = _outline_thickness * 0.5f;
-		if (p_use_color) _add_tube_colored(geo, a, b, r, 6, p_color, /*cap_a=*/false, /*cap_b=*/true);
-		else             _add_tube(geo, a, b, r, 6, /*cap_a=*/false, /*cap_b=*/true);
+		if (p_use_color) _add_tube_colored(geo, a, b, r, 12, p_color, /*cap_a=*/false, /*cap_b=*/true);
+		else             _add_tube(geo, a, b, r, 12, /*cap_a=*/false, /*cap_b=*/true);
 		return;
 	}
 	if (p_use_color) geo.add_line_colored(a, b, p_color);
