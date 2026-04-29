@@ -298,16 +298,6 @@ void SuperMarker3D::_bind_methods() {
 			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
 			"set_axis_arrow_width", "get_axis_arrow_width");
 
-	// Side count for cylinder, cone, and diamond. Range 3..24 — 3 makes
-	// a triangular prism / tetrahedron / triangular bipyramid; 24 is
-	// near-round. Default 8 reads as a nicely faceted "low-poly" shape.
-	// Hidden in the inspector for non-round mesh subtypes via
-	// `_validate_property`.
-	ClassDB::bind_method(D_METHOD("set_mesh_sides", "sides"), &SuperMarker3D::set_mesh_sides);
-	ClassDB::bind_method(D_METHOD("get_mesh_sides"), &SuperMarker3D::get_mesh_sides);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_sides",
-			PROPERTY_HINT_RANGE, "3,24,1"),
-			"set_mesh_sides", "get_mesh_sides");
 	// Capsule cylinder body height. Hidden by `_validate_property` on
 	// every other subtype.
 	ClassDB::bind_method(D_METHOD("set_capsule_height", "height"), &SuperMarker3D::set_capsule_height);
@@ -505,9 +495,7 @@ void SuperMarker3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("_on_curve_changed"), &SuperMarker3D::_on_curve_changed);
 
-	// Renderer triad — three orthogonal flags controlling where the
-	// marker sits between editor cue, HUD overlay, and shipped game
-	// asset. Defaults: visible at runtime, depth-tested, unshaded.
+	// Renderer — three visibility/shading flags only.
 	ADD_GROUP("Renderer", "");
 	ClassDB::bind_method(D_METHOD("set_shows_in_play", "enabled"), &SuperMarker3D::set_shows_in_play);
 	ClassDB::bind_method(D_METHOD("get_shows_in_play"), &SuperMarker3D::get_shows_in_play);
@@ -518,11 +506,20 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_lights_and_shadows", "enabled"), &SuperMarker3D::set_lights_and_shadows);
 	ClassDB::bind_method(D_METHOD("get_lights_and_shadows"), &SuperMarker3D::get_lights_and_shadows);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lights_and_shadows"), "set_lights_and_shadows", "get_lights_and_shadows");
+
+	// Mesh group — sides and two-sided rendering. Hidden for non-Mesh types.
+	ADD_GROUP("Mesh", "");
+	ClassDB::bind_method(D_METHOD("set_mesh_sides", "sides"), &SuperMarker3D::set_mesh_sides);
+	ClassDB::bind_method(D_METHOD("get_mesh_sides"), &SuperMarker3D::get_mesh_sides);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_sides",
+			PROPERTY_HINT_RANGE, "3,24,1"),
+			"set_mesh_sides", "get_mesh_sides");
 	ClassDB::bind_method(D_METHOD("set_two_sided", "enabled"), &SuperMarker3D::set_two_sided);
 	ClassDB::bind_method(D_METHOD("get_two_sided"), &SuperMarker3D::get_two_sided);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "two_sided"), "set_two_sided", "get_two_sided");
 
-	// Shape category
+	// Shape group — billboard flags, corner style, circle sides. Hidden for non-Shape types.
+	ADD_GROUP("Shape", "");
 	ClassDB::bind_method(D_METHOD("set_billboard_xz", "enabled"), &SuperMarker3D::set_billboard_xz);
 	ClassDB::bind_method(D_METHOD("get_billboard_xz"), &SuperMarker3D::get_billboard_xz);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_xz"), "set_billboard_xz", "get_billboard_xz");
@@ -651,9 +648,14 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
 			|| _shape == MESH_DIAMOND);
-	if (name == "mesh_sides"  && !is_round_mesh) hide();
+	// Mesh group: hide entirely for non-Mesh types; mesh_sides further restricted to round subtypes.
+	if ((name == "mesh_sides" || name == "two_sided") && !is_mesh) hide();
+	if (name == "mesh_sides" && !is_round_mesh) hide();
 	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
-	if ((name == "billboard_xz" || name == "billboard_y" || name == "rounded_corners") && !is_shape) hide();
+	// Shape group: hide for non-Shape; rounded_corners has no effect on smooth curves.
+	if ((name == "billboard_xz" || name == "billboard_y" || name == "rounded_corners"
+			|| name == "shape_sides") && !is_shape) hide();
+	if (name == "rounded_corners" && (_shape == FLAT_CIRCLE || _shape == FLAT_CAPSULE)) hide();
 	if (name == "capsule_height" && _shape != MESH_CAPSULE && _shape != FLAT_CAPSULE) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
@@ -2397,13 +2399,27 @@ void SuperMarker3D::_gen_arrow(GeoBuf &geo) const {
 #define FLAT_SHAPE_SETUP                                                           \
     const float ew = _outline_thickness;                                           \
     auto pt = [&](float x, float y) -> Vector3 { return Vector3(x, y, 0.0f); }; \
+    /* When !_rounded_corners, extend strokes by ew/2 at both ends so adjacent  */ \
+    /* quads overlap at right-angle corners and fill the divot naturally.        */ \
     auto edge = [&](const Vector3 &a, const Vector3 &b) {                         \
-        if (ew > 0.0f) _add_sil_edge_quad(geo, a, b, ew);                        \
-        else geo.add_line(a, b);                                                   \
+        if (ew > 0.0f) {                                                           \
+            if (_rounded_corners) {                                                \
+                _add_sil_edge_quad(geo, a, b, ew);                                \
+            } else {                                                               \
+                Vector3 d = (b - a).normalized() * (ew * 0.5f);                   \
+                _add_sil_edge_quad(geo, a - d, b + d, ew);                        \
+            }                                                                      \
+        } else { geo.add_line(a, b); }                                             \
     };                                                                             \
+    /* blob: disc join at corner/arc vertices, gated by _rounded_corners.        */ \
     auto blob = [&](const Vector3 &p, int segs = 8) {                             \
         if (_rounded_corners && ew > 0.0f)                                         \
             _add_sil_disc(geo, p, ew * 0.5f, segs);                               \
+    };                                                                             \
+    /* always_blob: unconditional — used for smooth curve joints (circle/capsule) */ \
+    /* that should always be joined regardless of the rounded_corners flag.      */ \
+    auto always_blob = [&](const Vector3 &p, int segs = 8) {                      \
+        if (ew > 0.0f) _add_sil_disc(geo, p, ew * 0.5f, segs);                   \
     };
 
 void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
@@ -2423,7 +2439,7 @@ void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
     for (int i = 0; i < N; i++)
         edge(ring[i], ring[(i + 1) % N]);
     for (int i = 0; i < N; i++)
-        blob(ring[i]);
+        always_blob(ring[i]);
 }
 
 void SuperMarker3D::_gen_flat_square(GeoBuf &geo) const {
@@ -2462,7 +2478,29 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
     if (_fill_enabled)
         geo.add_triangle(T, BL, BR);
     edge(T, BL); edge(BL, BR); edge(BR, T);
-    blob(T); blob(BL); blob(BR);
+    if (_rounded_corners) {
+        blob(T); blob(BL); blob(BR);
+    } else if (ew > 0.0f) {
+        // Miter-fill at each corner: small triangle from the vertex to the two
+        // outer-stroke corners of its adjacent extended edge quads.
+        // For this CCW-wound triangle, outward perp = 90° CW from dir = (dir.y,-dir.x).
+        auto corner_fill = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
+            Vector3 d_in  = (v - prev_v).normalized();
+            Vector3 d_out = (next_v - v).normalized();
+            Vector3 out_in  = Vector3(d_in.y,  -d_in.x,  0.0f) * (ew * 0.5f);
+            Vector3 out_out = Vector3(d_out.y, -d_out.x, 0.0f) * (ew * 0.5f);
+            Vector3 p1 = v + d_in  * (ew * 0.5f) + out_in;
+            Vector3 p2 = v - d_out * (ew * 0.5f) + out_out;
+            // Ensure +Z normal; flip winding if needed.
+            if ((p1 - v).cross(p2 - v).z < 0)
+                geo.add_triangle(v, p2, p1);
+            else
+                geo.add_triangle(v, p1, p2);
+        };
+        corner_fill(T,  BR, BL);
+        corner_fill(BL, T,  BR);
+        corner_fill(BR, BL, T);
+    }
 }
 
 void SuperMarker3D::_gen_flat_capsule(GeoBuf &geo) const {
@@ -2501,10 +2539,10 @@ void SuperMarker3D::_gen_flat_capsule(GeoBuf &geo) const {
         edge(top_arc[i], top_arc[i + 1]);
         edge(bot_arc[i], bot_arc[i + 1]);
     }
-    // Blobs at every arc vertex for smooth miter joins on the semicircles.
+    // Arc-joint discs — always present on smooth curves regardless of rounded_corners.
     for (int i = 0; i <= SEGS; i++) {
-        blob(top_arc[i]);
-        blob(bot_arc[i]);
+        always_blob(top_arc[i]);
+        always_blob(bot_arc[i]);
     }
 }
 
@@ -2545,7 +2583,10 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
     }
     for (int i = 0; i < 12; i++)
         edge(poly[i], poly[(i + 1) % 12]);
-    // Blobs at outer tip vertices only — not at concave notches 1,4,7,10.
+    // Concave notches always get a disc to fill the inward corner.
+    always_blob(poly[1]); always_blob(poly[4]);
+    always_blob(poly[7]); always_blob(poly[10]);
+    // Outer arm tips respect the rounded_corners flag.
     for (int i = 0; i < 12; i++) {
         if (i != 1 && i != 4 && i != 7 && i != 10)
             blob(poly[i]);

@@ -319,7 +319,7 @@ private:
 	// Default 8 reads as a nice low-poly shape; clamped 3..24 at every
 	// entry point. 3 = triangular prism / tetrahedron / triangular
 	// bipyramid, 24 = effectively round.
-	int  _mesh_sides = 8;
+	int  _mesh_sides = 24;
 	// Capsule-only — cylinder body length as a multiplier of marker_size.
 	// Default 2 → body = sphere diameter, giving a 4:1 pill at any size.
 	// Reused by FLAT_CAPSULE for the 2D pill body length.
@@ -392,7 +392,7 @@ private:
 	bool _shows_in_play  = true;
 	bool _always_on_top  = false;
 	bool _lights_and_shadows = false;
-	bool _two_sided      = false;
+	bool _two_sided      = true;
 	bool _template_mode  = false;
 
 	Ref<ArrayMesh>         _mesh;
