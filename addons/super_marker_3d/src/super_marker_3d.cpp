@@ -2547,28 +2547,29 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
     _add_sil_edge_quad(geo, BR, T, ew);
 
     if (_rounded_corners) {
-        // bisector.x ≈ 0 at T (no correction), ±0.866 at BR/BL.
-        // Negate so the disc is nudged inward (toward centre) not outward.
+        // bisector.x ≈ 0 at T (no correction needed), ±0.866 at BR/BL.
+        // Small outward x-nudge to align disc flush with adjacent strip edges.
         auto corner_blob = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
             Vector3 d_in  = (v - prev_v).normalized();
             Vector3 d_out = (next_v - v).normalized();
             Vector3 bisector = (Vector3(d_in.y, -d_in.x, 0.0f)
                               + Vector3(d_out.y, -d_out.x, 0.0f)).normalized();
-            _add_sil_disc(geo, v + Vector3(-bisector.x * ew * 0.08f, 0.0f, 0.0f), ew * 0.5f, 12);
+            _add_sil_disc(geo, v + Vector3(bisector.x * ew * 0.04f, 0.0f, 0.0f), ew * 0.5f, 12);
         };
         corner_blob(T,  BR, BL);
         corner_blob(BL, T,  BR);
         corner_blob(BR, BL, T);
     } else {
-        // Fill the triangular gap left between two strip endpoints at each sharp corner.
-        // p1/p2 are the outer endpoints of the adjacent edge quads at v, computed via
-        // left-perp of the incoming/outgoing edge directions.
+        // Fill the exterior gap at each sharp corner with a single triangle.
+        // p1/p2 are the outer strip endpoints at v, via right-perp of edge directions.
         const Vector3 cnrm(0.0f, 0.0f, 1.0f);
         auto corner_fill = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
             Vector3 d_in  = (v - prev_v).normalized();
             Vector3 d_out = (next_v - v).normalized();
-            Vector3 p1 = v + Vector3(-d_in.y,  d_in.x,  0.0f) * (ew * 0.5f);
-            Vector3 p2 = v + Vector3(-d_out.y, d_out.x, 0.0f) * (ew * 0.5f);
+            Vector3 p1 = v + Vector3(d_in.y,  -d_in.x,  0.0f) * (ew * 0.5f);
+            Vector3 p2 = v + Vector3(d_out.y, -d_out.x, 0.0f) * (ew * 0.5f);
+            // Ensure CCW winding for +Z normal (outline_material uses CULL_BACK).
+            if ((p1 - v).cross(p2 - v).z < 0.0f) { Vector3 tmp = p1; p1 = p2; p2 = tmp; }
             geo.outline_verts.push_back(v);  geo.outline_normals.push_back(cnrm);
             geo.outline_verts.push_back(p1); geo.outline_normals.push_back(cnrm);
             geo.outline_verts.push_back(p2); geo.outline_normals.push_back(cnrm);
