@@ -282,30 +282,6 @@ void SuperMarker3D::_bind_methods() {
 			"Cross:0,Axis:3,Burr:11,XYZ:8"),
 			"set_subtype", "get_subtype");
 
-	// Axis Arrows — sit immediately under Subtype for the Axis type.
-	// `_validate_property` hides them outside Axis and on Burr.
-	ClassDB::bind_method(D_METHOD("set_axis_arrows", "enabled"), &SuperMarker3D::set_axis_arrows);
-	ClassDB::bind_method(D_METHOD("get_axis_arrows"), &SuperMarker3D::get_axis_arrows);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "axis_arrows"), "set_axis_arrows", "get_axis_arrows");
-	ClassDB::bind_method(D_METHOD("set_axis_arrow_length", "length"), &SuperMarker3D::set_axis_arrow_length);
-	ClassDB::bind_method(D_METHOD("get_axis_arrow_length"), &SuperMarker3D::get_axis_arrow_length);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_arrow_length",
-			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
-			"set_axis_arrow_length", "get_axis_arrow_length");
-	ClassDB::bind_method(D_METHOD("set_axis_arrow_width", "width"), &SuperMarker3D::set_axis_arrow_width);
-	ClassDB::bind_method(D_METHOD("get_axis_arrow_width"), &SuperMarker3D::get_axis_arrow_width);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_arrow_width",
-			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
-			"set_axis_arrow_width", "get_axis_arrow_width");
-
-	// Capsule cylinder body height. Hidden by `_validate_property` on
-	// every other subtype.
-	ClassDB::bind_method(D_METHOD("set_capsule_height", "height"), &SuperMarker3D::set_capsule_height);
-	ClassDB::bind_method(D_METHOD("get_capsule_height"), &SuperMarker3D::get_capsule_height);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "capsule_height",
-			PROPERTY_HINT_RANGE, "0.0,20.0,0.001,or_greater"),
-			"set_capsule_height", "get_capsule_height");
-
 	// Outline color + thickness apply to every shape that has an
 	// outline (which is all of them in some form). Thickness > 0 turns
 	// axis lines into thin tubes; at 0 they stay 1px.
@@ -327,11 +303,18 @@ void SuperMarker3D::_bind_methods() {
 	// inspector regardless of which type is currently selected, but
 	// `_validate_property` hides what doesn't apply.
 
-	// Marker Size + Detail Mode — used by Mesh / Arrow / Curve shapes.
+	// Marker size — used by Mesh / Arrow / Shape shapes; hidden for Axis (uses lengths) and Figure (uses figure_height).
 	ClassDB::bind_method(D_METHOD("set_marker_size", "size"), &SuperMarker3D::set_marker_size);
 	ClassDB::bind_method(D_METHOD("get_marker_size"), &SuperMarker3D::get_marker_size);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "marker_size", PROPERTY_HINT_RANGE, "0.01,50.0,0.01,suffix:m"),
 			"set_marker_size", "get_marker_size");
+	// Capsule body height — shared by MESH_CAPSULE and FLAT_CAPSULE; hidden elsewhere.
+	ClassDB::bind_method(D_METHOD("set_capsule_height", "height"), &SuperMarker3D::set_capsule_height);
+	ClassDB::bind_method(D_METHOD("get_capsule_height"), &SuperMarker3D::get_capsule_height);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "capsule_height",
+			PROPERTY_HINT_RANGE, "0.0,20.0,0.001,or_greater"),
+			"set_capsule_height", "get_capsule_height");
+	// detail_mode: deprecated 1.0-beta; always hidden in inspector but kept bound for scene-file compat.
 	ClassDB::bind_method(D_METHOD("set_detail_mode", "mode"), &SuperMarker3D::set_detail_mode);
 	ClassDB::bind_method(D_METHOD("get_detail_mode"), &SuperMarker3D::get_detail_mode);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "detail_mode", PROPERTY_HINT_ENUM,
@@ -381,6 +364,21 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_axis_length_z_neg"), &SuperMarker3D::get_axis_length_z_neg);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_length_z_neg", PROPERTY_HINT_RANGE, "0.0,100.0,0.001,or_greater"),
 			"set_axis_length_z_neg", "get_axis_length_z_neg");
+
+	// Axis Arrows — inside the Axis group; hidden for non-Axis and for Burr.
+	ClassDB::bind_method(D_METHOD("set_axis_arrows", "enabled"), &SuperMarker3D::set_axis_arrows);
+	ClassDB::bind_method(D_METHOD("get_axis_arrows"), &SuperMarker3D::get_axis_arrows);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "axis_arrows"), "set_axis_arrows", "get_axis_arrows");
+	ClassDB::bind_method(D_METHOD("set_axis_arrow_length", "length"), &SuperMarker3D::set_axis_arrow_length);
+	ClassDB::bind_method(D_METHOD("get_axis_arrow_length"), &SuperMarker3D::get_axis_arrow_length);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_arrow_length",
+			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
+			"set_axis_arrow_length", "get_axis_arrow_length");
+	ClassDB::bind_method(D_METHOD("set_axis_arrow_width", "width"), &SuperMarker3D::set_axis_arrow_width);
+	ClassDB::bind_method(D_METHOD("get_axis_arrow_width"), &SuperMarker3D::get_axis_arrow_width);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "axis_arrow_width",
+			PROPERTY_HINT_RANGE, "0.0,5.0,0.001,or_greater"),
+			"set_axis_arrow_width", "get_axis_arrow_width");
 
 	// Axis Colors — per-direction overrides for the XYZ subtype only.
 	// Inspector hides these for Cross / Plain / Burr (see
@@ -495,18 +493,6 @@ void SuperMarker3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("_on_curve_changed"), &SuperMarker3D::_on_curve_changed);
 
-	// Renderer — three visibility/shading flags only.
-	ADD_GROUP("Renderer", "");
-	ClassDB::bind_method(D_METHOD("set_shows_in_play", "enabled"), &SuperMarker3D::set_shows_in_play);
-	ClassDB::bind_method(D_METHOD("get_shows_in_play"), &SuperMarker3D::get_shows_in_play);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shows_in_play"), "set_shows_in_play", "get_shows_in_play");
-	ClassDB::bind_method(D_METHOD("set_always_on_top", "enabled"), &SuperMarker3D::set_always_on_top);
-	ClassDB::bind_method(D_METHOD("get_always_on_top"), &SuperMarker3D::get_always_on_top);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "always_on_top"), "set_always_on_top", "get_always_on_top");
-	ClassDB::bind_method(D_METHOD("set_lights_and_shadows", "enabled"), &SuperMarker3D::set_lights_and_shadows);
-	ClassDB::bind_method(D_METHOD("get_lights_and_shadows"), &SuperMarker3D::get_lights_and_shadows);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lights_and_shadows"), "set_lights_and_shadows", "get_lights_and_shadows");
-
 	// Mesh group — sides and two-sided rendering. Hidden for non-Mesh types.
 	ADD_GROUP("Mesh", "");
 	ClassDB::bind_method(D_METHOD("set_mesh_sides", "sides"), &SuperMarker3D::set_mesh_sides);
@@ -534,6 +520,18 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shape_sides",
 			PROPERTY_HINT_RANGE, "6,64,1"),
 			"set_shape_sides", "get_shape_sides");
+
+	// Renderer — visibility and shading flags; always last so they're easy to find.
+	ADD_GROUP("Renderer", "");
+	ClassDB::bind_method(D_METHOD("set_shows_in_play", "enabled"), &SuperMarker3D::set_shows_in_play);
+	ClassDB::bind_method(D_METHOD("get_shows_in_play"), &SuperMarker3D::get_shows_in_play);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shows_in_play"), "set_shows_in_play", "get_shows_in_play");
+	ClassDB::bind_method(D_METHOD("set_always_on_top", "enabled"), &SuperMarker3D::set_always_on_top);
+	ClassDB::bind_method(D_METHOD("get_always_on_top"), &SuperMarker3D::get_always_on_top);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "always_on_top"), "set_always_on_top", "get_always_on_top");
+	ClassDB::bind_method(D_METHOD("set_lights_and_shadows", "enabled"), &SuperMarker3D::set_lights_and_shadows);
+	ClassDB::bind_method(D_METHOD("get_lights_and_shadows"), &SuperMarker3D::get_lights_and_shadows);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lights_and_shadows"), "set_lights_and_shadows", "get_lights_and_shadows");
 
 	ClassDB::bind_method(D_METHOD("set_template_mode", "template_mode"), &SuperMarker3D::set_template_mode);
 	ClassDB::bind_method(D_METHOD("is_template_mode"), &SuperMarker3D::is_template_mode);
@@ -698,7 +696,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "marker_size" && is_axis) hide();
 	if (name == "outline_color" && is_axis_xyz) hide();
 
-	if ((name == "head_length" || name == "head_width") && !(is_arrow || is_axis_xyz)) hide();
+	if ((name == "head_length" || name == "head_width") && !is_arrow) hide();
 	if (name == "arrowhead_style" && !is_arrow) hide();
 	if ((name == "tail_style" || name == "tail_length") && _shape != ARROW_EXTRUDED) hide();
 
@@ -850,7 +848,10 @@ Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
 float SuperMarker3D::get_outline_thickness() const { return _outline_thickness; }
 
-void SuperMarker3D::set_fill_enabled(bool p) { _fill_enabled = p; SM_REBUILD(); }
+void SuperMarker3D::set_fill_enabled(bool p) {
+	_fill_enabled = p;
+	if (get_type() != TYPE_MESH) SM_REBUILD(); // Mesh fill is always-on; no rebuild needed there.
+}
 bool SuperMarker3D::get_fill_enabled() const { return _fill_enabled; }
 void SuperMarker3D::set_fill_color(const Color &p) {
 	_fill_color = p;
@@ -1279,10 +1280,6 @@ void SuperMarker3D::_update_transform() {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_build_materials() {
-	const bool silhouette = (_detail_mode == DETAIL_SILHOUETTE);
-	const bool is_mesh    = (_shape == MESH_DIAMOND || _shape == MESH_SPHERE || _shape == MESH_BOX);
-	const bool billboard  = silhouette && is_mesh;
-
 	// --- Outline material ---
 	// The outline / wireframe is artificially unshaded and unshadowed —
 	// it's a highlight, not a real surface. Even when `lights_and_shadows`
@@ -1328,12 +1325,10 @@ void SuperMarker3D::_build_materials() {
 				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
 	}
 
-	// Billboard mode: silhouette mesh shapes always fully billboard. Shape-category
-	// icons use independent xz/y flags — xz = FIXED_Y (thin from above), y = ENABLED.
+	// Billboard mode: Shape-category icons use independent xz/y flags.
+	// xz = BILLBOARD_FIXED_Y (thin from above), y = BILLBOARD_ENABLED (fully faces camera).
 	BaseMaterial3D::BillboardMode bb_mode = BaseMaterial3D::BILLBOARD_DISABLED;
-	if (billboard) {
-		bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
-	} else if (is_shape_type) {
+	if (is_shape_type) {
 		if (_billboard_y)       bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
 		else if (_billboard_xz) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
 	}
@@ -1347,11 +1342,9 @@ void SuperMarker3D::_build_materials() {
 	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
 	_fill_material->set_albedo(_fill_color);
-	// Flat shapes (silhouette billboard + flat arrow + curve) use CULL_DISABLED
-	// so both sides render. 3D fills use CULL_BACK by default — closed
-	// convex shapes self-occlude correctly via face culling alone, even
-	// in always-on-top mode where depth test is off.
-	const bool flat_shape = (billboard || _shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type);
+	// Flat shapes (flat arrow, curve ribbon, Shape-category icons) use CULL_DISABLED
+	// so both sides render. 3D fills use CULL_BACK.
+	const bool flat_shape = (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type);
 	_fill_material->set_cull_mode(flat_shape
 			? BaseMaterial3D::CULL_DISABLED
 			: BaseMaterial3D::CULL_BACK);
