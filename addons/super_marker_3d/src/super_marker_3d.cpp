@@ -642,7 +642,8 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// it visible only on Arrow / Curve Flat where the user still
 	// chooses whether to fill.
 	if (name == "fill_enabled" && !(is_arrow || _shape == CURVE_FLAT || is_shape)) hide();
-	if (name == "fill_color"   && !(is_mesh || is_arrow || _shape == CURVE_FLAT || is_shape)) hide();
+	// For Shape types, fill_color is only meaningful when fill_enabled=true (otherwise outline_color is used).
+	if (name == "fill_color"   && !(is_mesh || is_arrow || _shape == CURVE_FLAT || (is_shape && _fill_enabled))) hide();
 	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
 			|| _shape == MESH_DIAMOND);
@@ -843,6 +844,12 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 		_cap_top_material->set_shader_parameter("outline_color", _outline_color);
 	if (_cap_bot_material.is_valid())
 		_cap_bot_material->set_shader_parameter("outline_color", _outline_color);
+	// Shape types route fill color through fill_material; keep it in sync when fill_enabled=false.
+	if (get_type() == TYPE_SHAPE && !_fill_enabled && _fill_material.is_valid()) {
+		_fill_material->set_albedo(_outline_color);
+		_fill_material->set_transparency(_outline_color.a < 1.0f
+				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
+	}
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
@@ -850,7 +857,14 @@ float SuperMarker3D::get_outline_thickness() const { return _outline_thickness; 
 
 void SuperMarker3D::set_fill_enabled(bool p) {
 	_fill_enabled = p;
-	if (get_type() != TYPE_MESH) SM_REBUILD(); // Mesh fill is always-on; no rebuild needed there.
+	if (get_type() == TYPE_MESH) return;
+	if (get_type() == TYPE_SHAPE) {
+		// Geometry is always emitted; only the fill color changes.
+		_build_materials();
+		notify_property_list_changed(); // show/hide fill_color
+	} else {
+		SM_REBUILD();
+	}
 }
 bool SuperMarker3D::get_fill_enabled() const { return _fill_enabled; }
 void SuperMarker3D::set_fill_color(const Color &p) {
@@ -1341,7 +1355,9 @@ void SuperMarker3D::_build_materials() {
 			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
-	_fill_material->set_albedo(_fill_color);
+	// Shape types: fill_enabled=false → solid outline_color fill; hollow = alpha fill_color.
+	const Color &fill_albedo = (is_shape_type && !_fill_enabled) ? _outline_color : _fill_color;
+	_fill_material->set_albedo(fill_albedo);
 	// Flat shapes (flat arrow, curve ribbon, Shape-category icons) use CULL_DISABLED
 	// so both sides render. 3D fills use CULL_BACK.
 	const bool flat_shape = (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type);
@@ -1349,7 +1365,7 @@ void SuperMarker3D::_build_materials() {
 			? BaseMaterial3D::CULL_DISABLED
 			: BaseMaterial3D::CULL_BACK);
 	_fill_material->set_render_priority(0);
-	_fill_material->set_transparency(_fill_color.a < 1.0f
+	_fill_material->set_transparency(fill_albedo.a < 1.0f
 			? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
 	// Default depth-draw: opaque-only writes depth, alpha doesn't. With
 	// alpha < 1 fill the body's depth is left empty inside the silhouette,
@@ -2416,23 +2432,44 @@ void SuperMarker3D::_gen_arrow(GeoBuf &geo) const {
     };
 
 void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
-    FLAT_SHAPE_SETUP
-    const int N = _shape_sides;
-    const float r = _marker_size;
-    Vector<Vector3> ring; ring.resize(N);
+    // Annular ring: inner polygon at (r - ew/2), outer at (r + ew/2), quads between them.
+    // Smooth arc — rounded_corners has no effect here (no corners exist).
+    const float ew      = _outline_thickness;
+    const int   N       = _shape_sides;
+    const float r       = _marker_size;
+    const float r_outer = r + ew * 0.5f;
+    const float r_inner = MAX(0.0f, r - ew * 0.5f);
+    const Vector3 nrm(0.0f, 0.0f, 1.0f);
+
+    Vector<Vector3> outer_ring, inner_ring;
+    outer_ring.resize(N); inner_ring.resize(N);
     for (int i = 0; i < N; i++) {
         float a = SM_TAU * (float)i / N;
-        ring.set(i, pt(std::cos(a) * r, std::sin(a) * r));
+        float c = std::cos(a), s = std::sin(a);
+        outer_ring.set(i, Vector3(c * r_outer, s * r_outer, 0.0f));
+        inner_ring.set(i, Vector3(c * r_inner, s * r_inner, 0.0f));
     }
-    const Vector3 ctr = pt(0, 0);
-    if (_fill_enabled) {
+    if (ew > 0.0f) {
+        for (int i = 0; i < N; i++) {
+            int j = (i + 1) % N;
+            geo.outline_verts.push_back(inner_ring[i]); geo.outline_normals.push_back(nrm);
+            geo.outline_verts.push_back(outer_ring[i]); geo.outline_normals.push_back(nrm);
+            geo.outline_verts.push_back(outer_ring[j]); geo.outline_normals.push_back(nrm);
+            geo.outline_verts.push_back(inner_ring[i]); geo.outline_normals.push_back(nrm);
+            geo.outline_verts.push_back(outer_ring[j]); geo.outline_normals.push_back(nrm);
+            geo.outline_verts.push_back(inner_ring[j]); geo.outline_normals.push_back(nrm);
+        }
+    } else {
         for (int i = 0; i < N; i++)
-            geo.add_triangle(ctr, ring[i], ring[(i + 1) % N]);
+            geo.add_line(outer_ring[i], outer_ring[(i + 1) % N]);
     }
-    for (int i = 0; i < N; i++)
-        edge(ring[i], ring[(i + 1) % N]);
-    for (int i = 0; i < N; i++)
-        always_blob(ring[i]);
+    // Fill fan from center to inner edge. When outline covers the full disk (r_inner == 0)
+    // there is nothing left to fill — the outline material paints everything.
+    if (r_inner > 0.0f) {
+        const Vector3 ctr(0.0f, 0.0f, 0.0f);
+        for (int i = 0; i < N; i++)
+            geo.add_triangle(ctr, inner_ring[i], inner_ring[(i + 1) % N]);
+    }
 }
 
 void SuperMarker3D::_gen_flat_square(GeoBuf &geo) const {
@@ -2440,10 +2477,8 @@ void SuperMarker3D::_gen_flat_square(GeoBuf &geo) const {
     const float h = _marker_size;
     const Vector3 TL = pt(-h,  h), TR = pt( h,  h);
     const Vector3 BR = pt( h, -h), BL = pt(-h, -h);
-    if (_fill_enabled) {
-        geo.add_triangle(TL, TR, BR);
-        geo.add_triangle(TL, BR, BL);
-    }
+    geo.add_triangle(TL, TR, BR);
+    geo.add_triangle(TL, BR, BL);
     edge(TL, TR); edge(TR, BR); edge(BR, BL); edge(BL, TL);
     blob(TL); blob(TR); blob(BR); blob(BL);
 }
@@ -2453,10 +2488,8 @@ void SuperMarker3D::_gen_flat_diamond(GeoBuf &geo) const {
     const float h = _marker_size;
     const Vector3 T = pt(0,  h), R = pt( h, 0);
     const Vector3 B = pt(0, -h), L = pt(-h, 0);
-    if (_fill_enabled) {
-        geo.add_triangle(T, R, B);
-        geo.add_triangle(T, B, L);
-    }
+    geo.add_triangle(T, R, B);
+    geo.add_triangle(T, B, L);
     edge(T, R); edge(R, B); edge(B, L); edge(L, T);
     blob(T); blob(R); blob(B); blob(L);
 }
@@ -2468,15 +2501,16 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
     const Vector3 T  = pt(0,          r);
     const Vector3 BL = pt(-r * s60, -r * 0.5f);
     const Vector3 BR = pt( r * s60, -r * 0.5f);
-    if (_fill_enabled)
-        geo.add_triangle(T, BL, BR);
+    geo.add_triangle(T, BL, BR);
     edge(T, BL); edge(BL, BR); edge(BR, T);
     if (_rounded_corners) {
         blob(T); blob(BL); blob(BR);
     } else if (ew > 0.0f) {
         // Miter-fill at each corner: small triangle from the vertex to the two
-        // outer-stroke corners of its adjacent extended edge quads.
-        // For this CCW-wound triangle, outward perp = 90° CW from dir = (dir.y,-dir.x).
+        // outer-stroke corners of its adjacent extended edge quads, painted in
+        // outline_color (pushed to outline_verts, not tri_verts/fill_color).
+        // Outward perp for CCW triangle = 90° CW from edge dir = (dir.y, -dir.x).
+        const Vector3 cnrm(0.0f, 0.0f, 1.0f);
         auto corner_fill = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
             Vector3 d_in  = (v - prev_v).normalized();
             Vector3 d_out = (next_v - v).normalized();
@@ -2484,11 +2518,13 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
             Vector3 out_out = Vector3(d_out.y, -d_out.x, 0.0f) * (ew * 0.5f);
             Vector3 p1 = v + d_in  * (ew * 0.5f) + out_in;
             Vector3 p2 = v - d_out * (ew * 0.5f) + out_out;
-            // Ensure +Z normal; flip winding if needed.
-            if ((p1 - v).cross(p2 - v).z < 0)
-                geo.add_triangle(v, p2, p1);
-            else
-                geo.add_triangle(v, p1, p2);
+            // Emit CCW (+Z normal); flip vertex order if needed.
+            bool flip = (p1 - v).cross(p2 - v).z < 0;
+            const Vector3 &va = flip ? p2 : p1;
+            const Vector3 &vb = flip ? p1 : p2;
+            geo.outline_verts.push_back(v);  geo.outline_normals.push_back(cnrm);
+            geo.outline_verts.push_back(va); geo.outline_normals.push_back(cnrm);
+            geo.outline_verts.push_back(vb); geo.outline_normals.push_back(cnrm);
         };
         corner_fill(T,  BR, BL);
         corner_fill(BL, T,  BR);
@@ -2497,45 +2533,90 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_flat_capsule(GeoBuf &geo) const {
-    FLAT_SHAPE_SETUP
-    const float r    = _marker_size;
-    const float half = _capsule_height * r * 0.5f; // half body length
-    const int SEGS   = 12; // semicircle segments
-    const Vector3 ctr_top = pt(0,  half);
-    const Vector3 ctr_bot = pt(0, -half);
+    // Annular ring following the capsule perimeter: two straight sides + two semicircle arcs.
+    // Smooth arc — rounded_corners has no effect here (no corners exist).
+    const float ew     = _outline_thickness;
+    const float r      = _marker_size;
+    const float half   = _capsule_height * r * 0.5f;
+    const int   SEGS   = 24;
+    const Vector3 nrm(0.0f, 0.0f, 1.0f);
+    const float r_outer = r + ew * 0.5f;
+    const float r_inner = MAX(0.0f, r - ew * 0.5f);
 
-    // Top semicircle: angles 0..π (right side to left side, going up).
-    // Bottom semicircle: angles π..2π (left to right, going down).
-    Vector<Vector3> top_arc, bot_arc;
-    top_arc.resize(SEGS + 1); bot_arc.resize(SEGS + 1);
-    for (int i = 0; i <= SEGS; i++) {
-        float a_t = SM_PI * (float)i / SEGS;       // 0 → π
-        float a_b = SM_PI + SM_PI * (float)i / SEGS; // π → 2π
-        top_arc.set(i, pt(std::cos(a_t) * r, half + std::sin(a_t) * r));
-        bot_arc.set(i, pt(std::cos(a_b) * r, -half + std::sin(a_b) * r));
-    }
-    // Fill: rectangle body + two semicircle fans.
-    if (_fill_enabled) {
-        const Vector3 TL = pt(-r,  half), TR = pt(r,  half);
-        const Vector3 BL = pt(-r, -half), BR = pt(r, -half);
-        geo.add_triangle(TL, TR, BR);
-        geo.add_triangle(TL, BR, BL);
+    auto emit_quad = [&](const Vector3 &n0, const Vector3 &o0,
+                          const Vector3 &o1, const Vector3 &n1) {
+        geo.outline_verts.push_back(n0); geo.outline_normals.push_back(nrm);
+        geo.outline_verts.push_back(o0); geo.outline_normals.push_back(nrm);
+        geo.outline_verts.push_back(o1); geo.outline_normals.push_back(nrm);
+        geo.outline_verts.push_back(n0); geo.outline_normals.push_back(nrm);
+        geo.outline_verts.push_back(o1); geo.outline_normals.push_back(nrm);
+        geo.outline_verts.push_back(n1); geo.outline_normals.push_back(nrm);
+    };
+
+    if (ew > 0.0f) {
+        // Right side: bottom to top (CCW from +Z)
+        emit_quad(
+            Vector3(r_inner, -half, 0.0f), Vector3(r_outer, -half, 0.0f),
+            Vector3(r_outer,  half, 0.0f), Vector3(r_inner,  half, 0.0f));
+        // Top arc: 0 → π (right to left, CCW from +Z)
         for (int i = 0; i < SEGS; i++) {
-            geo.add_triangle(ctr_top, top_arc[i], top_arc[i + 1]);
-            geo.add_triangle(ctr_bot, bot_arc[i], bot_arc[i + 1]);
+            float a0 = SM_PI * (float)i / SEGS;
+            float a1 = SM_PI * (float)(i + 1) / SEGS;
+            emit_quad(
+                Vector3(std::cos(a0) * r_inner, half + std::sin(a0) * r_inner, 0.0f),
+                Vector3(std::cos(a0) * r_outer, half + std::sin(a0) * r_outer, 0.0f),
+                Vector3(std::cos(a1) * r_outer, half + std::sin(a1) * r_outer, 0.0f),
+                Vector3(std::cos(a1) * r_inner, half + std::sin(a1) * r_inner, 0.0f));
+        }
+        // Left side: top to bottom (CCW from +Z)
+        emit_quad(
+            Vector3(-r_inner,  half, 0.0f), Vector3(-r_outer,  half, 0.0f),
+            Vector3(-r_outer, -half, 0.0f), Vector3(-r_inner, -half, 0.0f));
+        // Bottom arc: π → 2π (left to right, CCW from +Z)
+        for (int i = 0; i < SEGS; i++) {
+            float a0 = SM_PI + SM_PI * (float)i / SEGS;
+            float a1 = SM_PI + SM_PI * (float)(i + 1) / SEGS;
+            emit_quad(
+                Vector3(std::cos(a0) * r_inner, -half + std::sin(a0) * r_inner, 0.0f),
+                Vector3(std::cos(a0) * r_outer, -half + std::sin(a0) * r_outer, 0.0f),
+                Vector3(std::cos(a1) * r_outer, -half + std::sin(a1) * r_outer, 0.0f),
+                Vector3(std::cos(a1) * r_inner, -half + std::sin(a1) * r_inner, 0.0f));
+        }
+    } else {
+        geo.add_line(Vector3( r, -half, 0.0f), Vector3( r,  half, 0.0f));
+        geo.add_line(Vector3(-r,  half, 0.0f), Vector3(-r, -half, 0.0f));
+        for (int i = 0; i < SEGS; i++) {
+            float a0 = SM_PI * (float)i / SEGS, a1 = SM_PI * (float)(i + 1) / SEGS;
+            geo.add_line(Vector3(std::cos(a0) * r, half + std::sin(a0) * r, 0.0f),
+                         Vector3(std::cos(a1) * r, half + std::sin(a1) * r, 0.0f));
+            float b0 = SM_PI + a0, b1 = SM_PI + a1;
+            geo.add_line(Vector3(std::cos(b0) * r, -half + std::sin(b0) * r, 0.0f),
+                         Vector3(std::cos(b1) * r, -half + std::sin(b1) * r, 0.0f));
         }
     }
-    // Outline: two straight sides + two arcs.
-    edge(pt( r,  half), pt( r, -half)); // right side
-    edge(pt(-r, -half), pt(-r,  half)); // left side
-    for (int i = 0; i < SEGS; i++) {
-        edge(top_arc[i], top_arc[i + 1]);
-        edge(bot_arc[i], bot_arc[i + 1]);
-    }
-    // Arc-joint discs — always present on smooth curves regardless of rounded_corners.
-    for (int i = 0; i <= SEGS; i++) {
-        always_blob(top_arc[i]);
-        always_blob(bot_arc[i]);
+    // Fill: rect body + semicircle fans from inner edge.
+    // When outline covers everything (r_inner == 0), no fill needed.
+    if (r_inner > 0.0f) {
+        const Vector3 ctr_top(0.0f,  half, 0.0f);
+        const Vector3 ctr_bot(0.0f, -half, 0.0f);
+        geo.add_triangle(
+            Vector3(-r_inner, -half, 0.0f),
+            Vector3( r_inner, -half, 0.0f),
+            Vector3( r_inner,  half, 0.0f));
+        geo.add_triangle(
+            Vector3(-r_inner, -half, 0.0f),
+            Vector3( r_inner,  half, 0.0f),
+            Vector3(-r_inner,  half, 0.0f));
+        for (int i = 0; i < SEGS; i++) {
+            float a0 = SM_PI * (float)i / SEGS, a1 = SM_PI * (float)(i + 1) / SEGS;
+            geo.add_triangle(ctr_top,
+                Vector3(std::cos(a0) * r_inner, half + std::sin(a0) * r_inner, 0.0f),
+                Vector3(std::cos(a1) * r_inner, half + std::sin(a1) * r_inner, 0.0f));
+            float b0 = SM_PI + a0, b1 = SM_PI + a1;
+            geo.add_triangle(ctr_bot,
+                Vector3(std::cos(b0) * r_inner, -half + std::sin(b0) * r_inner, 0.0f),
+                Vector3(std::cos(b1) * r_inner, -half + std::sin(b1) * r_inner, 0.0f));
+        }
     }
 }
 
@@ -2570,10 +2651,8 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
         rn(-hl, -hw),    // 11: NW tip lower
     };
     const Vector3 ctr = pt(0, 0);
-    if (_fill_enabled) {
-        for (int i = 0; i < 12; i++)
-            geo.add_triangle(ctr, poly[(i + 1) % 12], poly[i]);
-    }
+    for (int i = 0; i < 12; i++)
+        geo.add_triangle(ctr, poly[(i + 1) % 12], poly[i]);
     for (int i = 0; i < 12; i++)
         edge(poly[i], poly[(i + 1) % 12]);
     // Concave notches always get a disc to fill the inward corner.
