@@ -512,6 +512,9 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_billboard_y", "enabled"), &SuperMarker3D::set_billboard_y);
 	ClassDB::bind_method(D_METHOD("get_billboard_y"), &SuperMarker3D::get_billboard_y);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_y"), "set_billboard_y", "get_billboard_y");
+	ClassDB::bind_method(D_METHOD("set_billboard_z", "enabled"), &SuperMarker3D::set_billboard_z);
+	ClassDB::bind_method(D_METHOD("get_billboard_z"), &SuperMarker3D::get_billboard_z);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "billboard_z"), "set_billboard_z", "get_billboard_z");
 	ClassDB::bind_method(D_METHOD("set_rounded_corners", "enabled"), &SuperMarker3D::set_rounded_corners);
 	ClassDB::bind_method(D_METHOD("get_rounded_corners"), &SuperMarker3D::get_rounded_corners);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rounded_corners"), "set_rounded_corners", "get_rounded_corners");
@@ -652,8 +655,8 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "mesh_sides" && !is_round_mesh) hide();
 	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
 	// Shape group: hide for non-Shape; rounded_corners has no effect on smooth curves.
-	if ((name == "billboard_xz" || name == "billboard_y" || name == "rounded_corners"
-			|| name == "shape_sides") && !is_shape) hide();
+	if ((name == "billboard_xz" || name == "billboard_y" || name == "billboard_z"
+			|| name == "rounded_corners" || name == "shape_sides") && !is_shape) hide();
 	if (name == "rounded_corners" && (_shape == FLAT_CIRCLE || _shape == FLAT_CAPSULE)) hide();
 	if (name == "capsule_height" && _shape != MESH_CAPSULE && _shape != FLAT_CAPSULE) hide();
 
@@ -962,6 +965,12 @@ void SuperMarker3D::set_billboard_y(bool p) {
 	if (get_type() == TYPE_SHAPE) { _build_materials(); }
 }
 bool SuperMarker3D::get_billboard_y() const { return _billboard_y; }
+
+void SuperMarker3D::set_billboard_z(bool p) {
+	_billboard_z = p;
+	if (get_type() == TYPE_SHAPE) { _build_materials(); }
+}
+bool SuperMarker3D::get_billboard_z() const { return _billboard_z; }
 
 void SuperMarker3D::set_rounded_corners(bool p) {
 	_rounded_corners = p;
@@ -1361,12 +1370,12 @@ void SuperMarker3D::_build_materials() {
 				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
 	}
 
-	// Billboard mode: Shape-category icons use independent xz/y flags.
-	// xz = BILLBOARD_FIXED_Y (thin from above), y = BILLBOARD_ENABLED (fully faces camera).
+	// Billboard mode: Shape-category icons use three independent flags.
+	// y or z = BILLBOARD_ENABLED (fully faces camera), xz = BILLBOARD_FIXED_Y (thin from above).
 	BaseMaterial3D::BillboardMode bb_mode = BaseMaterial3D::BILLBOARD_DISABLED;
 	if (is_shape_type) {
-		if (_billboard_y)       bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
-		else if (_billboard_xz) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
+		if (_billboard_y || _billboard_z) bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
+		else if (_billboard_xz)           bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
 	}
 	_outline_material->set_billboard_mode(bb_mode);
 
@@ -2538,38 +2547,18 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
     _add_sil_edge_quad(geo, BR, T, ew);
 
     if (_rounded_corners) {
-        // Rounded cap at each corner: disc centered at the outer miter point
-        // (V + bisector*ew/2) rather than at V, so the disc aligns flush with
-        // both adjacent arm edges rather than bulging inward.
+        // Tiny x-only nudge aligns the disc with the adjacent arm edges without
+        // over-shooting (bisector.x ≈ 0 at T, ±0.866 at BR/BL).
         auto corner_blob = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
             Vector3 d_in  = (v - prev_v).normalized();
             Vector3 d_out = (next_v - v).normalized();
             Vector3 bisector = (Vector3(d_in.y, -d_in.x, 0.0f)
                               + Vector3(d_out.y, -d_out.x, 0.0f)).normalized();
-            _add_sil_disc(geo, v + bisector * (ew * 0.5f), ew * 0.5f, 12);
+            _add_sil_disc(geo, v + Vector3(bisector.x * ew * 0.08f, 0.0f, 0.0f), ew * 0.5f, 12);
         };
         corner_blob(T,  BR, BL);
         corner_blob(BL, T,  BR);
         corner_blob(BR, BL, T);
-    } else {
-        // Sharp corner: fill the gap triangle between the outer endpoints of the
-        // two adjacent edge quads at each vertex (in outline_verts = outline_color).
-        const Vector3 cnrm(0.0f, 0.0f, 1.0f);
-        auto corner_fill = [&](const Vector3 &v, const Vector3 &prev_v, const Vector3 &next_v) {
-            Vector3 d_in  = (v - prev_v).normalized();
-            Vector3 d_out = (next_v - v).normalized();
-            Vector3 p1 = v + Vector3(d_in.y,  -d_in.x,  0.0f) * (ew * 0.5f);
-            Vector3 p2 = v + Vector3(d_out.y, -d_out.x, 0.0f) * (ew * 0.5f);
-            bool flip = (p1 - v).cross(p2 - v).z < 0;
-            const Vector3 &va = flip ? p2 : p1;
-            const Vector3 &vb = flip ? p1 : p2;
-            geo.outline_verts.push_back(v);  geo.outline_normals.push_back(cnrm);
-            geo.outline_verts.push_back(va); geo.outline_normals.push_back(cnrm);
-            geo.outline_verts.push_back(vb); geo.outline_normals.push_back(cnrm);
-        };
-        corner_fill(T,  BR, BL);
-        corner_fill(BL, T,  BR);
-        corner_fill(BR, BL, T);
     }
 }
 

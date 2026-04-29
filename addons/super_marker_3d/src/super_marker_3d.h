@@ -187,11 +187,13 @@ public:
 	/// Also used by FLAT_CAPSULE for the 2D pill body length.
 	void set_capsule_height(float p);  float get_capsule_height() const;
 
-	/// Shape-category billboard flags. Independent: xz = BILLBOARD_FIXED_Y
-	/// (shape appears thin from above), y = BILLBOARD_ENABLED (fully faces camera).
-	/// Both default false (shape stays in its authored XY plane, no billboard).
+	/// Shape-category billboard flags. All three are independent.
+	/// xz = BILLBOARD_FIXED_Y (thin from above), y = BILLBOARD_ENABLED (fully faces camera),
+	/// z = BILLBOARD_ENABLED on the Z axis (same mode as y, combined).
+	/// All default false (shape stays in its authored XY plane, no billboard).
 	void set_billboard_xz(bool p);  bool get_billboard_xz() const;
 	void set_billboard_y(bool p);   bool get_billboard_y() const;
+	void set_billboard_z(bool p);   bool get_billboard_z() const;
 	/// When true, arc joints and polygon corners get a disc blob to
 	/// produce smooth rounded joins. Default true.
 	void set_rounded_corners(bool p);  bool get_rounded_corners() const;
@@ -327,6 +329,7 @@ private:
 	// Shape-category state.
 	bool  _billboard_xz    = false;  // BILLBOARD_FIXED_Y — thin from above
 	bool  _billboard_y     = false;  // BILLBOARD_ENABLED — fully faces camera
+	bool  _billboard_z     = false;  // BILLBOARD_ENABLED — Z axis independent flag
 	bool  _rounded_corners = true;   // disc blobs at arc joints / corners
 	int   _shape_sides     = 24;     // FLAT_CIRCLE polygon segment count
 
