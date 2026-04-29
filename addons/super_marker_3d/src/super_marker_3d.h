@@ -187,11 +187,10 @@ public:
 	/// Also used by FLAT_CAPSULE for the 2D pill body length.
 	void set_capsule_height(float p);  float get_capsule_height() const;
 
-	/// Shape-category billboard flags. All three are independent.
-	/// xz = BILLBOARD_FIXED_Y (thin from above), y = BILLBOARD_ENABLED (fully faces camera),
-	/// z = BILLBOARD_ENABLED on the Z axis (same mode as y, combined).
-	/// All default false (shape stays in its authored XY plane, no billboard).
-	void set_billboard_xz(bool p);  bool get_billboard_xz() const;
+	/// Shape-category billboard flags — X, Y, Z are fully independent.
+	/// Y → BILLBOARD_ENABLED (fully faces camera). X or Z without Y → BILLBOARD_FIXED_Y
+	/// (rotates in XZ plane, Y axis stays fixed). All default false (no billboard).
+	void set_billboard_x(bool p);   bool get_billboard_x() const;
 	void set_billboard_y(bool p);   bool get_billboard_y() const;
 	void set_billboard_z(bool p);   bool get_billboard_z() const;
 	/// When true, arc joints and polygon corners get a disc blob to
@@ -327,9 +326,9 @@ private:
 	// Reused by FLAT_CAPSULE for the 2D pill body length.
 	float _capsule_height = 2.0f;
 	// Shape-category state.
-	bool  _billboard_xz    = false;  // BILLBOARD_FIXED_Y — thin from above
-	bool  _billboard_y     = false;  // BILLBOARD_ENABLED — fully faces camera
-	bool  _billboard_z     = false;  // BILLBOARD_ENABLED — Z axis independent flag
+	bool  _billboard_x     = false;  // X flag — rotates in XZ plane (FIXED_Y) unless Y also set
+	bool  _billboard_y     = false;  // Y flag — fully faces camera (ENABLED)
+	bool  _billboard_z     = false;  // Z flag — rotates in XZ plane (FIXED_Y) unless Y also set
 	bool  _rounded_corners = true;   // disc blobs at arc joints / corners
 	int   _shape_sides     = 24;     // FLAT_CIRCLE polygon segment count
 
