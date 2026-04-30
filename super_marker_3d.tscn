@@ -6,7 +6,7 @@
 
 [node name="SuperMarker3D" type="SuperMarker3D" unique_id=29451092]
 type = 3
-subtype = 9
+subtype = 27
 outline_color = Color(0.12941177, 1, 0, 1)
 outline_thickness = 0.131
 fill_enabled = true
@@ -28,12 +28,20 @@ axis_color_z_pos = Color(0.039215688, 0.039215688, 1, 1)
 axis_color_z_neg = Color(0.039215688, 0.039215688, 0.15686275, 1)
 head_length = 3.5
 head_width = 1.94
+curve_length = 3.31
+curve_amplitude = 1.0
+curve_turns = 4.61
+curve_segments = 256
 curve = SubResource("Curve3D_4j8hf")
-curve_width = 0.001
+curve_width = 0.596
+start_cap_size = Vector2(0.595, 0.595)
+start_cap_linked = false
+curve_end_cap = 3
 billboard_xz = true
 billboard_y = true
 lights_and_shadows = true
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=49429962]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09686518, 0, -0.09216046)
+visible = false
 mesh = SubResource("BoxMesh_4j8hf")

@@ -1,22 +1,19 @@
 @tool
 extends EditorPlugin
 
-## SuperMarker3D editor plugin.
-##
-## Currently a placeholder — the GDExtension's `[icons]` block in
-## super_marker_3d.gdextension wires the custom node icon, and class
-## registration happens in C++. No editor-side controls yet.
-##
-## Hooks for later:
-##   - Quick Add toolbar button on Node3D parents (mirroring how
-##     MultiNode's plugin adds child node types).
-##   - Editor gizmo for interactive marker_size / curve endpoint
-##     handles in the 3D viewport.
-##   - Inspector group hints for the new shape categories so the
-##     dropdown reads "Axis / Plain" instead of "AXIS_PLAIN".
+## SuperMarker3D editor plugin. Adds:
+##   - Inspector "Export Active Curve…" button on TYPE_CURVE markers
+##     (saves get_active_curve() to a .tres via EditorFileDialog).
+
+const InspectorPlugin := preload("res://addons/super_marker_3d/plugin_inspector.gd")
+
+var _ip: EditorInspectorPlugin
 
 func _enter_tree() -> void:
-	pass
+	_ip = InspectorPlugin.new()
+	add_inspector_plugin(_ip)
 
 func _exit_tree() -> void:
-	pass
+	if _ip != null:
+		remove_inspector_plugin(_ip)
+		_ip = null

@@ -3,6 +3,8 @@
 
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/array_mesh.hpp>
+#include <godot_cpp/classes/convex_polygon_shape3d.hpp>
+#include <godot_cpp/classes/concave_polygon_shape3d.hpp>
 #include <godot_cpp/classes/curve3d.hpp>
 #include <godot_cpp/classes/shader.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
@@ -76,9 +78,24 @@ public:
 		FLAT_CAPSULE  = 21,   // 2D pill — two semicircles + rect body
 		FLAT_X        = 22,   // X / close icon (two crossed bars)
 
-		// Curve category — geometry stamped along a Curve3D resource.
-		CURVE_FLAT = 7,         // billboarded flat ribbon with caps
-		CURVE_LINE_3D = 9,      // tube extrusion (3D)
+		// Curve category — path stamped along a Curve3D. The `curve_flat`
+		// flag picks the rendering style (flat ribbon vs 3D tube); the
+		// subtype picks the curve SHAPE. Most subtypes generate the path
+		// procedurally; CUSTOM uses the user-supplied `curve` resource.
+		CURVE_LINE        = 23,  // straight segment
+		CURVE_RIGHT_ANGLE = 24,  // L-bend
+		CURVE_ARC         = 25,  // circular arc
+		CURVE_SINE        = 26,  // sine wave
+		CURVE_HELIX       = 27,  // 3D coil
+		CURVE_BEZIER      = 28,  // smooth S-curve
+		CURVE_CUSTOM      = 29,  // user-supplied Curve3D
+		// Deprecated legacy aliases — pre-preset scenes stored these
+		// directly. CURVE_FLAT=7 means "Custom path + flat ribbon",
+		// CURVE_LINE_3D=9 means "Custom path + 3D tube". Both still load
+		// and render correctly; new scenes should pick a CURVE_* subtype
+		// and toggle `curve_flat` instead.
+		CURVE_FLAT = 7,
+		CURVE_LINE_3D = 9,
 
 		// Arrow category — directional pointer.
 		ARROW_EXTRUDED = 5,     // 3D shaft + head
@@ -140,6 +157,7 @@ public:
 		CURVE_CAP_DOT = 2,
 		CURVE_CAP_LINE = 3,
 	};
+
 
 	enum FigureLegPose {
 		LEGS_TOGETHER = 0,    // both legs straight down (rest pose)
@@ -256,6 +274,40 @@ public:
 	void set_tail_length(float p); float get_tail_length() const;
 
 	void set_curve(const Ref<Curve3D> &p);  Ref<Curve3D> get_curve() const;
+	/// Returns a duplicate of the curve currently driving the geometry —
+	/// the user-supplied `_curve` for CUSTOM/legacy subtypes, or a fresh
+	/// Curve3D built from the active preset's parameters otherwise. The
+	/// duplicate is independent: edit it, save it as a .tres, or assign
+	/// it to a Path3D for an AI agent / camera to follow without affecting
+	/// the marker. Empty Curve3D if the marker isn't a curve subtype.
+	Ref<Curve3D> get_active_curve() const;
+
+	/// Mesh / collider export. Walks every surface across the primary
+	/// `_mesh` and the per-arm `_arm_meshes` (Axis category) so multi-
+	/// instance markers gather as one. Geometry is in marker-local space
+	/// — apply the marker's transform when consuming the result if you
+	/// want world-space.
+	///
+	/// `export_mesh` returns a freestanding ArrayMesh duplicate (every
+	/// surface copied, no materials). Drop it into a MeshInstance3D, save
+	/// it as a .tres / .mesh, etc.
+	///
+	/// `export_convex_shape` returns a ConvexPolygonShape3D — fastest
+	/// runtime collision, computed as the convex hull of every triangle
+	/// vertex. Cheap and stable; concavities are filled in.
+	///
+	/// `export_concave_shape` returns a ConcavePolygonShape3D — exact
+	/// triangle-mesh collision, so the helix / right-angle / arc keeps
+	/// its real shape. Static-only (no movement under physics) and
+	/// pricier per query, but matches the visual exactly.
+	Ref<ArrayMesh>              export_mesh() const;
+	Ref<ConvexPolygonShape3D>   export_convex_shape() const;
+	Ref<ConcavePolygonShape3D>  export_concave_shape() const;
+	void set_curve_flat(bool p);            bool get_curve_flat() const;
+	void set_curve_length(float p);         float get_curve_length() const;
+	void set_curve_amplitude(float p);      float get_curve_amplitude() const;
+	void set_curve_turns(float p);          float get_curve_turns() const;
+	void set_curve_segments(int p);         int get_curve_segments() const;
 	void set_curve_width(float p);          float get_curve_width() const;
 	void set_curve_pattern(int p);          int get_curve_pattern() const;
 	void set_dash_length(float p);          float get_dash_length() const;
@@ -364,8 +416,20 @@ private:
 	int   _tail_style = TAIL_NONE;
 	float _tail_length = 0.0f;
 
-	// SHAPE_CURVE — flat ribbon stamped along a Curve3D.
+	// Curve category — path geometry stamped along a Curve3D. The
+	// subtype picks the SHAPE (Line, Right Angle, Arc, Sine, Helix,
+	// Bezier, Custom); `_curve_flat` picks the rendering STYLE (flat
+	// ribbon vs 3D tube). For non-CUSTOM subtypes the path is built into
+	// `_preset_curve` on demand and reused until a preset parameter
+	// changes (`_preset_curve_dirty` flips on every invalidating setter).
 	Ref<Curve3D> _curve;
+	bool  _curve_flat      = true;   // true = ribbon, false = 3D tube
+	float _curve_length    = 2.0f;
+	float _curve_amplitude = 0.5f;
+	float _curve_turns     = 2.0f;
+	int   _curve_segments  = 32;
+	mutable Ref<Curve3D> _preset_curve;
+	mutable bool _preset_curve_dirty = true;
 	float _curve_width = 0.15f;
 	int   _curve_pattern = CURVE_PATTERN_SOLID;
 	float _dash_length = 1.0f;
@@ -645,6 +709,22 @@ private:
 			const Color &p_color, bool p_use_color) const;
 
 	void _on_curve_changed();
+	/// Returns the curve actually used to drive geometry — `_curve` for
+	/// CUSTOM (and the legacy CURVE_FLAT/CURVE_LINE_3D aliases),
+	/// otherwise the generated `_preset_curve` (rebuilt on first call
+	/// after any preset parameter changes).
+	Ref<Curve3D> _get_active_curve() const;
+	/// Build a fresh Curve3D for the active curve subtype + parameters.
+	Ref<Curve3D> _make_preset_curve() const;
+	/// True for any curve-category subtype (preset or legacy/custom).
+	static bool _is_curve_subtype(int p_subtype);
+	/// True when the curve renders as a flat ribbon. Reads `_curve_flat`
+	/// for new subtypes; legacy CURVE_FLAT(=7) and CURVE_LINE_3D(=9)
+	/// hard-code their style.
+	bool _is_curve_flat_style() const;
+	/// True when the active curve subtype uses the user-supplied `_curve`
+	/// resource (CUSTOM or legacy aliases).
+	bool _curve_is_custom() const;
 
 	// Silhouette helpers (2D, billboarded via material).
 	void _gen_silhouette_diamond(GeoBuf &geo) const;

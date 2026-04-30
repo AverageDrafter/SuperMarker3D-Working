@@ -8,6 +8,8 @@
 #include <godot_cpp/classes/base_material3d.hpp>
 #include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/curve3d.hpp>
+#include <godot_cpp/classes/convex_polygon_shape3d.hpp>
+#include <godot_cpp/classes/concave_polygon_shape3d.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/callable_method_pointer.hpp>
 
@@ -334,9 +336,15 @@ void SuperMarker3D::_bind_methods() {
 
 	// Fill — Mesh / Arrow / Curve Flat.
 	ADD_GROUP("Fill", "fill_");
+	// `fill_enabled` is deprecated — fill is always on now (use
+	// fill_color's alpha to hide). Setter/getter remain so existing
+	// scenes that store `fill_enabled = ...` keep loading; the property
+	// is hidden from the inspector via `_validate_property`.
 	ClassDB::bind_method(D_METHOD("set_fill_enabled", "enabled"), &SuperMarker3D::set_fill_enabled);
 	ClassDB::bind_method(D_METHOD("get_fill_enabled"), &SuperMarker3D::get_fill_enabled);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fill_enabled"), "set_fill_enabled", "get_fill_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fill_enabled",
+			PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_STORAGE),
+			"set_fill_enabled", "get_fill_enabled");
 	ClassDB::bind_method(D_METHOD("set_fill_color", "color"), &SuperMarker3D::set_fill_color);
 	ClassDB::bind_method(D_METHOD("get_fill_color"), &SuperMarker3D::get_fill_color);
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "fill_color"), "set_fill_color", "get_fill_color");
@@ -455,6 +463,33 @@ void SuperMarker3D::_bind_methods() {
 			"set_tail_length", "get_tail_length");
 
 	ADD_GROUP("Curve", "");
+	ClassDB::bind_method(D_METHOD("get_active_curve"), &SuperMarker3D::get_active_curve);
+	ClassDB::bind_method(D_METHOD("export_mesh"),           &SuperMarker3D::export_mesh);
+	ClassDB::bind_method(D_METHOD("export_convex_shape"),   &SuperMarker3D::export_convex_shape);
+	ClassDB::bind_method(D_METHOD("export_concave_shape"),  &SuperMarker3D::export_concave_shape);
+	ClassDB::bind_method(D_METHOD("set_curve_flat", "enabled"), &SuperMarker3D::set_curve_flat);
+	ClassDB::bind_method(D_METHOD("get_curve_flat"), &SuperMarker3D::get_curve_flat);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "curve_flat"), "set_curve_flat", "get_curve_flat");
+	ClassDB::bind_method(D_METHOD("set_curve_length", "length"), &SuperMarker3D::set_curve_length);
+	ClassDB::bind_method(D_METHOD("get_curve_length"), &SuperMarker3D::get_curve_length);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "curve_length",
+			PROPERTY_HINT_RANGE, "0.0,100.0,0.001,or_greater,suffix:m"),
+			"set_curve_length", "get_curve_length");
+	ClassDB::bind_method(D_METHOD("set_curve_amplitude", "amplitude"), &SuperMarker3D::set_curve_amplitude);
+	ClassDB::bind_method(D_METHOD("get_curve_amplitude"), &SuperMarker3D::get_curve_amplitude);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "curve_amplitude",
+			PROPERTY_HINT_RANGE, "-100.0,100.0,0.001,or_greater,or_less,suffix:m"),
+			"set_curve_amplitude", "get_curve_amplitude");
+	ClassDB::bind_method(D_METHOD("set_curve_turns", "turns"), &SuperMarker3D::set_curve_turns);
+	ClassDB::bind_method(D_METHOD("get_curve_turns"), &SuperMarker3D::get_curve_turns);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "curve_turns",
+			PROPERTY_HINT_RANGE, "0.01,20.0,0.01,or_greater"),
+			"set_curve_turns", "get_curve_turns");
+	ClassDB::bind_method(D_METHOD("set_curve_segments", "segments"), &SuperMarker3D::set_curve_segments);
+	ClassDB::bind_method(D_METHOD("get_curve_segments"), &SuperMarker3D::get_curve_segments);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "curve_segments",
+			PROPERTY_HINT_RANGE, "4,256,1"),
+			"set_curve_segments", "get_curve_segments");
 	ClassDB::bind_method(D_METHOD("set_curve", "curve"), &SuperMarker3D::set_curve);
 	ClassDB::bind_method(D_METHOD("get_curve"), &SuperMarker3D::get_curve);
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "curve", PROPERTY_HINT_RESOURCE_TYPE, "Curve3D"),
@@ -583,6 +618,14 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FIGURE);
 
 	// Axis linkage
+	BIND_ENUM_CONSTANT(CURVE_LINE);
+	BIND_ENUM_CONSTANT(CURVE_RIGHT_ANGLE);
+	BIND_ENUM_CONSTANT(CURVE_ARC);
+	BIND_ENUM_CONSTANT(CURVE_SINE);
+	BIND_ENUM_CONSTANT(CURVE_HELIX);
+	BIND_ENUM_CONSTANT(CURVE_BEZIER);
+	BIND_ENUM_CONSTANT(CURVE_CUSTOM);
+
 	BIND_ENUM_CONSTANT(LINK_ALL);
 	BIND_ENUM_CONSTANT(LINK_MIRRORED);
 	BIND_ENUM_CONSTANT(LINK_FREE);
@@ -633,7 +676,10 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Circle:17,Square:18,Diamond:19,Triangle:20,Capsule:21,X:22";
 				break;
 			case TYPE_CURVE:
-				p_property.hint_string = "Flat Ribbon:7,3D Line:9";
+				// Legacy CURVE_FLAT(7) and CURVE_LINE_3D(9) are hidden from
+				// new picks but still load from existing scenes — they
+				// behave as Custom with curve_flat=true / =false respectively.
+				p_property.hint_string = "Line:23,Right Angle:24,Arc:25,Sine:26,Helix:27,Bezier:28,Custom:29";
 				break;
 			case TYPE_ARROW:
 				p_property.hint_string = "Extruded:5,Flat:6";
@@ -652,9 +698,9 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Fill Enabled is also gone for Mesh (fill is always on now). Keep
 	// it visible only on Arrow / Curve Flat where the user still
 	// chooses whether to fill.
-	if (name == "fill_enabled" && !(is_arrow || _shape == CURVE_FLAT || is_shape)) hide();
-	// For Shape types, fill_color is only meaningful when fill_enabled=true (otherwise outline_color is used).
-	if (name == "fill_color"   && !(is_mesh || is_arrow || _shape == CURVE_FLAT || (is_shape && _fill_enabled))) hide();
+	const bool curve_flat_style = is_curve && _is_curve_flat_style();
+	// fill_color shows on every category that has a fillable interior.
+	if (name == "fill_color" && !(is_mesh || is_arrow || curve_flat_style || is_shape)) hide();
 	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
 			|| _shape == MESH_DIAMOND);
@@ -720,25 +766,67 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Curve shape uses its own width; generic marker_size / outline_thickness don't apply.
 	if ((name == "marker_size" || name == "outline_thickness") && is_curve) hide();
 	// Curve-specific props.
-	if ((name == "curve" || name == "curve_width" || name == "curve_pattern"
+	if ((name == "curve" || name == "curve_preset" || name == "curve_length"
+			|| name == "curve_amplitude" || name == "curve_turns"
+			|| name == "curve_segments" || name == "curve_width"
+			|| name == "curve_pattern"
 			|| name == "dash_length" || name == "dash_gap"
 			|| name == "curve_start_cap" || name == "curve_end_cap"
 			|| name == "start_cap_size" || name == "end_cap_size"
 			|| name == "start_cap_linked" || name == "end_cap_linked"
 			|| name == "length_fraction") && !is_curve) hide();
-	// CURVE_LINE_3D ignores billboard-cap concepts — caps & dash patterns are
-	// flat-ribbon-only for now.
-	if ((name == "curve_pattern" || name == "dash_length" || name == "dash_gap"
-			|| name == "curve_start_cap" || name == "curve_end_cap"
-			|| name == "start_cap_size" || name == "end_cap_size"
-			|| name == "start_cap_linked" || name == "end_cap_linked")
-			&& _shape == CURVE_LINE_3D) hide();
-	if ((name == "dash_length" || name == "dash_gap") && _shape == CURVE_FLAT
+	// Curve subtype gating — `curve` resource only for CUSTOM;
+	// preset knobs only when the active subtype reads them.
+	if (is_curve) {
+		const bool is_custom = _curve_is_custom();
+		if (name == "curve" && !is_custom) hide();
+		// Sampled subtypes use _curve_segments. Linear ones (Line,
+		// Right Angle, Bezier) and Custom don't.
+		if (name == "curve_segments" && (is_custom
+				|| _shape == CURVE_LINE
+				|| _shape == CURVE_RIGHT_ANGLE
+				|| _shape == CURVE_BEZIER)) hide();
+		// Length: hidden on Arc (radius/sweep only) and on Custom.
+		if (name == "curve_length" && (is_custom || _shape == CURVE_ARC)) hide();
+		// Amplitude: hidden on plain Line (no secondary dim) and Custom.
+		if (name == "curve_amplitude" && (is_custom || _shape == CURVE_LINE)) hide();
+		// Turns: only Arc / Sine / Helix. Range tightens for Arc — sweep
+		// is `turns·π` rad, so >4 stops being meaningfully different
+		// (loops upon loops); fine step matters because users dial in
+		// quarters/halves/full circles. Sine and Helix keep the looser
+		// range since many cycles / many turns is a real use case.
+		if (name == "curve_turns") {
+			if (_shape != CURVE_ARC && _shape != CURVE_SINE && _shape != CURVE_HELIX) {
+				hide();
+			} else if (_shape == CURVE_ARC) {
+				p_property.hint        = PROPERTY_HINT_RANGE;
+				p_property.hint_string = "0.05,4.0,0.05";
+			} else {
+				p_property.hint        = PROPERTY_HINT_RANGE;
+				p_property.hint_string = "0.01,20.0,0.01,or_greater";
+			}
+		}
+		// Legacy aliases hard-code their style — no `curve_flat` toggle for them.
+		if (name == "curve_flat" && (_shape == CURVE_FLAT || _shape == CURVE_LINE_3D)) hide();
+	}
+	// Caps + patterns now apply to BOTH ribbon and 3D-tube. Just gate on
+	// the cap kind / pattern selector.
+	if ((name == "dash_length" || name == "dash_gap") && is_curve
 			&& _curve_pattern == CURVE_PATTERN_SOLID) hide();
-	if ((name == "start_cap_size" || name == "start_cap_linked") && _shape == CURVE_FLAT
+	if ((name == "start_cap_size" || name == "start_cap_linked") && is_curve
 			&& _curve_start_cap == CURVE_CAP_NONE) hide();
-	if ((name == "end_cap_size" || name == "end_cap_linked") && _shape == CURVE_FLAT
+	if ((name == "end_cap_size" || name == "end_cap_linked") && is_curve
 			&& _curve_end_cap == CURVE_CAP_NONE) hide();
+	// 3D tube treats CURVE_CAP_DOT as Round = same as None (the tube's
+	// natural hemisphere end already provides the round cap), so its
+	// per-cap size + linked controls don't apply.
+	const bool curve_3d_style = is_curve && !_is_curve_flat_style();
+	if (curve_3d_style) {
+		if ((name == "start_cap_size" || name == "start_cap_linked")
+				&& _curve_start_cap == CURVE_CAP_DOT) hide();
+		if ((name == "end_cap_size" || name == "end_cap_linked")
+				&& _curve_end_cap == CURVE_CAP_DOT) hide();
+	}
 
 	const bool is_figure = (_shape == FIGURE);
 	if ((name == "figure_height" || name == "figure_head_yaw"
@@ -764,6 +852,15 @@ void SuperMarker3D::_notification(int p_what) {
 			// instancer (e.g. MultiNode plugin's SuperMarkerHandler), the
 			// instancer flips this flag at scan time so the template
 			// doesn't double-render alongside its stamped copies.
+			//
+			// Normalize linked cap sizes here — scene-load assigns members
+			// directly and bypasses the setter mirror, so old scenes with
+			// `*_cap_linked = true` and a stale `y` (often 0 because the
+			// renderer used to ignore it) would render a degenerate cap
+			// the first time `linked` was toggled off. Forcing y := x at
+			// enter-tree gives every loaded marker a sane y starting point.
+			if (_start_cap_linked) _start_cap_size.y = _start_cap_size.x;
+			if (_end_cap_linked)   _end_cap_size.y   = _end_cap_size.x;
 			_rebuild_mesh(); _build_materials();
 			_ensure_instance(); _update_visibility(); _update_transform();
 			break;
@@ -835,7 +932,10 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 		case FLAT_CIRCLE: case FLAT_SQUARE: case FLAT_DIAMOND:
 		case FLAT_TRIANGLE: case FLAT_CAPSULE: case FLAT_X:
 			return TYPE_SHAPE;
-		case CURVE_FLAT: case CURVE_LINE_3D:
+		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
+		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
+		case CURVE_CUSTOM:
+		case CURVE_FLAT: case CURVE_LINE_3D: // legacy aliases
 			return TYPE_CURVE;
 		case ARROW_EXTRUDED: case ARROW_FLAT:
 			return TYPE_ARROW;
@@ -851,7 +951,7 @@ int SuperMarker3D::_type_first_subtype(int p_type) {
 		case TYPE_AXIS:   return AXIS_CROSS;
 		case TYPE_MESH:   return MESH_SPHERE;
 		case TYPE_SHAPE:  return FLAT_CIRCLE;
-		case TYPE_CURVE:  return CURVE_FLAT;
+		case TYPE_CURVE:  return CURVE_LINE;
 		case TYPE_ARROW:  return ARROW_EXTRUDED;
 		case TYPE_FIGURE: return FIGURE;
 		default:          return AXIS_CROSS;
@@ -882,27 +982,16 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 		_cap_top_material->set_shader_parameter("outline_color", _outline_color);
 	if (_cap_bot_material.is_valid())
 		_cap_bot_material->set_shader_parameter("outline_color", _outline_color);
-	// Shape types route fill color through fill_material; keep it in sync when fill_enabled=false.
-	if (get_type() == TYPE_SHAPE && !_fill_enabled && _fill_material.is_valid()) {
-		_fill_material->set_albedo(_outline_color);
-		_fill_material->set_transparency(_outline_color.a < 1.0f
-				? BaseMaterial3D::TRANSPARENCY_ALPHA : BaseMaterial3D::TRANSPARENCY_DISABLED);
-	}
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
 float SuperMarker3D::get_outline_thickness() const { return _outline_thickness; }
 
 void SuperMarker3D::set_fill_enabled(bool p) {
+	// Deprecated — kept so old scenes loading `fill_enabled = ...` don't
+	// emit unknown-property warnings. Fill is always on; alpha out
+	// fill_color to hide it instead.
 	_fill_enabled = p;
-	if (get_type() == TYPE_MESH) return;
-	if (get_type() == TYPE_SHAPE) {
-		// Geometry is always emitted; only the fill color changes.
-		_build_materials();
-		notify_property_list_changed(); // show/hide fill_color
-	} else {
-		SM_REBUILD();
-	}
 }
 bool SuperMarker3D::get_fill_enabled() const { return _fill_enabled; }
 void SuperMarker3D::set_fill_color(const Color &p) {
@@ -1097,6 +1186,240 @@ Ref<Curve3D> SuperMarker3D::get_curve() const { return _curve; }
 
 void SuperMarker3D::_on_curve_changed() { SM_REBUILD(); }
 
+void SuperMarker3D::set_curve_flat(bool p) {
+	if (_curve_flat == p) return;
+	_curve_flat = p;
+	notify_property_list_changed(); // toggling style hides/shows ribbon-only props
+	SM_REBUILD();
+}
+bool SuperMarker3D::get_curve_flat() const { return _curve_flat; }
+void SuperMarker3D::set_curve_length(float p)    { _curve_length    = MAX(0.0f, p); _preset_curve_dirty = true; SM_REBUILD(); }
+float SuperMarker3D::get_curve_length() const    { return _curve_length; }
+// Amplitude is signed — negative flips the curve across its primary axis
+// (Sine wave below the line, Arc curving the other way, Helix reversing
+// chirality, Bezier S-curve mirrored). Length stays non-negative.
+void SuperMarker3D::set_curve_amplitude(float p) { _curve_amplitude = p; _preset_curve_dirty = true; SM_REBUILD(); }
+float SuperMarker3D::get_curve_amplitude() const { return _curve_amplitude; }
+void SuperMarker3D::set_curve_turns(float p)     { _curve_turns     = MAX(0.01f, p); _preset_curve_dirty = true; SM_REBUILD(); }
+float SuperMarker3D::get_curve_turns() const     { return _curve_turns; }
+void SuperMarker3D::set_curve_segments(int p)    { _curve_segments  = CLAMP(p, 4, 256); _preset_curve_dirty = true; SM_REBUILD(); }
+int  SuperMarker3D::get_curve_segments() const   { return _curve_segments; }
+
+bool SuperMarker3D::_is_curve_subtype(int s) {
+	switch (s) {
+		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
+		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
+		case CURVE_CUSTOM:
+		case CURVE_FLAT: case CURVE_LINE_3D:
+			return true;
+		default:
+			return false;
+	}
+}
+
+bool SuperMarker3D::_is_curve_flat_style() const {
+	if (_shape == CURVE_FLAT)    return true;   // legacy: flat ribbon
+	if (_shape == CURVE_LINE_3D) return false;  // legacy: 3D tube
+	return _curve_flat;
+}
+
+bool SuperMarker3D::_curve_is_custom() const {
+	return _shape == CURVE_CUSTOM || _shape == CURVE_FLAT || _shape == CURVE_LINE_3D;
+}
+
+// ---------------------------------------------------------------------------
+// Mesh / collider export. The renderer keeps geometry across two
+// places — the primary `_mesh` (everything except Axis) and the per-arm
+// `_arm_meshes` array (Axis subtypes draw each arm as its own mesh
+// instance so the renderer z-sorts them independently). These helpers
+// fold both into a single output. Geometry is marker-local; callers
+// applying the marker's global_transform get the world-space result.
+// ---------------------------------------------------------------------------
+
+// Walk every surface across `_mesh` + `_arm_meshes`. `f` receives
+// (primitive_type, surface_arrays) for each surface. Skips null mesh
+// refs and surfaces with no vertex array.
+template <typename F>
+static void _for_each_surface(const Ref<ArrayMesh> &primary,
+		const Vector<Ref<ArrayMesh>> &arms, F &&f) {
+	auto run = [&](const Ref<ArrayMesh> &m) {
+		if (m.is_null()) return;
+		for (int i = 0; i < m->get_surface_count(); i++) {
+			Array a = m->surface_get_arrays(i);
+			if (a.size() <= Mesh::ARRAY_VERTEX) continue;
+			Variant vv = a[Mesh::ARRAY_VERTEX];
+			if (vv.get_type() != Variant::PACKED_VECTOR3_ARRAY) continue;
+			f((Mesh::PrimitiveType)m->surface_get_primitive_type(i), a);
+		}
+	};
+	run(primary);
+	for (int i = 0; i < arms.size(); i++) run(arms[i]);
+}
+
+Ref<ArrayMesh> SuperMarker3D::export_mesh() const {
+	Ref<ArrayMesh> out;
+	out.instantiate();
+	_for_each_surface(_mesh, _arm_meshes,
+			[&](Mesh::PrimitiveType prim, Array a) {
+		out->add_surface_from_arrays(prim, a);
+	});
+	return out;
+}
+
+Ref<ConvexPolygonShape3D> SuperMarker3D::export_convex_shape() const {
+	// All triangle-vertex positions feed into the hull builder. PRIMITIVE_LINES
+	// surfaces (axis arms at thickness=0, dashed-fill ribbons) are skipped —
+	// hulls of line points are degenerate.
+	PackedVector3Array points;
+	_for_each_surface(_mesh, _arm_meshes,
+			[&](Mesh::PrimitiveType prim, Array a) {
+		if (prim != Mesh::PRIMITIVE_TRIANGLES) return;
+		PackedVector3Array v = a[Mesh::ARRAY_VERTEX];
+		points.append_array(v);
+	});
+	Ref<ConvexPolygonShape3D> shape;
+	shape.instantiate();
+	shape->set_points(points);
+	return shape;
+}
+
+Ref<ConcavePolygonShape3D> SuperMarker3D::export_concave_shape() const {
+	// ConcavePolygonShape3D wants a flat triangle soup — 3 vertices per
+	// triangle. PRIMITIVE_TRIANGLES surfaces are already in that order;
+	// indexed surfaces (rare here, but possible) get expanded.
+	PackedVector3Array faces;
+	_for_each_surface(_mesh, _arm_meshes,
+			[&](Mesh::PrimitiveType prim, Array a) {
+		if (prim != Mesh::PRIMITIVE_TRIANGLES) return;
+		PackedVector3Array v = a[Mesh::ARRAY_VERTEX];
+		PackedInt32Array idx;
+		if (a.size() > Mesh::ARRAY_INDEX) {
+			Variant iv = a[Mesh::ARRAY_INDEX];
+			if (iv.get_type() == Variant::PACKED_INT32_ARRAY) idx = iv;
+		}
+		if (idx.size() > 0) {
+			for (int k = 0; k < idx.size(); k++) faces.push_back(v[idx[k]]);
+		} else {
+			faces.append_array(v);
+		}
+	});
+	Ref<ConcavePolygonShape3D> shape;
+	shape.instantiate();
+	shape->set_faces(faces);
+	return shape;
+}
+
+// Public — returns a deep copy so the caller (script saving to .tres,
+// Path3D follower, etc.) can mutate it freely without touching the
+// marker's internal state. CUSTOM-subtype callers get a duplicate of
+// `_curve`; preset subtypes get a duplicate of the cached preset curve.
+Ref<Curve3D> SuperMarker3D::get_active_curve() const {
+	Ref<Curve3D> src = _get_active_curve();
+	if (src.is_null()) {
+		Ref<Curve3D> empty;
+		empty.instantiate();
+		return empty;
+	}
+	return src->duplicate();
+}
+
+Ref<Curve3D> SuperMarker3D::_get_active_curve() const {
+	if (_curve_is_custom()) return _curve;
+	if (_preset_curve_dirty || _preset_curve.is_null()) {
+		_preset_curve = _make_preset_curve();
+		_preset_curve_dirty = false;
+	}
+	return _preset_curve;
+}
+
+// Build a fresh Curve3D for the active preset. Each preset writes points
+// in marker-local space; the user rotates/translates the SuperMarker3D
+// node itself to orient the path. Sampled presets (Arc/Sine/Helix) lay
+// down `_curve_segments+1` points with default in/out tangents — at the
+// sample density we use Curve3D's piecewise-linear interpretation reads
+// as a smooth curve. Bezier uses Curve3D's own cubic interpolation via
+// per-point in/out tangents (only 2 points needed).
+Ref<Curve3D> SuperMarker3D::_make_preset_curve() const {
+	Ref<Curve3D> c;
+	c.instantiate();
+	// Tighter bake interval than Curve3D's 0.2 m default — the renderer
+	// samples baked length, so a coarse interval would smooth out fine
+	// detail (sine peaks, helix turns) the user explicitly dialled in.
+	c->set_bake_interval(0.05f);
+
+	const int   N    = MAX(4, _curve_segments);
+	const float L    = _curve_length;
+	const float A    = _curve_amplitude;
+	const float T    = _curve_turns;
+	const Vector3 Z3 = Vector3();
+
+	switch (_shape) {
+		case CURVE_LINE: {
+			// Straight segment along +X. Two points, linear.
+			c->add_point(Z3, Z3, Z3);
+			c->add_point(Vector3(L, 0, 0), Z3, Z3);
+		} break;
+
+		case CURVE_RIGHT_ANGLE: {
+			// L-bend: out along +X for `length`, then turn +Z for `amplitude`.
+			c->add_point(Z3, Z3, Z3);
+			c->add_point(Vector3(L, 0, 0), Z3, Z3);
+			c->add_point(Vector3(L, 0, A), Z3, Z3);
+		} break;
+
+		case CURVE_ARC: {
+			// Arc in the XZ plane, radius = amplitude, sweep = turns·π
+			// radians (turns=1 → semicircle, turns=0.5 → quarter, turns=2
+			// → full circle). Centred so the arc starts at the origin
+			// pointing along +X and curves toward +Z.
+			const float sweep = T * SM_PI;
+			for (int i = 0; i <= N; i++) {
+				const float u = (float)i / (float)N;
+				const float a = u * sweep;
+				// Centre at (0, 0, A); start point (sin 0, _, -cos 0 + 1) = (0, 0, 0).
+				const Vector3 p(A * std::sin(a), 0.0f, A * (1.0f - std::cos(a)));
+				c->add_point(p, Z3, Z3);
+			}
+		} break;
+
+		case CURVE_SINE: {
+			// Sine wave along +X, amplitude in +Z, `turns` cycles.
+			for (int i = 0; i <= N; i++) {
+				const float u = (float)i / (float)N;
+				const float x = u * L;
+				const float z = A * std::sin(SM_TAU * T * u);
+				c->add_point(Vector3(x, 0, z), Z3, Z3);
+			}
+		} break;
+
+		case CURVE_HELIX: {
+			// Helix: rises along +Y by `length`, radius = amplitude in
+			// the XZ plane, completes `turns` full revolutions.
+			for (int i = 0; i <= N; i++) {
+				const float u = (float)i / (float)N;
+				const float a = SM_TAU * T * u;
+				const Vector3 p(A * std::cos(a), u * L, A * std::sin(a));
+				c->add_point(p, Z3, Z3);
+			}
+		} break;
+
+		case CURVE_BEZIER: {
+			// Smooth S-curve between (0,0,0) and (length,0,0). Tangents
+			// push out-of-plane in +Z at the start and -Z at the end, so
+			// `amplitude` controls the bend depth.
+			c->add_point(Z3, Vector3(0, 0, -A), Vector3(0, 0, A));
+			c->add_point(Vector3(L, 0, 0), Vector3(0, 0, -A), Vector3(0, 0, A));
+		} break;
+
+		default:
+			// CURVE_CUSTOM (and the legacy aliases) route through `_curve`
+			// in `_get_active_curve` and never call this builder. Fall
+			// through to an empty Curve3D so any misuse degrades gracefully.
+			break;
+	}
+	return c;
+}
+
 void SuperMarker3D::set_curve_width(float p)    { _curve_width = MAX(0.001f, p); SM_REBUILD(); }
 float SuperMarker3D::get_curve_width() const    { return _curve_width; }
 void SuperMarker3D::set_curve_pattern(int p)    { _curve_pattern = p; notify_property_list_changed(); SM_REBUILD(); }
@@ -1112,19 +1435,35 @@ int  SuperMarker3D::get_curve_end_cap() const   { return _curve_end_cap; }
 // Setters DO NOT slave Y=X when linked. Linked is a render-time flag:
 // when true, the generator uses X alone and ignores Y. The inspector can
 // show any (X, Y) without values snapping back — predictable editing.
+// Cap-size setters mirror y := x while `_*_cap_linked` is true so the
+// stored Vector2 always reflects what the renderer will use. Without
+// this mirror, toggling a "linked" cap off would expose whatever stale
+// y was last typed (often 0) and the cap would visually collapse.
 void SuperMarker3D::set_start_cap_size(const Vector2 &p) {
-	_start_cap_size = Vector2(MAX(0.0f, p.x), MAX(0.0f, p.y));
+	const float x = MAX(0.0f, p.x);
+	const float y = _start_cap_linked ? x : MAX(0.0f, p.y);
+	_start_cap_size = Vector2(x, y);
 	SM_REBUILD();
 }
 Vector2 SuperMarker3D::get_start_cap_size() const { return _start_cap_size; }
 void SuperMarker3D::set_end_cap_size(const Vector2 &p) {
-	_end_cap_size = Vector2(MAX(0.0f, p.x), MAX(0.0f, p.y));
+	const float x = MAX(0.0f, p.x);
+	const float y = _end_cap_linked ? x : MAX(0.0f, p.y);
+	_end_cap_size = Vector2(x, y);
 	SM_REBUILD();
 }
 Vector2 SuperMarker3D::get_end_cap_size() const { return _end_cap_size; }
-void SuperMarker3D::set_start_cap_linked(bool p) { _start_cap_linked = p; SM_REBUILD(); }
+void SuperMarker3D::set_start_cap_linked(bool p) {
+	_start_cap_linked = p;
+	if (p) _start_cap_size.y = _start_cap_size.x;
+	SM_REBUILD();
+}
 bool SuperMarker3D::get_start_cap_linked() const { return _start_cap_linked; }
-void SuperMarker3D::set_end_cap_linked(bool p) { _end_cap_linked = p; SM_REBUILD(); }
+void SuperMarker3D::set_end_cap_linked(bool p) {
+	_end_cap_linked = p;
+	if (p) _end_cap_size.y = _end_cap_size.x;
+	SM_REBUILD();
+}
 bool SuperMarker3D::get_end_cap_linked() const { return _end_cap_linked; }
 void SuperMarker3D::set_length_fraction(float p){ _length_fraction = CLAMP(p, 0.0f, 1.0f); SM_REBUILD(); }
 float SuperMarker3D::get_length_fraction() const{ return _length_fraction; }
@@ -1372,10 +1711,11 @@ void SuperMarker3D::_build_materials() {
 	// (CULL_DISABLED caused arrowhead hollow interiors to show, and caused
 	// Z-fighting at tube panel edges). always_on_top is intentionally NOT
 	// part of this decision — it only toggles depth-test, nothing else.
-	const bool is_mesh_type  = (get_type() == TYPE_MESH);
-	const bool is_shape_type = (get_type() == TYPE_SHAPE);
+	const bool is_mesh_type   = (get_type() == TYPE_MESH);
+	const bool is_shape_type  = (get_type() == TYPE_SHAPE);
+	const bool is_curve_flat  = (get_type() == TYPE_CURVE) && _is_curve_flat_style();
 	BaseMaterial3D::CullMode wire_cull;
-	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type || is_mesh_type) {
+	if (_shape == ARROW_FLAT || is_curve_flat || is_shape_type || is_mesh_type) {
 		wire_cull = BaseMaterial3D::CULL_DISABLED;
 	} else {
 		wire_cull = BaseMaterial3D::CULL_BACK;
@@ -1409,12 +1749,14 @@ void SuperMarker3D::_build_materials() {
 			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
-	// Shape types: fill_enabled=false → solid outline_color fill; hollow = alpha fill_color.
-	const Color &fill_albedo = (is_shape_type && !_fill_enabled) ? _outline_color : _fill_color;
+	// Fill albedo is the user's fill_color across every type; alpha it out
+	// to hide the interior. (Pre-1.0 had a `fill_enabled` toggle that
+	// substituted outline_color when off — removed; alpha replaces it.)
+	const Color &fill_albedo = _fill_color;
 	_fill_material->set_albedo(fill_albedo);
 	// Flat shapes (flat arrow, curve ribbon, Shape-category icons) use CULL_DISABLED
 	// so both sides render. 3D fills use CULL_BACK.
-	const bool flat_shape = (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type);
+	const bool flat_shape = (_shape == ARROW_FLAT || is_curve_flat || is_shape_type);
 	_fill_material->set_cull_mode(flat_shape
 			? BaseMaterial3D::CULL_DISABLED
 			: BaseMaterial3D::CULL_BACK);
@@ -1632,8 +1974,8 @@ void SuperMarker3D::_build_materials() {
 				_mesh->surface_set_material(i, _outline_material);
 			}
 			const bool any_fill_capable = (_shape == ARROW_EXTRUDED || _shape == ARROW_FLAT
-					|| _shape == CURVE_FLAT || is_shape_type);
-			if (any_fill_capable && _fill_enabled && sc > 0) {
+					|| (get_type() == TYPE_CURVE && _is_curve_flat_style()) || is_shape_type);
+			if (any_fill_capable && sc > 0) {
 				_mesh->surface_set_material(sc - 1, _fill_material);
 			}
 		}
@@ -2265,10 +2607,8 @@ void SuperMarker3D::_gen_silhouette_diamond(GeoBuf &geo) const {
 		geo.add_line(top, right); geo.add_line(right, btm);
 		geo.add_line(btm, left);  geo.add_line(left, top);
 	}
-	if (_fill_enabled) {
-		geo.add_triangle(top, right, btm);
-		geo.add_triangle(top, btm, left);
-	}
+	geo.add_triangle(top, right, btm);
+	geo.add_triangle(top, btm, left);
 }
 
 void SuperMarker3D::_gen_silhouette_sphere(GeoBuf &geo) const {
@@ -2290,10 +2630,8 @@ void SuperMarker3D::_gen_silhouette_sphere(GeoBuf &geo) const {
 		for (int i = 0; i < N; i++) geo.add_line(ring[i], ring[(i + 1) % N]);
 	}
 
-	if (_fill_enabled) {
-		for (int i = 0; i < N; i++)
-			geo.add_triangle(Vector3(), ring[i], ring[(i + 1) % N]);
-	}
+	for (int i = 0; i < N; i++)
+		geo.add_triangle(Vector3(), ring[i], ring[(i + 1) % N]);
 }
 
 void SuperMarker3D::_gen_silhouette_cube(GeoBuf &geo) const {
@@ -2310,10 +2648,8 @@ void SuperMarker3D::_gen_silhouette_cube(GeoBuf &geo) const {
 		geo.add_line(bl, br); geo.add_line(br, tr);
 		geo.add_line(tr, tl); geo.add_line(tl, bl);
 	}
-	if (_fill_enabled) {
-		geo.add_triangle(bl, br, tr);
-		geo.add_triangle(bl, tr, tl);
-	}
+	geo.add_triangle(bl, br, tr);
+	geo.add_triangle(bl, tr, tl);
 }
 
 // AXIS_PLAIN — 6 cardinal axes (±X ±Y ±Z) in outline_color, lengths
@@ -2336,45 +2672,148 @@ void SuperMarker3D::_gen_axis_xyz(GeoBuf &/*geo*/) const {
 }
 
 // ---------------------------------------------------------------------------
-// Curve Line 3D — tube extrusion along a Curve3D resource. No billboarding,
-// no caps, no dash patterns: a true 3D line. Honors `length_fraction` for
-// progressive reveal and uses `curve_width` as the tube radius. Sampling
-// step is set so segments are roughly twice the tube radius (smooth at
-// any tube width without ballooning the vertex count).
+// Curve 3D Line — tube extrusion along a Curve3D resource. Three patterns:
+//   SOLID — continuous tube + sphere blobs at joints / endpoints.
+//   DASH  — tube sub-segments separated by gap (no fill in gaps; the
+//           tube is what carries colour, gaps stay empty).
+//   DOT   — spheres of radius `curve_width/2` spaced along the path.
+// End caps mirror the flat ribbon's enum — Arrow / Line / Round (Dot).
+// In 3D, "Dot" is naturally a round hemisphere already provided by the
+// tube's end blob, so it acts the same as None.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
-	if (_curve.is_null()) return;
-	const float L_total = _curve->get_baked_length();
+	Ref<Curve3D> active = _get_active_curve();
+	if (active.is_null()) return;
+	const float L_total = active->get_baked_length();
 	if (L_total <= 0.0001f) return;
 	const float L = L_total * CLAMP(_length_fraction, 0.0f, 1.0f);
 	if (L <= 0.0001f) return;
 
 	const float radius = MAX(0.001f, _curve_width * 0.5f);
-	// Step ≈ 2 * radius keeps each tube segment about the same length as
-	// its diameter — smooth bends without runaway segment counts on long
-	// curves. Cap the upper bound so very straight, very long curves still
-	// produce at least a handful of segments.
-	const float step = MAX(radius * 2.0f, L / 256.0f);
-	const int segments = MAX(1, (int)Math::ceil(L / step));
-
-	// Tubes joined endpoint-to-endpoint don't share vertices, so the
-	// junction shows a faceted ring. A small sphere blob at each interior
-	// joint hides that — same trick the cube/diamond shapes use for
-	// corner rounding. Caps at the start and end too.
 	const int sides = 6;
-	Vector3 prev = _curve->sample_baked(0.0f, true);
-	_add_sphere_blob(geo, prev, radius, 4, sides);
-	for (int i = 1; i <= segments; i++) {
-		float s = (float)i / segments * L;
-		Vector3 p = _curve->sample_baked(s, true);
-		_add_tube(geo, prev, p, radius, sides);
-		// Skip the joint blob on the very last segment — the end cap
-		// blob below covers it.
-		if (i < segments) _add_sphere_blob(geo, p, radius, 3, sides);
-		prev = p;
+
+	// Step ≈ 2 * radius — keeps each sub-tube about as long as its
+	// diameter, so curves stay smooth without runaway vertex counts.
+	auto step_for = [radius](float seg_len) {
+		return MAX(radius * 2.0f, seg_len / 256.0f);
+	};
+
+	// Tangent at arc-length s, for end-cap orientation.
+	auto tangent_at = [&](float s) -> Vector3 {
+		const float eps = MIN(0.05f, L * 0.01f + 0.0001f);
+		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps), true);
+		Vector3 pb = active->sample_baked(MIN(L,    s + eps), true);
+		Vector3 t = pb - pa;
+		if (t.length_squared() < 1e-8f) return Vector3(0, 0, 1);
+		return t.normalized();
+	};
+
+	// Helper: emit a tube run from arc-length sa→sb with hemisphere
+	// caps at both ends + interior joint blobs.
+	auto emit_tube_run = [&](float sa, float sb) {
+		const float seg_len = sb - sa;
+		if (seg_len < 1e-4f) return;
+		const float step = step_for(seg_len);
+		const int subs = MAX(1, (int)Math::ceil(seg_len / step));
+		Vector3 prev = active->sample_baked(sa, true);
+		_add_sphere_blob(geo, prev, radius, 4, sides);
+		for (int i = 1; i <= subs; i++) {
+			float s = sa + seg_len * (float)i / subs;
+			Vector3 p = active->sample_baked(s, true);
+			_add_tube(geo, prev, p, radius, sides);
+			if (i < subs) _add_sphere_blob(geo, p, radius, 3, sides);
+			prev = p;
+		}
+		_add_sphere_blob(geo, prev, radius, 4, sides);
+	};
+
+	// Pattern dispatch.
+	if (_curve_pattern == CURVE_PATTERN_DOT) {
+		// Sphere stamps. Cycle = diameter + gap → spheres just touch
+		// when gap = 0 and space out as gap grows.
+		const float gap   = MAX(0.001f, _dash_gap);
+		const float cycle = (radius * 2.0f) + gap;
+		for (float s = radius; s <= L - radius + 1e-4f; s += cycle) {
+			_add_sphere_blob(geo, active->sample_baked(s, true), radius, 4, sides);
+		}
+	} else if (_curve_pattern == CURVE_PATTERN_DASH) {
+		// Tube sub-segments separated by gaps. No geometry in the gaps —
+		// 3D dash is just the absence of tube, the user can't see colour
+		// behind it the way the flat ribbon's "fill" surface is used.
+		const float dash  = MAX(0.001f, _dash_length);
+		const float gap   = MAX(0.001f, _dash_gap);
+		const float cycle = dash + gap;
+		for (float s = 0.0f; s < L; s += cycle) {
+			emit_tube_run(s, MIN(s + dash, L));
+		}
+	} else { // SOLID
+		emit_tube_run(0.0f, L);
 	}
-	_add_sphere_blob(geo, prev, radius, 4, sides);
+
+	// End caps apply to every pattern — Dash/Dot still benefit from
+	// arrow / line stamps marking the path's endpoints, and Round (Dot
+	// kind) is a no-op because the tube already closes with a hemisphere.
+	auto emit_3d_cap = [&](int kind, float s, bool is_start,
+			const Vector2 &sz, bool linked) {
+		if (kind == CURVE_CAP_NONE || kind == CURVE_CAP_DOT) return;
+		const Vector3 p = active->sample_baked(s, true);
+		Vector3 dir = tangent_at(s);
+		if (is_start) dir = -dir;
+		const float sx = MAX(0.0f, sz.x);
+		const float sy = linked ? sx : MAX(0.0f, sz.y);
+
+		Vector3 up    = Math::abs(dir.dot(Vector3(0,1,0))) < 0.9f
+				? Vector3(0,1,0) : Vector3(1,0,0);
+		Vector3 right = dir.cross(up).normalized();
+		Vector3 up_p  = right.cross(dir).normalized();
+
+		if (kind == CURVE_CAP_ARROW) {
+			// 3D cone: base radius sx flush at endpoint, apex at +dir·sy.
+			// Wound (b0, b1, tip) — CCW from outside under the flipped
+			// convention shared with the axis arrowhead.
+			const Vector3 tip = p + dir * sy;
+			const int N = 12;
+			for (int i = 0; i < N; i++) {
+				float t0 = SM_TAU * (float)i / N;
+				float t1 = SM_TAU * (float)(i + 1) / N;
+				Vector3 d0 = std::cos(t0) * right + std::sin(t0) * up_p;
+				Vector3 d1 = std::cos(t1) * right + std::sin(t1) * up_p;
+				Vector3 b0 = p + d0 * sx, b1 = p + d1 * sx;
+				Vector3 face_n = ((tip - b0).cross(b1 - b0)).normalized();
+				Vector3 mid = (d0 + d1) * 0.5f;
+				if (face_n.dot(mid) < 0.0f) face_n = -face_n;
+				// Base disk first (covered by slant when overlapped on
+				// screen — same draw-order trick the axis arrowhead uses).
+				Vector3 back_n = -dir;
+				geo.outline_verts.push_back(p);  geo.outline_normals.push_back(back_n);
+				geo.outline_verts.push_back(b1); geo.outline_normals.push_back(back_n);
+				geo.outline_verts.push_back(b0); geo.outline_normals.push_back(back_n);
+				// Slant.
+				geo.outline_verts.push_back(b0);  geo.outline_normals.push_back(face_n);
+				geo.outline_verts.push_back(b1);  geo.outline_normals.push_back(face_n);
+				geo.outline_verts.push_back(tip); geo.outline_normals.push_back(face_n);
+			}
+		} else if (kind == CURVE_CAP_LINE) {
+			// Perpendicular tube bar at endpoint. Use the horizontal
+			// perpendicular (world-up × tangent) so the bar lies in the
+			// XZ plane rather than being driven by the tangent's
+			// arbitrary `up_p`. Matches the flat ribbon's perp choice.
+			// Linked = SYMMETRIC (both halves of length sx); unlinked
+			// = independent legs (sx on the −perp side, sy on the +perp).
+			Vector3 perp;
+			Vector3 wup(0, 1, 0);
+			if (Math::abs(dir.dot(wup)) > 0.98f) perp = Vector3(1, 0, 0);
+			else perp = wup.cross(dir).normalized();
+			Vector3 lo = linked ? (p - perp * sx) : (p - perp * sx);
+			Vector3 hi = linked ? (p + perp * sx) : (p + perp * sy);
+			_add_tube(geo, lo, hi, radius, sides);
+			_add_sphere_blob(geo, lo, radius, 3, sides);
+			_add_sphere_blob(geo, hi, radius, 3, sides);
+		}
+	};
+	emit_3d_cap(_curve_start_cap, 0.0f, true,  _start_cap_size, _start_cap_linked);
+	emit_3d_cap(_curve_end_cap,   L,    false, _end_cap_size,   _end_cap_linked);
 }
 
 // ---------------------------------------------------------------------------
@@ -2507,11 +2946,9 @@ void SuperMarker3D::_gen_arrow(GeoBuf &geo) const {
 		}
 	}
 
-	// Fill
-	if (_fill_enabled) {
-		_cone_fill(geo, tip, shaft_end, Vector3(0,0,-1), hw, CONE_SEGS, true);
-		if (tl > 0.0f) _cone_fill(geo, Vector3(0,0,tl), origin, Vector3(0,0,1), hw*1.2f, CONE_SEGS, true);
-	}
+	// Fill — always emitted; alpha out fill_color to hide.
+	_cone_fill(geo, tip, shaft_end, Vector3(0,0,-1), hw, CONE_SEGS, true);
+	if (tl > 0.0f) _cone_fill(geo, Vector3(0,0,tl), origin, Vector3(0,0,1), hw*1.2f, CONE_SEGS, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -2828,12 +3265,10 @@ void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
 	Vector3 bl2(-hw, 0, se),  br2(hw, 0, se);
 	Vector3 tip(0,  0, total);
 
-	// Fill
-	if (_fill_enabled) {
-		geo.add_triangle(bl,  br,  sr);
-		geo.add_triangle(bl,  sr,  sl);
-		geo.add_triangle(bl2, br2, tip);
-	}
+	// Fill — always emitted; alpha out fill_color to hide.
+	geo.add_triangle(bl,  br,  sr);
+	geo.add_triangle(bl,  sr,  sl);
+	geo.add_triangle(bl2, br2, tip);
 
 	// Outline — perimeter as flat edge quads + disc corners (if thickness > 0) or lines (if 0)
 	if (ew > 0.0f) {
@@ -2866,8 +3301,9 @@ void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
-	if (_curve.is_null()) return;
-	const float L = _curve->get_baked_length();
+	Ref<Curve3D> active = _get_active_curve();
+	if (active.is_null()) return;
+	const float L = active->get_baked_length();
 	if (L < 0.0001f) return;
 	const float L_end = L * CLAMP(_length_fraction, 0.0f, 1.0f);
 	if (L_end < 0.0001f) return;
@@ -2876,15 +3312,15 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	const float half_w = width * 0.5f;
 
 	// Tessellation step — use curve's bake_interval, with a floor for safety.
-	float step = _curve->get_bake_interval();
+	float step = active->get_bake_interval();
 	if (step < 0.01f) step = 0.2f;
 
 	// Perpendicular at arc-length s (ribbon-right vector in the horizontal plane).
 	// Tangent is estimated by a small central finite difference on the baked curve.
 	auto perp_at = [&](float s) -> Vector3 {
 		const float eps = MIN(0.05f, L * 0.01f + 0.0001f);
-		Vector3 pa = _curve->sample_baked(MAX(0.0f, s - eps), true);
-		Vector3 pb = _curve->sample_baked(MIN(L,    s + eps), true);
+		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps), true);
+		Vector3 pb = active->sample_baked(MIN(L,    s + eps), true);
 		Vector3 tan = pb - pa;
 		if (tan.length_squared() < 1e-8f) return Vector3(1, 0, 0);
 		tan.normalize();
@@ -2908,8 +3344,8 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		for (int k = 0; k < subs; k++) {
 			float s0 = sa + (sb - sa) * (float)k / (float)subs;
 			float s1 = sa + (sb - sa) * (float)(k + 1) / (float)subs;
-			Vector3 p0 = _curve->sample_baked(s0, true);
-			Vector3 p1 = _curve->sample_baked(s1, true);
+			Vector3 p0 = active->sample_baked(s0, true);
+			Vector3 p1 = active->sample_baked(s1, true);
 			Vector3 r0 = perp_at(s0) * half_w;
 			Vector3 r1 = perp_at(s1) * half_w;
 			Vector3 v0 = p0 - r0, v1 = p0 + r0, v2 = p1 + r1, v3 = p1 - r1;
@@ -2922,22 +3358,62 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		}
 	};
 
-	// Pattern walk. SOLID = one span, no gaps. DASH/DOT = alternating on/off
-	// spans; "off" (gap) spans emit to the fill surface so users can give them
-	// an alternate color — or leave fill transparent for invisible gaps.
+	// Pattern walk.
+	//   SOLID — one span, no gaps.
+	//   DASH  — alternating on/off rectangular ribbon spans.
+	//   DOT   — round disc stamps centred on the curve, spaced by gap.
+	// "Off" (gap) regions in DASH always emit to the fill surface so the
+	// user gets an alternate-colour or alpha-hidden gap from fill_color.
 	if (_curve_pattern == CURVE_PATTERN_SOLID) {
 		emit_segment(0.0f, L_end, true);
-	} else {
-		const float dash = (_curve_pattern == CURVE_PATTERN_DOT) ? width : MAX(0.001f, _dash_length);
-		const float gap  = MAX(0.001f, _dash_gap);
+	} else if (_curve_pattern == CURVE_PATTERN_DOT) {
+		// Disc per stamp — radius = curve_width/2, lying in the ribbon
+		// plane (XZ, normal +Y). Cycle stride = diameter + gap, so dots
+		// just touch when gap = 0 and space out as gap grows.
+		const float radius = half_w;
+		const float gap    = MAX(0.001f, _dash_gap);
+		const float cycle  = (radius * 2.0f) + gap;
+		const int   DISC_SEGS = 16;
+		for (float s = radius; s <= L_end - radius + 1e-4f; s += cycle) {
+			Vector3 c = active->sample_baked(s, true);
+			for (int i = 0; i < DISC_SEGS; i++) {
+				const float a0 = SM_TAU * (float)i / DISC_SEGS;
+				const float a1 = SM_TAU * (float)(i + 1) / DISC_SEGS;
+				Vector3 p0 = c + Vector3(std::cos(a0), 0, std::sin(a0)) * radius;
+				Vector3 p1 = c + Vector3(std::cos(a1), 0, std::sin(a1)) * radius;
+				geo.outline_verts.push_back(c);  geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(p0); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(p1); geo.outline_normals.push_back(n);
+			}
+		}
+	} else { // DASH
+		const float dash  = MAX(0.001f, _dash_length);
+		const float gap   = MAX(0.001f, _dash_gap);
 		const float cycle = dash + gap;
-		const bool emit_gaps = _fill_enabled;
 		for (float s = 0.0f; s < L_end; s += cycle) {
 			const float on_end  = MIN(s + dash,  L_end);
 			emit_segment(s, on_end, true);
-			if (emit_gaps) {
-				const float off_end = MIN(s + cycle, L_end);
-				emit_segment(on_end, off_end, false);
+			const float off_end = MIN(s + cycle, L_end);
+			emit_segment(on_end, off_end, false);
+		}
+	}
+
+	// Corner discs at every INTERIOR curve point. The ribbon is built
+	// from per-segment quads whose perpendicular flips abruptly at sharp
+	// turns (Right Angle's L-bend, hand-authored polylines), producing
+	// a visible inner overlap + outer gap. A disc of radius half_w
+	// stamped at each pivot fills the outer gap and covers the inner
+	// overlap; both share `outline_color`, so any z-fighting between
+	// the disc and ribbon quads renders the same colour. Skipped on
+	// dashed/dotted patterns (the gaps already break visual continuity)
+	// and on smoothly-sampled presets (no abrupt perp flip).
+	if (_curve_pattern == CURVE_PATTERN_SOLID) {
+		const bool sampled_smooth = (_shape == CURVE_ARC || _shape == CURVE_SINE
+				|| _shape == CURVE_HELIX || _shape == CURVE_BEZIER);
+		if (!sampled_smooth) {
+			const int pc = active->get_point_count();
+			for (int i = 1; i < pc - 1; i++) {
+				_add_disc_blob(geo, active->get_point_position(i), half_w, 16);
 			}
 		}
 	}
@@ -2955,10 +3431,10 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	// predictable now.
 	auto emit_cap = [&](int cap, float s, bool is_start, const Vector2 &sz, bool linked) {
 		if (cap == CURVE_CAP_NONE) return;
-		Vector3 p = _curve->sample_baked(s, true);
+		Vector3 p = active->sample_baked(s, true);
 		const float eps = MIN(0.05f, L * 0.01f + 0.0001f);
-		Vector3 pa = _curve->sample_baked(MAX(0.0f, s - eps), true);
-		Vector3 pb = _curve->sample_baked(MIN(L,    s + eps), true);
+		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps), true);
+		Vector3 pb = active->sample_baked(MIN(L,    s + eps), true);
 		Vector3 tan = pb - pa;
 		Vector3 out(0, 0, 1);
 		if (tan.length_squared() > 1e-8f) out = tan.normalized();
@@ -2999,12 +3475,12 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 			}
 		} else if (cap == CURVE_CAP_LINE) {
 			// Perpendicular bar. Thickness = curve_width (same as main ribbon).
-			// Linked: one-sided from endpoint, length = sx in +perp direction.
-			// Unlinked: two-sided, sx in -perp, sy in +perp. Setting one ~0 gives
-			// the asymmetric "one lane" / long-diagram-arm cap.
+			// Linked: SYMMETRIC (sx in -perp + sx in +perp); both halves
+			// visible. Unlinked: independent (sx left, sy right) so the
+			// user can dial in the asymmetric "one-lane" / long-arm cap.
 			Vector3 left_end, right_end;
 			if (linked) {
-				left_end  = p;
+				left_end  = p - right * sx;
 				right_end = p + right * sx;
 			} else {
 				left_end  = p - right * sx;
@@ -3340,8 +3816,13 @@ void SuperMarker3D::_rebuild_mesh() {
 		case FLAT_CAPSULE:    _gen_flat_capsule(geo);  break;
 		case FLAT_X:          _gen_flat_x(geo);        break;
 		case ARROW_FLAT:      _gen_flat_arrow(geo);  break;
-		case CURVE_FLAT:      _gen_curve(geo);       break;
-		case CURVE_LINE_3D:   _gen_curve_line_3d(geo); break;
+		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
+		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
+		case CURVE_CUSTOM:
+		case CURVE_FLAT: case CURVE_LINE_3D: // legacy aliases
+			if (_is_curve_flat_style()) _gen_curve(geo);
+			else                        _gen_curve_line_3d(geo);
+			break;
 		case FIGURE:          _gen_figure(geo);      break;
 		default: break;
 	}
