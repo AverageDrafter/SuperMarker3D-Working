@@ -109,6 +109,11 @@ static const char *RM_LIT           = "shader_type spatial;\nrender_mode blend_m
 // so the depth buffer stays clear for the front-face pass that follows.
 static const char *RM_UNSHADED_BACK = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_front, depth_draw_never;\n";
 static const char *RM_LIT_BACK      = "shader_type spatial;\nrender_mode blend_mix, cull_front, depth_draw_never;\n";
+// Always-on-top variants — depth_test_disabled so the surface ignores world
+// depth. Forces unshaded (lights/shadows are hidden when always_on_top is on),
+// so no LIT counterparts exist.
+static const char *RM_UNSHADED_TOP      = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_back, depth_draw_opaque, depth_test_disabled;\n";
+static const char *RM_UNSHADED_BACK_TOP = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_front, depth_draw_never, depth_test_disabled;\n";
 
 Ref<Shader> SuperMarker3D::_mesh_shader;
 Ref<Shader> SuperMarker3D::_mesh_shader_lit;
@@ -118,6 +123,10 @@ Ref<Shader> SuperMarker3D::_mesh_shader_back;
 Ref<Shader> SuperMarker3D::_mesh_shader_back_lit;
 Ref<Shader> SuperMarker3D::_bary_shader_back;
 Ref<Shader> SuperMarker3D::_bary_shader_back_lit;
+Ref<Shader> SuperMarker3D::_mesh_shader_top;
+Ref<Shader> SuperMarker3D::_bary_shader_top;
+Ref<Shader> SuperMarker3D::_mesh_shader_back_top;
+Ref<Shader> SuperMarker3D::_bary_shader_back_top;
 
 // Sphere shader — paints lat/lon wireframe lines analytically from each
 // fragment's local-space position. Independent of the fill triangulation,
@@ -201,6 +210,8 @@ Ref<Shader> SuperMarker3D::_sphere_shader;
 Ref<Shader> SuperMarker3D::_sphere_shader_lit;
 Ref<Shader> SuperMarker3D::_sphere_shader_back;
 Ref<Shader> SuperMarker3D::_sphere_shader_back_lit;
+Ref<Shader> SuperMarker3D::_sphere_shader_top;
+Ref<Shader> SuperMarker3D::_sphere_shader_back_top;
 
 // ---------------------------------------------------------------------------
 // GeoBuf helpers
@@ -687,6 +698,11 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// inside Axis, hidden on Burr (no-arrow rule). Arrow length is
 	// further hidden when the flag is off, so the inspector doesn't
 	// dangle a dead control.
+	// always_on_top forces unshaded — grey out lights_and_shadows but
+	// keep its underlying value, so toggling always_on_top off restores
+	// the user's prior choice.
+	if (name == "lights_and_shadows" && _always_on_top) read_only();
+
 	if ((name == "axis_arrows" || name == "axis_arrow_length"
 			|| name == "axis_arrow_width") && (!is_axis || is_axis_burr)) hide();
 	if ((name == "axis_arrow_length" || name == "axis_arrow_width")
@@ -1116,9 +1132,27 @@ float SuperMarker3D::get_length_fraction() const{ return _length_fraction; }
 void SuperMarker3D::set_shows_in_play(bool p) { _shows_in_play = p; _update_visibility(); }
 bool SuperMarker3D::get_shows_in_play() const { return _shows_in_play; }
 void SuperMarker3D::set_always_on_top(bool p) {
+	if (_always_on_top == p) return;
 	_always_on_top = p;
-	if (_outline_material.is_valid()) _outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, p);
-	if (_fill_material.is_valid()) _fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, p);
+	// Rebuild materials: under always_on_top we force unshaded shading
+	// AND swap mesh-category ShaderMaterials to the *_top variant
+	// (which carries `depth_test_disabled` in render_mode). This is the
+	// only way mesh subtypes actually render on top of world geometry —
+	// the BaseMaterial3D depth-test flag does not reach those custom
+	// shaders. Refresh shadow casting too, since unshaded markers
+	// shouldn't cast.
+	if (is_inside_tree()) {
+		_build_materials();
+		RenderingServer *rs = RenderingServer::get_singleton();
+		const RenderingServer::ShadowCastingSetting cast = (_lights_and_shadows && !_always_on_top)
+				? RenderingServer::SHADOW_CASTING_SETTING_ON
+				: RenderingServer::SHADOW_CASTING_SETTING_OFF;
+		if (_instance.is_valid()) rs->instance_geometry_set_cast_shadows_setting(_instance, cast);
+		for (int i = 0; i < _arm_instances.size(); i++) {
+			if (_arm_instances[i].is_valid()) rs->instance_geometry_set_cast_shadows_setting(_arm_instances[i], cast);
+		}
+	}
+	notify_property_list_changed(); // refresh greyed-out lights_and_shadows
 }
 bool SuperMarker3D::get_always_on_top() const { return _always_on_top; }
 void SuperMarker3D::set_lights_and_shadows(bool p) {
@@ -1130,7 +1164,7 @@ void SuperMarker3D::set_lights_and_shadows(bool p) {
 		if (_instance.is_valid()) {
 			RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(
 					_instance,
-					_lights_and_shadows
+					(_lights_and_shadows && !_always_on_top)
 							? RenderingServer::SHADOW_CASTING_SETTING_ON
 							: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 		}
@@ -1160,7 +1194,7 @@ void SuperMarker3D::_ensure_instance() {
 	// the flag toggle calls `_ensure_instance` indirectly via SM_REBUILD,
 	// so this is the single place that has to keep the RS state in sync.
 	rs->instance_geometry_set_cast_shadows_setting(_instance,
-			_lights_and_shadows
+			(_lights_and_shadows && !_always_on_top)
 					? RenderingServer::SHADOW_CASTING_SETTING_ON
 					: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 }
@@ -1274,7 +1308,7 @@ void SuperMarker3D::_build_axis_per_arm(const Vector<Vector3> &dirs,
 				is_visible_in_tree() && !_template_mode
 				&& (_shows_in_play || Engine::get_singleton()->is_editor_hint()));
 		rs->instance_geometry_set_cast_shadows_setting(_arm_instances[i],
-				_lights_and_shadows
+				(_lights_and_shadows && !_always_on_top)
 						? RenderingServer::SHADOW_CASTING_SETTING_ON
 						: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 	}
@@ -1316,27 +1350,33 @@ void SuperMarker3D::_update_transform() {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_build_materials() {
+	// always_on_top is intended for UI / HUD style markers — it forces
+	// the geometry to ignore world depth, AND it forces unshaded
+	// rendering (no lights, no shadows) to keep the look clean and
+	// consistent regardless of scene lighting. The `_lights_and_shadows`
+	// flag is preserved (just greyed out in the inspector) so toggling
+	// always_on_top off restores the user's prior shading choice.
+	const bool effective_lit = _lights_and_shadows && !_always_on_top;
+
 	// --- Outline material ---
 	if (_outline_material.is_null()) _outline_material.instantiate();
-	_outline_material->set_shading_mode(_lights_and_shadows
+	_outline_material->set_shading_mode(effective_lit
 			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
 			: BaseMaterial3D::SHADING_MODE_UNSHADED);
-	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !_lights_and_shadows);
+	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !effective_lit);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
 	// Cull mode: flat shapes and mesh fills are CULL_DISABLED (two-sided
 	// surfaces, or depth-occluded by fill body). Axis/arrow 3D geometry
 	// uses CULL_BACK to hide interiors and avoid Z-fighting at panel seams
 	// (CULL_DISABLED caused arrowhead hollow interiors to show, and caused
-	// Z-fighting at tube panel edges). Mesh+always_on_top also CULL_BACK
-	// (depth test disabled; face culling is the only occlusion).
+	// Z-fighting at tube panel edges). always_on_top is intentionally NOT
+	// part of this decision — it only toggles depth-test, nothing else.
 	const bool is_mesh_type  = (get_type() == TYPE_MESH);
 	const bool is_shape_type = (get_type() == TYPE_SHAPE);
 	BaseMaterial3D::CullMode wire_cull;
-	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type) {
+	if (_shape == ARROW_FLAT || _shape == CURVE_FLAT || is_shape_type || is_mesh_type) {
 		wire_cull = BaseMaterial3D::CULL_DISABLED;
-	} else if (is_mesh_type) {
-		wire_cull = _always_on_top ? BaseMaterial3D::CULL_BACK : BaseMaterial3D::CULL_DISABLED;
 	} else {
 		wire_cull = BaseMaterial3D::CULL_BACK;
 	}
@@ -1364,7 +1404,7 @@ void SuperMarker3D::_build_materials() {
 
 	// --- Fill material ---
 	if (_fill_material.is_null()) _fill_material.instantiate();
-	_fill_material->set_shading_mode(_lights_and_shadows
+	_fill_material->set_shading_mode(effective_lit
 			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
 			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
@@ -1405,15 +1445,26 @@ void SuperMarker3D::_build_materials() {
 		auto ensure_shader = [](Ref<Shader> &s, const String &code) {
 			if (s.is_null()) { s.instantiate(); s->set_code(code); }
 		};
+		// always_on_top picks the *_top variant which adds
+		// `depth_test_disabled` to the render_mode — that is what makes
+		// mesh subtypes actually render on top of world geometry (the
+		// BaseMaterial3D FLAG_DISABLE_DEPTH_TEST has no effect on these
+		// custom ShaderMaterials). always_on_top forces unshaded, so no
+		// LIT *_top variant exists.
 		// Front-face shaders (cull_back, depth_draw_opaque).
 		if (use_sphere_shader || is_capsule) {
-			if (_lights_and_shadows)
+			if (_always_on_top)
+				ensure_shader(_sphere_shader_top, String(RM_UNSHADED_TOP) + SPHERE_SHADER_BODY);
+			else if (effective_lit)
 				ensure_shader(_sphere_shader_lit, String(RM_LIT) + SPHERE_SHADER_BODY);
 			else
 				ensure_shader(_sphere_shader,     String(RM_UNSHADED) + SPHERE_SHADER_BODY);
 		}
 		if (!use_sphere_shader) {
-			if (_lights_and_shadows) {
+			if (_always_on_top) {
+				ensure_shader(_mesh_shader_top, String(RM_UNSHADED_TOP) + FILL_SHADER_BODY);
+				ensure_shader(_bary_shader_top, String(RM_UNSHADED_TOP) + BARY_SHADER_BODY);
+			} else if (effective_lit) {
 				ensure_shader(_mesh_shader_lit, String(RM_LIT) + FILL_SHADER_BODY);
 				ensure_shader(_bary_shader_lit, String(RM_LIT) + BARY_SHADER_BODY);
 			} else {
@@ -1424,13 +1475,18 @@ void SuperMarker3D::_build_materials() {
 		// Back-face shaders (cull_front, depth_draw_never) — only compiled when needed.
 		if (_two_sided) {
 			if (use_sphere_shader || is_capsule) {
-				if (_lights_and_shadows)
+				if (_always_on_top)
+					ensure_shader(_sphere_shader_back_top, String(RM_UNSHADED_BACK_TOP) + SPHERE_SHADER_BODY);
+				else if (effective_lit)
 					ensure_shader(_sphere_shader_back_lit, String(RM_LIT_BACK) + SPHERE_SHADER_BODY);
 				else
 					ensure_shader(_sphere_shader_back,     String(RM_UNSHADED_BACK) + SPHERE_SHADER_BODY);
 			}
 			if (!use_sphere_shader) {
-				if (_lights_and_shadows) {
+				if (_always_on_top) {
+					ensure_shader(_mesh_shader_back_top, String(RM_UNSHADED_BACK_TOP) + FILL_SHADER_BODY);
+					ensure_shader(_bary_shader_back_top, String(RM_UNSHADED_BACK_TOP) + BARY_SHADER_BODY);
+				} else if (effective_lit) {
 					ensure_shader(_mesh_shader_back_lit, String(RM_LIT_BACK) + FILL_SHADER_BODY);
 					ensure_shader(_bary_shader_back_lit, String(RM_LIT_BACK) + BARY_SHADER_BODY);
 				} else {
@@ -1440,12 +1496,18 @@ void SuperMarker3D::_build_materials() {
 			}
 		}
 
-		Ref<Shader> fill_s        = _lights_and_shadows ? _mesh_shader_lit         : _mesh_shader;
-		Ref<Shader> bary_s        = _lights_and_shadows ? _bary_shader_lit         : _bary_shader;
-		Ref<Shader> sphere_s      = _lights_and_shadows ? _sphere_shader_lit       : _sphere_shader;
-		Ref<Shader> fill_s_back   = _lights_and_shadows ? _mesh_shader_back_lit    : _mesh_shader_back;
-		Ref<Shader> bary_s_back   = _lights_and_shadows ? _bary_shader_back_lit    : _bary_shader_back;
-		Ref<Shader> sphere_s_back = _lights_and_shadows ? _sphere_shader_back_lit  : _sphere_shader_back;
+		Ref<Shader> fill_s        = _always_on_top ? _mesh_shader_top
+		                          : effective_lit ? _mesh_shader_lit         : _mesh_shader;
+		Ref<Shader> bary_s        = _always_on_top ? _bary_shader_top
+		                          : effective_lit ? _bary_shader_lit         : _bary_shader;
+		Ref<Shader> sphere_s      = _always_on_top ? _sphere_shader_top
+		                          : effective_lit ? _sphere_shader_lit       : _sphere_shader;
+		Ref<Shader> fill_s_back   = _always_on_top ? _mesh_shader_back_top
+		                          : effective_lit ? _mesh_shader_back_lit    : _mesh_shader_back;
+		Ref<Shader> bary_s_back   = _always_on_top ? _bary_shader_back_top
+		                          : effective_lit ? _bary_shader_back_lit    : _bary_shader_back;
+		Ref<Shader> sphere_s_back = _always_on_top ? _sphere_shader_back_top
+		                          : effective_lit ? _sphere_shader_back_lit  : _sphere_shader_back;
 
 		// Front-face fill material (priority 0).
 		if (_mesh_material.is_null()) _mesh_material.instantiate();
@@ -1750,7 +1812,40 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 	}
 
 	const float base_r = _axis_arrow_width;
-	const float apex_r = (_outline_thickness > 0.0f) ? _outline_thickness * 0.5f : 0.0f;
+	const float R      = (_outline_thickness > 0.0f) ? _outline_thickness * 0.5f : 0.0f;
+
+	// Tangent join: when the cone is wider than the tube (typical case),
+	// fit the cone slant tangent to the tube's tip hemisphere instead of
+	// joining at the hemisphere equator. Apex ring sits at the tangent
+	// point on the dome — past the equator in +d, smaller than R — so the
+	// cone slant transitions smoothly into the dome's curve and the dome
+	// itself fills the cone's open tip. No apex disk is needed in this
+	// mode; the dome closes the geometry.
+	//
+	// External point E = (base_r, p_arm_len - head) in the (r, z) plane.
+	// Sphere centre  C = (0,      p_arm_len), radius R. Tangent point T is
+	// the forward-most tangent from E to the circle:
+	//   D² = base_r² + head²
+	//   L  = sqrt(D² - R²)
+	//   T_r = R*(base_r*R + head*L) / D²
+	//   T_z = p_arm_len + R*(base_r*L - head*R) / D²
+	const bool tangent_join = (R > 0.0f) && (base_r > R);
+	float apex_r;
+	Vector3 apex_center;
+	if (tangent_join) {
+		const float D2 = base_r * base_r + head * head;
+		const float L  = std::sqrt(MAX(D2 - R * R, 0.0f));
+		apex_r            = R * (base_r * R + head * L) / D2;
+		const float dz_off = R * (base_r * L - head * R) / D2;
+		apex_center = d * (p_arm_len + dz_off);
+	} else {
+		// Fallback: cone narrower than or equal to tube. No forward
+		// tangent exists; keep the classic apex-at-tip geometry with
+		// apex_r = R (or 0 when thickness=0). Apex disk closes the ring.
+		apex_r      = R;
+		apex_center = tip;
+	}
+
 	const int segs = 12;
 	Vector3 up    = Math::abs(d.dot(Vector3(0, 1, 0))) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	Vector3 right = d.cross(up).normalized();
@@ -1768,6 +1863,12 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		}
 	}
 
+	// Pass 1 — base disks. Emitted first so that, under always_on_top
+	// (FLAG_DISABLE_DEPTH_TEST), the slant triangles drawn afterwards
+	// overdraw the disk wherever they share screen-space pixels. Without
+	// depth-test the GPU resolves overlaps by draw order alone, so the
+	// surface that should be in front must be the one drawn last.
+	const Vector3 back_n = -d;
 	for (int i = 0; i < segs; i++) {
 		float t0 = SM_TAU * (float)i / segs;
 		float t1 = SM_TAU * (float)(i + 1) / segs;
@@ -1775,46 +1876,55 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		Vector3 dir1 = std::cos(t1) * right + std::sin(t1) * up_p;
 		Vector3 b0 = base_center + dir0 * base_r;
 		Vector3 b1 = base_center + dir1 * base_r;
-		Vector3 a0 = tip + dir0 * apex_r;
-		Vector3 a1 = tip + dir1 * apex_r;
 
-		// Slant face normal — outward from the cone surface. Cross product
-		// gives a signed result; flip to outward using the segment
-		// midpoint's radial direction. face_n is used only for shading;
-		// culling is determined by the vertex winding order below.
+		// Base disk — closes the back of the arrowhead, faces -d.
+		// Winding (base_center, b1, b0) under the flipped convention.
+		geo.outline_verts.push_back(base_center); geo.outline_normals.push_back(back_n);
+		geo.outline_verts.push_back(b1);          geo.outline_normals.push_back(back_n);
+		geo.outline_verts.push_back(b0);          geo.outline_normals.push_back(back_n);
+	}
+
+	// Pass 2 — slant + (fallback) apex disks.
+	for (int i = 0; i < segs; i++) {
+		float t0 = SM_TAU * (float)i / segs;
+		float t1 = SM_TAU * (float)(i + 1) / segs;
+		Vector3 dir0 = std::cos(t0) * right + std::sin(t0) * up_p;
+		Vector3 dir1 = std::cos(t1) * right + std::sin(t1) * up_p;
+		Vector3 b0 = base_center + dir0 * base_r;
+		Vector3 b1 = base_center + dir1 * base_r;
+		Vector3 a0 = apex_center + dir0 * apex_r;
+		Vector3 a1 = apex_center + dir1 * apex_r;
+
+		// Slant face normal — outward radial + slight axial component
+		// because the surface tilts inward toward apex. Cross product
+		// of two edges gives the geometric face normal; orient outward
+		// using the segment midpoint's radial direction.
 		Vector3 mid_radial = ((dir0 + dir1) * 0.5f);
 		Vector3 face_n = ((a1 - b0).cross(b1 - b0)).normalized();
 		if (face_n.dot(mid_radial) < 0.0f) face_n = -face_n;
 
-		// Side: two triangles per segment. Godot's CULL_BACK keeps faces
-		// that are CW from the camera; winding (b0, a1, b1) is CW when
-		// viewed from outside the cone (tip side), so the slant faces
-		// are front-facing from the outside and culled from inside.
+		// Side: two triangles per segment. Wind (b0, b1, a1) and
+		// (b0, a1, a0) — CCW from OUTSIDE the cone, matching the
+		// flipped tube/hemisphere convention.
 		geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-		geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
 		geo.outline_verts.push_back(b1); geo.outline_normals.push_back(face_n);
+		geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
 		// Skip the second triangle when apex collapses to a point — it
 		// would be degenerate (zero area).
 		if (apex_r > 0.0f) {
 			geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-			geo.outline_verts.push_back(a0); geo.outline_normals.push_back(face_n);
 			geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
+			geo.outline_verts.push_back(a0); geo.outline_normals.push_back(face_n);
 		}
 
-		// Apex disk — faces +d, visible from tip side. (tip, a1, a0) is
-		// CW from the +d direction = front-facing toward the viewer.
-		if (apex_r > 0.0f) {
+		// Apex disk — only emitted in the non-tangent fallback. In the
+		// tangent join case the tube's hemisphere cap closes the cone's
+		// open tip, so painting a disk here would cover the dome.
+		if (apex_r > 0.0f && !tangent_join) {
 			geo.outline_verts.push_back(tip); geo.outline_normals.push_back(d);
-			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
 			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
+			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
 		}
-
-		// Base disk — closes the back, faces -d, visible from arm side.
-		// (base_center, b0, b1) is CW from the -d direction.
-		Vector3 back_n = -d;
-		geo.outline_verts.push_back(base_center); geo.outline_normals.push_back(back_n);
-		geo.outline_verts.push_back(b0);          geo.outline_normals.push_back(back_n);
-		geo.outline_verts.push_back(b1);          geo.outline_normals.push_back(back_n);
 	}
 	if (p_use_color) {
 		const int end = geo.outline_verts.size();

@@ -1,10 +1,25 @@
 [gd_scene format=3 uid="uid://bxg8uyr2ef1g1"]
 
+[sub_resource type="Curve3D" id="Curve3D_4j8hf"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_4j8hf"]
+
 [node name="SuperMarker3D" type="SuperMarker3D" unique_id=29451092]
-subtype = 3
-outline_thickness = 0.03
+type = 3
+subtype = 9
+outline_color = Color(0.12941177, 1, 0, 1)
+outline_thickness = 0.131
 fill_enabled = true
+axis_link_mode = 2
+axis_length_x_pos = 1.69
+axis_length_x_neg = 1.293
+axis_length_y_pos = 1.995
+axis_length_y_neg = 0.897
+axis_length_z_pos = 0.932
+axis_length_z_neg = 1.69
 axis_arrows = true
+axis_arrow_length = 0.051
+axis_arrow_width = 0.105
 axis_color_x_pos = Color(1, 0.039215688, 0.039215688, 1)
 axis_color_x_neg = Color(0.15686275, 0.039215688, 0.039215688, 1)
 axis_color_y_pos = Color(0.039215688, 1, 0.039215688, 1)
@@ -13,6 +28,12 @@ axis_color_z_pos = Color(0.039215688, 0.039215688, 1, 1)
 axis_color_z_neg = Color(0.039215688, 0.039215688, 0.15686275, 1)
 head_length = 3.5
 head_width = 1.94
+curve = SubResource("Curve3D_4j8hf")
+curve_width = 0.001
 billboard_xz = true
 billboard_y = true
 lights_and_shadows = true
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=49429962]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09686518, 0, -0.09216046)
+mesh = SubResource("BoxMesh_4j8hf")

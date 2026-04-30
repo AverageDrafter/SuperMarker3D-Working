@@ -440,6 +440,14 @@ private:
 	static Ref<Shader>      _bary_shader_back_lit;
 	static Ref<Shader>      _sphere_shader_back;
 	static Ref<Shader>      _sphere_shader_back_lit;
+	/// Always-on-top variants (depth_test_disabled). always_on_top forces
+	/// unshaded (UI use case), so only UNSHADED variants exist here.
+	static Ref<Shader>      _mesh_shader_top;
+	static Ref<Shader>      _bary_shader_top;
+	static Ref<Shader>      _sphere_shader_top;
+	static Ref<Shader>      _mesh_shader_back_top;
+	static Ref<Shader>      _bary_shader_back_top;
+	static Ref<Shader>      _sphere_shader_back_top;
 	RID _instance;
 
 	// Per-arm renderables for Axis subtypes. Each arm (and each Burr
