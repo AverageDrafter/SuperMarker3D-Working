@@ -1317,21 +1317,10 @@ void SuperMarker3D::_update_transform() {
 
 void SuperMarker3D::_build_materials() {
 	// --- Outline material ---
-	// Axis arms (tubes + hemisphere caps) use CULL_DISABLED so the depth
-	// buffer alone handles per-surface occlusion. Back faces are visible
-	// through near-grazing gaps between segments; with PER_PIXEL they are
-	// lit with inward normals and appear dark. PER_VERTEX computes
-	// lighting from the vertex-normal array (always outward), so back
-	// faces inherit the same shading as front faces — no dark hollows.
-	// Flat/mesh shapes use PER_PIXEL since they don't have overlapping
-	// back-face exposure from adjacent geometry.
 	if (_outline_material.is_null()) _outline_material.instantiate();
-	const bool is_axis_type_now = (get_type() == TYPE_AXIS);
-	BaseMaterial3D::ShadingMode out_shading;
-	if (!_lights_and_shadows)        out_shading = BaseMaterial3D::SHADING_MODE_UNSHADED;
-	else if (is_axis_type_now)       out_shading = BaseMaterial3D::SHADING_MODE_PER_VERTEX;
-	else                             out_shading = BaseMaterial3D::SHADING_MODE_PER_PIXEL;
-	_outline_material->set_shading_mode(out_shading);
+	_outline_material->set_shading_mode(_lights_and_shadows
+			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
+			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !_lights_and_shadows);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
@@ -2958,12 +2947,6 @@ void SuperMarker3D::_add_tube(GeoBuf &geo,
 		Vector3 va0 = a + n0 * radius, va1 = a + n1 * radius;
 		Vector3 vb0 = b + n0 * radius, vb1 = b + n1 * radius;
 
-		// Tube side panels — winding (va0, vb1, vb0) and (va0, va1, vb1)
-		// so the triangles wind CCW when viewed from OUTSIDE the
-		// cylinder (the side that CULL_BACK keeps). The earlier
-		// (va0, vb0, vb1) variant was inverted — every tube body
-		// surface rendered as its inside face, which read as the
-		// "tubes are backwards" report from the user.
 		geo.outline_verts.push_back(va0); geo.outline_normals.push_back(n0);
 		geo.outline_verts.push_back(vb1); geo.outline_normals.push_back(n1);
 		geo.outline_verts.push_back(vb0); geo.outline_normals.push_back(n0);
@@ -3014,13 +2997,6 @@ void SuperMarker3D::_add_hemisphere_cap(GeoBuf &geo, const Vector3 &center,
 			Vector3 n10 = (v10 - center).normalized();
 			Vector3 n11 = (v11 - center).normalized();
 
-			// Wind (v00, v01, v11) and (v00, v11, v10) so the
-			// geometric face normal aligns with the outward sphere
-			// normal at every quad — CCW from the cap's outside,
-			// front-facing under CULL_BACK. The earlier reversed
-			// ordering rendered every cap inside-out (most visible
-			// once the back disk on the cone made it impossible to
-			// hide).
 			geo.outline_verts.push_back(v00); geo.outline_normals.push_back(n00);
 			geo.outline_verts.push_back(v01); geo.outline_normals.push_back(n01);
 			geo.outline_verts.push_back(v11); geo.outline_normals.push_back(n11);
