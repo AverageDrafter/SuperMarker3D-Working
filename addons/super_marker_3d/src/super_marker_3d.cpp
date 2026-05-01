@@ -75,45 +75,34 @@ void fragment() {
 }
 )";
 
-// Combined fill + outline shader for mesh subtypes. Paints fill_color
-// across the body and outline_color in a strip near each flagged edge,
-// using a smoothstep-based AA blend so edges stay clean. ALWAYS outputs
-// fully-opaque ALBEDO (mixed colors), which keeps the surface in
-// Godot's opaque render queue — strict fragment-level depth occlusion
-// without the object-center-depth sort bug that plagues transparent
-// surfaces. The previous separate fill+bary surfaces (with blend_mix
-// on bary) caused wheels-inside-capsule cases to fail to occlude
-// because both surfaces ended up in the transparent queue.
+// Combined fill + outline shader for mesh subtypes. Opaque output —
+// stays in Godot's opaque queue (no blend_mix on render_mode) so
+// depth occlusion works fragment-by-fragment.
+//
+// Each vertex carries up to four perpendicular distances to face
+// boundary edges, packed into UV (d0, d1) and UV2 (d2, d3). Linear
+// barycentric interpolation across the triangle gives the correct
+// per-fragment perpendicular distance to each edge — for a quad
+// face that's split by a single diagonal, the four real perimeter
+// edges are all visible in the math everywhere, including across
+// the diagonal split (no diagonal-tab tapers like the bary*h
+// approach had). Sentinel value 1e8 marks an unused/internal slot
+// so its distance is too large to compete in `min`.
 static const char *BARY_SHADER_BODY = R"(
 uniform vec4  fill_color    : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
 
-varying vec3 v_bary;
-varying vec3 v_heights;
-
-void vertex() {
-	v_bary    = COLOR.rgb;
-	v_heights = vec3(UV.x, UV.y, UV2.x);
-}
-
 void fragment() {
-	if (outline_thickness <= 0.0) {
-		ALBEDO = fill_color.rgb;
-		ALPHA  = 1.0;
-		return;
-	}
-
-	float min_dist = 1.0e9;
-	if (v_heights.x >= 0.0) min_dist = min(min_dist, v_bary.x * v_heights.x);
-	if (v_heights.y >= 0.0) min_dist = min(min_dist, v_bary.y * v_heights.y);
-	if (v_heights.z >= 0.0) min_dist = min(min_dist, v_bary.z * v_heights.z);
-
+	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
 	float aa = max(fwidth(min_dist), 1.0e-5);
+	// outline_thickness <= 0 -> threshold -aa..+aa straddles 0, so
+	// even min_dist=0 (right on an edge) reads as past the threshold;
+	// edge factor collapses to 0 across the whole face -> pure fill.
+	// Avoids a `return` early-out (Godot 4 disallows return in fragment).
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+	if (outline_thickness <= 0.0) edge = 0.0;
 
-	// Mix fill -> outline based on edge factor. AA is preserved by the
-	// smoothstep blend without needing alpha transparency.
 	ALBEDO = mix(fill_color.rgb, outline_color.rgb, edge);
 	ALPHA  = 1.0;
 }
@@ -2102,78 +2091,98 @@ void SuperMarker3D::_build_materials() {
 	}
 }
 
-// Quad-face helper. Per sub-triangle, writes the per-vertex barycentric
-// tag + the constant per-tri (h0, h1, h2) heights the bary shader uses
-// to paint outline strips on the sub-triangle's flagged boundary edges.
-// Edges of the SUB-triangle that aren't real face boundaries (the
-// diagonal in particular) get h = -1 so the shader skips them.
+// Quad-face helper — single diagonal split (p0→p2), two triangles.
+// Each vertex carries the perpendicular distance to all FOUR perimeter
+// edges (e01, e12, e23, e30) in (UV.xy, UV2.xy). Linear barycentric
+// interpolation across the triangle gives the correct perp distance
+// to every perimeter edge at any fragment, EVEN ACROSS the diagonal —
+// because the linearly-stored distances are equivalent to the analytic
+// perp-distance function for affine geometry. The shader takes
+// `min(d0,d1,d2,d3)` and paints an outline strip near whichever edge
+// is closest. No diagonal-tab taper artifacts.
 //
-// Triangulation is a DUAL DIAGONAL SPLIT — emit the quad twice, once
-// with the p0→p2 diagonal and once with the p1→p3 diagonal. Each fragment
-// ends up inside 2 sub-triangles (one per layer); at least one of the
-// two owns the quad edge it's closest to, so its strip extends across
-// the whole quad even though each individual sub-triangle's bary*h math
-// only covers its own edges. The other sub-triangle's fragment-shader
-// run discards (no edge close enough), so there's no z-fight between
-// fill (pass A) and outline (this pass) at the same depth.
+// Internal edges (boundary flag = false) get the 1e8 sentinel so they
+// can't win the `min` and effectively don't contribute.
+//
+// `e01..e30` are the four perimeter-edge boundary flags. Caller
+// passes CCW-from-outside (p0, p1, p2, p3); emission flips the
+// winding to (a, c, b) per the rasterizer's preferred convention.
 void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 		const Vector3 &p0, const Vector3 &p1, const Vector3 &p2, const Vector3 &p3,
 		bool e01, bool e12, bool e23, bool e30) const {
-	auto emit = [&](const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
-			bool e0_b, bool e1_b, bool e2_b) {
-		const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
-		const float dbl_area = (v1 - v0).cross(v2 - v0).length();
-		if (dbl_area < 1e-9f) return;
-		const float NN = -1.0f;
-		const float h0 = dbl_area / MAX(1e-9f, (v2 - v1).length());
-		const float h1 = dbl_area / MAX(1e-9f, (v2 - v0).length());
-		const float h2 = dbl_area / MAX(1e-9f, (v1 - v0).length());
-		const Color bary_v0(1, 0, 0, 1);
-		const Color bary_v1(0, 1, 0, 1);
-		const Color bary_v2(0, 0, 1, 1);
-		const Vector2 bary_uv (e0_b ? h0 : NN, e1_b ? h1 : NN);
-		const Vector2 bary_uv2(e2_b ? h2 : NN, 0.0f);
-		// Emit (v0, v2, v1) — flipped winding (matches `_add_mesh_face`
-		// convention). Vertex normals are outward-facing per the cross
-		// product above, so the lit shader uses the correct direction.
-		geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
-		geo.tri_bary_colors.push_back(bary_v0);
-		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
-		geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
-		geo.tri_bary_colors.push_back(bary_v2);
-		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
-		geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
-		geo.tri_bary_colors.push_back(bary_v1);
-		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+
+	// Perpendicular distance from point P to line through A, B.
+	auto perp = [](const Vector3 &P, const Vector3 &A, const Vector3 &B) -> float {
+		const Vector3 AB = B - A;
+		const float len = AB.length();
+		if (len < 1e-9f) return 0.0f;
+		return (P - A).cross(AB).length() / len;
+	};
+	const float SKIP = 1.0e8f;
+
+	// For each vertex, distance to each of the 4 perimeter edges.
+	// Adjacent edges (vertex is ON them) get 0; non-adjacent edges
+	// get the perp distance; internal edges get SKIP. Slot order:
+	// (e01, e12, e23, e30).
+	const auto v_dists = [&](const Vector3 &v, int adj_a, int adj_b) {
+		float d[4];
+		auto fill = [&](int slot, bool boundary, const Vector3 &A, const Vector3 &B) {
+			if (!boundary)                              d[slot] = SKIP;
+			else if (adj_a == slot || adj_b == slot)    d[slot] = 0.0f;
+			else                                        d[slot] = perp(v, A, B);
+		};
+		fill(0, e01, p0, p1);
+		fill(1, e12, p1, p2);
+		fill(2, e23, p2, p3);
+		fill(3, e30, p3, p0);
+		return Vector4(d[0], d[1], d[2], d[3]);
 	};
 
-	// Boundary-flag mapping for each sub-triangle (e0/e1/e2 are
-	// opposite v0/v1/v2 of the *sub*-triangle, not the parent quad):
-	//
-	//   Layer 1 (diagonal p0→p2):
-	//     Tri (p0, p1, p2): e0 = (p1, p2) = e12; e1 = (p0, p2) = diag; e2 = (p0, p1) = e01.
-	//     Tri (p0, p2, p3): e0 = (p2, p3) = e23; e1 = (p0, p3) = e30; e2 = (p0, p2) = diag.
-	//   Layer 2 (diagonal p1→p3):
-	//     Tri (p0, p1, p3): e0 = (p1, p3) = diag; e1 = (p0, p3) = e30; e2 = (p0, p1) = e01.
-	//     Tri (p1, p2, p3): e0 = (p2, p3) = e23; e1 = (p1, p3) = diag; e2 = (p1, p2) = e12.
-	emit(p0, p1, p2, e12, false, e01);
-	emit(p0, p2, p3, e23, e30,  false);
-	emit(p0, p1, p3, false, e30, e01);
-	emit(p1, p2, p3, e23, false, e12);
+	// p0 sits on e01 (slot 0) and e30 (slot 3).
+	// p1 sits on e01 (slot 0) and e12 (slot 1).
+	// p2 sits on e12 (slot 1) and e23 (slot 2).
+	// p3 sits on e23 (slot 2) and e30 (slot 3).
+	const Vector4 d0 = v_dists(p0, 0, 3);
+	const Vector4 d1 = v_dists(p1, 0, 1);
+	const Vector4 d2 = v_dists(p2, 1, 2);
+	const Vector4 d3 = v_dists(p3, 2, 3);
+
+	const Vector3 face_n = ((p1 - p0).cross(p2 - p0)).normalized();
+
+	auto push_tri = [&](const Vector3 &a, const Vector3 &b, const Vector3 &c,
+			const Vector4 &da, const Vector4 &db, const Vector4 &dc) {
+		// Flipped emission (a, c, b) for the rasterizer's front-face
+		// determination — same convention as `_add_mesh_face`.
+		auto push_v = [&](const Vector3 &v, const Vector4 &d) {
+			geo.tri_bary_verts.push_back(v);
+			geo.tri_bary_normals.push_back(face_n);
+			geo.tri_bary_colors.push_back(Color(0, 0, 0, 1)); // unused; kept parallel
+			geo.tri_bary_uvs.push_back(Vector2(d.x, d.y));
+			geo.tri_bary_uv2s.push_back(Vector2(d.z, d.w));
+		};
+		push_v(a, da);
+		push_v(c, dc);
+		push_v(b, db);
+	};
+
+	push_tri(p0, p1, p2, d0, d1, d2);
+	push_tri(p0, p2, p3, d0, d2, d3);
 }
 
-// Mesh subtype face helper for triangle faces. Pushes one triangle with
-// per-vertex barycentric tag in COLOR.rgb plus the constant per-tri
-// heights (h0, h1, h2) in UV.xy + UV2.x. h_i = -1 marks edge i as
-// INTERNAL (the bary shader skips it).
+// Triangle-face helper. Same per-vertex 4-slot distance scheme as
+// `_add_mesh_quad_face` so they share the BARY shader. The triangle
+// uses 3 slots (one per edge) and pads the 4th with the SKIP
+// sentinel. At each vertex, the slot for an opposite edge stores
+// the perpendicular height to that edge; the two adjacent edges
+// (the vertex sits on them) store 0. Linear barycentric
+// interpolation reproduces the bary*h scheme exactly: at any
+// fragment, slot_i = bary_i * h_i, which is the perp distance
+// from the fragment to edge i. Internal edges store SKIP at all
+// three vertices.
 //
-// Caller passes CCW-from-outside (v0, v1, v2). Empirically Godot's
-// rasterizer treats our (v0, v2, v1) emission as the front face here
-// (despite the docs saying CCW-from-camera = front), so we keep the
-// flip. The standard right-hand-rule outward face normal — computed
-// from the original CCW input — is what the lit shader uses; that
-// fixes the inverted-normal bug without disturbing the winding the
-// rasterizer was already happy with.
+// Caller passes CCW-from-outside (v0, v1, v2); emission flips to
+// (v0, v2, v1) to match the rasterizer's front-face convention.
+// Outward face normal computed from the original CCW input.
 void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
 		const Vector3 &v2, bool e0_boundary, bool e1_boundary, bool e2_boundary) const {
 	const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
@@ -2185,26 +2194,32 @@ void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3
 	const float h1 = double_area / MAX(1e-9f, (v2 - v0).length()); // height to edge opp v1
 	const float h2 = double_area / MAX(1e-9f, (v1 - v0).length()); // height to edge opp v2
 
-	const float NN = -1.0f;
-	const Color bary_v0(1, 0, 0, 1);
-	const Color bary_v1(0, 1, 0, 1);
-	const Color bary_v2(0, 0, 1, 1);
-	const Vector2 bary_uv (e0_boundary ? h0 : NN, e1_boundary ? h1 : NN);
-	const Vector2 bary_uv2(e2_boundary ? h2 : NN, 0.0f);
+	const float SKIP = 1.0e8f;
+	const float D0_v0 = e0_boundary ? h0   : SKIP; // edge 0 distance at v0
+	const float D0_v1 = e0_boundary ? 0.0f : SKIP;
+	const float D0_v2 = e0_boundary ? 0.0f : SKIP;
+	const float D1_v0 = e1_boundary ? 0.0f : SKIP;
+	const float D1_v1 = e1_boundary ? h1   : SKIP;
+	const float D1_v2 = e1_boundary ? 0.0f : SKIP;
+	const float D2_v0 = e2_boundary ? 0.0f : SKIP;
+	const float D2_v1 = e2_boundary ? 0.0f : SKIP;
+	const float D2_v2 = e2_boundary ? h2   : SKIP;
+	const Vector2 uv_v0(D0_v0, D1_v0), uv2_v0(D2_v0, SKIP);
+	const Vector2 uv_v1(D0_v1, D1_v1), uv2_v1(D2_v1, SKIP);
+	const Vector2 uv_v2(D0_v2, D1_v2), uv2_v2(D2_v2, SKIP);
 
-	// Emit (v0, v2, v1) — flipped winding the rasterizer treats as
-	// front-facing here. Vertex normals stay outward (computed above)
-	// so the lit shader uses the correct direction regardless of what
-	// the rasterizer's front-face determination is.
+	// Emit (v0, v2, v1).
 	geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
-	geo.tri_bary_colors.push_back(bary_v0);
-	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+	geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+	geo.tri_bary_uvs.push_back(uv_v0); geo.tri_bary_uv2s.push_back(uv2_v0);
+
 	geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
-	geo.tri_bary_colors.push_back(bary_v2);
-	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+	geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+	geo.tri_bary_uvs.push_back(uv_v2); geo.tri_bary_uv2s.push_back(uv2_v2);
+
 	geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
-	geo.tri_bary_colors.push_back(bary_v1);
-	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+	geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+	geo.tri_bary_uvs.push_back(uv_v1); geo.tri_bary_uv2s.push_back(uv2_v1);
 }
 
 // ---------------------------------------------------------------------------
