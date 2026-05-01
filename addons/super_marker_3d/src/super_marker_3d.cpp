@@ -75,7 +75,17 @@ void fragment() {
 }
 )";
 
+// Combined fill + outline shader for mesh subtypes. Paints fill_color
+// across the body and outline_color in a strip near each flagged edge,
+// using a smoothstep-based AA blend so edges stay clean. ALWAYS outputs
+// fully-opaque ALBEDO (mixed colors), which keeps the surface in
+// Godot's opaque render queue — strict fragment-level depth occlusion
+// without the object-center-depth sort bug that plagues transparent
+// surfaces. The previous separate fill+bary surfaces (with blend_mix
+// on bary) caused wheels-inside-capsule cases to fail to occlude
+// because both surfaces ended up in the transparent queue.
 static const char *BARY_SHADER_BODY = R"(
+uniform vec4  fill_color    : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
 
@@ -88,7 +98,11 @@ void vertex() {
 }
 
 void fragment() {
-	if (outline_thickness <= 0.0) discard;
+	if (outline_thickness <= 0.0) {
+		ALBEDO = fill_color.rgb;
+		ALPHA  = 1.0;
+		return;
+	}
 
 	float min_dist = 1.0e9;
 	if (v_heights.x >= 0.0) min_dist = min(min_dist, v_bary.x * v_heights.x);
@@ -97,25 +111,31 @@ void fragment() {
 
 	float aa = max(fwidth(min_dist), 1.0e-5);
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
-	if (edge < 0.001) discard;
 
-	ALBEDO = outline_color.rgb;
-	ALPHA  = outline_color.a * edge;
+	// Mix fill -> outline based on edge factor. AA is preserved by the
+	// smoothstep blend without needing alpha transparency.
+	ALBEDO = mix(fill_color.rgb, outline_color.rgb, edge);
+	ALPHA  = 1.0;
 }
 )";
 
-// render_mode prefixes — `unshaded` for HUD-flat, default for lit.
-static const char *RM_UNSHADED      = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_back, depth_draw_opaque;\n";
-static const char *RM_LIT           = "shader_type spatial;\nrender_mode blend_mix, cull_back, depth_draw_opaque;\n";
-// Back-face variants: cull_front so only back faces rasterize; depth_draw_never
-// so the depth buffer stays clear for the front-face pass that follows.
-static const char *RM_UNSHADED_BACK = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_front, depth_draw_never;\n";
-static const char *RM_LIT_BACK      = "shader_type spatial;\nrender_mode blend_mix, cull_front, depth_draw_never;\n";
+// render_mode prefixes. All mesh shaders are in the OPAQUE render
+// queue (no `blend_mix`) so depth-occlusion works strictly at the
+// fragment level — transparent-queue shaders sort by object-center
+// depth, which fails to correctly hide a wheel whose center is
+// closer to the camera but whose surface is behind a larger mesh's
+// surface (wheel-inside-capsule case). The combined fill+outline
+// shader uses a smoothstep color mix for AA edges instead of alpha
+// transparency, so we can stay opaque AND keep clean outlines.
+static const char *RM_UNSHADED      = "shader_type spatial;\nrender_mode unshaded, cull_back, depth_draw_opaque;\n";
+static const char *RM_LIT           = "shader_type spatial;\nrender_mode cull_back, depth_draw_opaque;\n";
+static const char *RM_UNSHADED_BACK = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_draw_never;\n";
+static const char *RM_LIT_BACK      = "shader_type spatial;\nrender_mode cull_front, depth_draw_never;\n";
 // Always-on-top variants — depth_test_disabled so the surface ignores world
 // depth. Forces unshaded (lights/shadows are hidden when always_on_top is on),
 // so no LIT counterparts exist.
-static const char *RM_UNSHADED_TOP      = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_back, depth_draw_opaque, depth_test_disabled;\n";
-static const char *RM_UNSHADED_BACK_TOP = "shader_type spatial;\nrender_mode unshaded, blend_mix, cull_front, depth_draw_never, depth_test_disabled;\n";
+static const char *RM_UNSHADED_TOP      = "shader_type spatial;\nrender_mode unshaded, cull_back, depth_draw_opaque, depth_test_disabled;\n";
+static const char *RM_UNSHADED_BACK_TOP = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_draw_never, depth_test_disabled;\n";
 
 Ref<Shader> SuperMarker3D::_mesh_shader;
 Ref<Shader> SuperMarker3D::_mesh_shader_lit;
@@ -989,12 +1009,20 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 	// materials (sphere shader, one per hemisphere).
 	if (_shape == MESH_SPHERE && _mesh_material.is_valid())
 		_mesh_material->set_shader_parameter("outline_color", _outline_color);
+	if (_shape == MESH_SPHERE && _mesh_material_back.is_valid())
+		_mesh_material_back->set_shader_parameter("outline_color", _outline_color);
 	if (_bary_material.is_valid())
 		_bary_material->set_shader_parameter("outline_color", _outline_color);
+	if (_bary_material_back.is_valid())
+		_bary_material_back->set_shader_parameter("outline_color", _outline_color);
 	if (_cap_top_material.is_valid())
 		_cap_top_material->set_shader_parameter("outline_color", _outline_color);
 	if (_cap_bot_material.is_valid())
 		_cap_bot_material->set_shader_parameter("outline_color", _outline_color);
+	if (_cap_top_material_back.is_valid())
+		_cap_top_material_back->set_shader_parameter("outline_color", _outline_color);
+	if (_cap_bot_material_back.is_valid())
+		_cap_bot_material_back->set_shader_parameter("outline_color", _outline_color);
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
@@ -1016,10 +1044,23 @@ void SuperMarker3D::set_fill_color(const Color &p) {
 	}
 	if (_mesh_material.is_valid())
 		_mesh_material->set_shader_parameter("fill_color", _fill_color);
+	if (_mesh_material_back.is_valid())
+		_mesh_material_back->set_shader_parameter("fill_color", _fill_color);
+	// _bary_material now drives both fill and outline via the combined
+	// shader, so fill_color must propagate here too (was previously
+	// only pushing to the dedicated fill material).
+	if (_bary_material.is_valid())
+		_bary_material->set_shader_parameter("fill_color", _fill_color);
+	if (_bary_material_back.is_valid())
+		_bary_material_back->set_shader_parameter("fill_color", _fill_color);
 	if (_cap_top_material.is_valid())
 		_cap_top_material->set_shader_parameter("fill_color", _fill_color);
 	if (_cap_bot_material.is_valid())
 		_cap_bot_material->set_shader_parameter("fill_color", _fill_color);
+	if (_cap_top_material_back.is_valid())
+		_cap_top_material_back->set_shader_parameter("fill_color", _fill_color);
+	if (_cap_bot_material_back.is_valid())
+		_cap_bot_material_back->set_shader_parameter("fill_color", _fill_color);
 }
 Color SuperMarker3D::get_fill_color() const { return _fill_color; }
 
@@ -1876,6 +1917,12 @@ void SuperMarker3D::_build_materials() {
 				ensure_shader(_sphere_shader,     String(RM_UNSHADED) + SPHERE_SHADER_BODY);
 		}
 		if (!use_sphere_shader) {
+			// Both FILL and BARY shaders share the same OPAQUE-queue
+			// prefix. The BARY shader is now a combined fill+outline
+			// shader; the FILL shader is unused for mesh subtypes
+			// (we only emit BARY surfaces for them). Compile both
+			// regardless so non-mesh paths that share these prefixes
+			// continue to work.
 			if (_always_on_top) {
 				ensure_shader(_mesh_shader_top, String(RM_UNSHADED_TOP) + FILL_SHADER_BODY);
 				ensure_shader(_bary_shader_top, String(RM_UNSHADED_TOP) + BARY_SHADER_BODY);
@@ -1924,31 +1971,38 @@ void SuperMarker3D::_build_materials() {
 		Ref<Shader> bary_s_back   = pick(_bary_shader_back_top,   _bary_shader_back_lit,   _bary_shader_back);
 		Ref<Shader> sphere_s_back = pick(_sphere_shader_back_top, _sphere_shader_back_lit, _sphere_shader_back);
 
-		// Front-face fill material (priority 0).
-		if (_mesh_material.is_null()) _mesh_material.instantiate();
-		_mesh_material->set_shader(use_sphere_shader ? sphere_s : fill_s);
-		_mesh_material->set_shader_parameter("fill_color", _fill_color);
+		// Front-face material. Sphere subtype keeps the analytic
+		// sphere shader on `_mesh_material`. Other mesh subtypes use
+		// the combined fill+outline BARY shader on `_bary_material`
+		// (single opaque pass) — `_mesh_material` is unused in that
+		// path, so we don't bother configuring it.
 		if (use_sphere_shader) {
+			if (_mesh_material.is_null()) _mesh_material.instantiate();
+			_mesh_material->set_shader(sphere_s);
+			_mesh_material->set_shader_parameter("fill_color", _fill_color);
 			_mesh_material->set_shader_parameter("outline_color", _outline_color);
 			_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
 			_mesh_material->set_shader_parameter("marker_size", _marker_size);
 			_mesh_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
+			_mesh_material->set_render_priority(0);
 		} else {
-			// Front-face bary material (priority 1).
 			if (_bary_material.is_null()) _bary_material.instantiate();
 			_bary_material->set_shader(bary_s);
+			_bary_material->set_shader_parameter("fill_color", _fill_color);
 			_bary_material->set_shader_parameter("outline_color", _outline_color);
 			_bary_material->set_shader_parameter("outline_thickness", _outline_thickness);
-			_bary_material->set_render_priority(1);
+			_bary_material->set_render_priority(0);
 		}
-		_mesh_material->set_render_priority(0);
 
-		// Back-face materials (priorities -2 and -1 so they draw before front faces).
+		// Back-face material — draws the inside of the mesh when the
+		// camera goes inside (priority -1, depth_draw_never). Sphere
+		// uses its own analytic shader; other mesh subtypes use the
+		// combined fill+outline BARY shader (no separate fill pass).
 		if (_two_sided) {
-			if (_mesh_material_back.is_null()) _mesh_material_back.instantiate();
-			_mesh_material_back->set_shader(use_sphere_shader ? sphere_s_back : fill_s_back);
-			_mesh_material_back->set_shader_parameter("fill_color", _fill_color);
 			if (use_sphere_shader) {
+				if (_mesh_material_back.is_null()) _mesh_material_back.instantiate();
+				_mesh_material_back->set_shader(sphere_s_back);
+				_mesh_material_back->set_shader_parameter("fill_color", _fill_color);
 				_mesh_material_back->set_shader_parameter("outline_color", _outline_color);
 				_mesh_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
 				_mesh_material_back->set_shader_parameter("marker_size", _marker_size);
@@ -1957,10 +2011,10 @@ void SuperMarker3D::_build_materials() {
 			} else {
 				if (_bary_material_back.is_null()) _bary_material_back.instantiate();
 				_bary_material_back->set_shader(bary_s_back);
+				_bary_material_back->set_shader_parameter("fill_color", _fill_color);
 				_bary_material_back->set_shader_parameter("outline_color", _outline_color);
 				_bary_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
 				_bary_material_back->set_render_priority(-1);
-				_mesh_material_back->set_render_priority(-2);
 			}
 		}
 
@@ -1999,47 +2053,33 @@ void SuperMarker3D::_build_materials() {
 	}
 
 	// Apply to surfaces.
-	// Surface layout depends on `_two_sided`:
-	//   one-sided non-sphere : [0]=fill,       [1]=bary
-	//   one-sided sphere     : [0]=sphere
-	//   one-sided capsule    : [0]=fill,[1]=bary,[2]=top cap,[3]=bot cap
-	//   two-sided non-sphere : [0]=back fill,[1]=back bary,[2]=front fill,[3]=front bary
-	//   two-sided sphere     : [0]=back sphere,[1]=front sphere
-	//   two-sided capsule    : [0]=back fill,[1]=back bary,[2]=front fill,[3]=front bary,
-	//                          [4]=back top,[5]=back bot,[6]=front top,[7]=front bot
+	// Surface layout depends on `_two_sided` (single combined shader
+	// per side now — sphere + non-sphere have the same count):
+	//   one-sided          : [0]=front
+	//   one-sided capsule  : [0]=front,[1]=top cap,[2]=bot cap
+	//   two-sided          : [0]=back, [1]=front
+	//   two-sided capsule  : [0]=back, [1]=front, [2]=back top, [3]=back bot,
+	//                        [4]=front top, [5]=front bot
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
 		if (is_mesh_type) {
 			const bool use_sphere_shader = (_shape == MESH_SPHERE);
+			Ref<ShaderMaterial> front_mat = use_sphere_shader ? _mesh_material : _bary_material;
+			Ref<ShaderMaterial> back_mat  = use_sphere_shader ? _mesh_material_back : _bary_material_back;
 			if (_two_sided) {
-				if (use_sphere_shader) {
-					// 2 surfaces: back, front.
-					if (sc > 0 && _mesh_material_back.is_valid()) _mesh->surface_set_material(0, _mesh_material_back);
-					if (sc > 1) _mesh->surface_set_material(1, _mesh_material);
-				} else {
-					// 4 surfaces: back fill, back bary, front fill, front bary.
-					if (sc > 0 && _mesh_material_back.is_valid()) _mesh->surface_set_material(0, _mesh_material_back);
-					if (sc > 1 && _bary_material_back.is_valid()) _mesh->surface_set_material(1, _bary_material_back);
-					if (sc > 2) _mesh->surface_set_material(2, _mesh_material);
-					if (sc > 3 && _bary_material.is_valid())      _mesh->surface_set_material(3, _bary_material);
-					// Capsule: 8 surfaces total — back caps before front caps.
-					if (_shape == MESH_CAPSULE) {
-						if (sc > 4 && _cap_top_material_back.is_valid()) _mesh->surface_set_material(4, _cap_top_material_back);
-						if (sc > 5 && _cap_bot_material_back.is_valid()) _mesh->surface_set_material(5, _cap_bot_material_back);
-						if (sc > 6 && _cap_top_material.is_valid())      _mesh->surface_set_material(6, _cap_top_material);
-						if (sc > 7 && _cap_bot_material.is_valid())      _mesh->surface_set_material(7, _cap_bot_material);
-					}
+				if (sc > 0 && back_mat.is_valid())  _mesh->surface_set_material(0, back_mat);
+				if (sc > 1 && front_mat.is_valid()) _mesh->surface_set_material(1, front_mat);
+				if (_shape == MESH_CAPSULE) {
+					if (sc > 2 && _cap_top_material_back.is_valid()) _mesh->surface_set_material(2, _cap_top_material_back);
+					if (sc > 3 && _cap_bot_material_back.is_valid()) _mesh->surface_set_material(3, _cap_bot_material_back);
+					if (sc > 4 && _cap_top_material.is_valid())      _mesh->surface_set_material(4, _cap_top_material);
+					if (sc > 5 && _cap_bot_material.is_valid())      _mesh->surface_set_material(5, _cap_bot_material);
 				}
 			} else {
-				if (sc > 0) _mesh->surface_set_material(0, _mesh_material);
-				if (sc > 1 && _bary_material.is_valid())
-					_mesh->surface_set_material(1, _bary_material);
-				// Capsule hemisphere surfaces, when present.
+				if (sc > 0 && front_mat.is_valid()) _mesh->surface_set_material(0, front_mat);
 				if (_shape == MESH_CAPSULE) {
-					if (sc > 2 && _cap_top_material.is_valid())
-						_mesh->surface_set_material(2, _cap_top_material);
-					if (sc > 3 && _cap_bot_material.is_valid())
-						_mesh->surface_set_material(3, _cap_bot_material);
+					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
+					if (sc > 2 && _cap_bot_material.is_valid()) _mesh->surface_set_material(2, _cap_bot_material);
 				}
 			}
 		} else {
@@ -2086,17 +2126,17 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 		const Color bary_v2(0, 0, 1, 1);
 		const Vector2 bary_uv (e0_b ? h0 : NN, e1_b ? h1 : NN);
 		const Vector2 bary_uv2(e2_b ? h2 : NN, 0.0f);
-		// Emit (v0, v1, v2) directly — CCW from outside, outward face
-		// normal. Front-face per Godot's CCW-front convention; the
-		// front shader (cull_back) renders correctly lit from above.
+		// Emit (v0, v2, v1) — flipped winding (matches `_add_mesh_face`
+		// convention). Vertex normals are outward-facing per the cross
+		// product above, so the lit shader uses the correct direction.
 		geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 		geo.tri_bary_colors.push_back(bary_v0);
 		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
-		geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
-		geo.tri_bary_colors.push_back(bary_v1);
-		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 		geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
 		geo.tri_bary_colors.push_back(bary_v2);
+		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+		geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
+		geo.tri_bary_colors.push_back(bary_v1);
 		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 	};
 
@@ -2120,16 +2160,13 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 // heights (h0, h1, h2) in UV.xy + UV2.x. h_i = -1 marks edge i as
 // INTERNAL (the bary shader skips it).
 //
-// Caller passes CCW-from-outside (v0, v1, v2). Standard right-hand
-// cross product gives an OUTWARD face normal; emission is (v0, v1, v2)
-// directly (also CCW from outside) so Godot's CCW-front / cull_back
-// convention treats this as the front face. The earlier "winding flip"
-// here was a leftover that emitted CW + stored inverted normals — only
-// the back-face shader (cull_front, depth_draw_never, two-sided pass)
-// rendered the mesh and lit it from below. Symptom: cylinder lateral
-// surface and cube/diamond/etc. all looked lit "backwards" relative
-// to a sun above. Hemispheres were unaffected because they compute
-// position-based outward normals (not face cross-products).
+// Caller passes CCW-from-outside (v0, v1, v2). Empirically Godot's
+// rasterizer treats our (v0, v2, v1) emission as the front face here
+// (despite the docs saying CCW-from-camera = front), so we keep the
+// flip. The standard right-hand-rule outward face normal — computed
+// from the original CCW input — is what the lit shader uses; that
+// fixes the inverted-normal bug without disturbing the winding the
+// rasterizer was already happy with.
 void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
 		const Vector3 &v2, bool e0_boundary, bool e1_boundary, bool e2_boundary) const {
 	const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
@@ -2148,16 +2185,18 @@ void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3
 	const Vector2 bary_uv (e0_boundary ? h0 : NN, e1_boundary ? h1 : NN);
 	const Vector2 bary_uv2(e2_boundary ? h2 : NN, 0.0f);
 
-	// Emit (v0, v1, v2) — CCW from outside, front-face per Godot's
-	// default CCW-front convention.
+	// Emit (v0, v2, v1) — flipped winding the rasterizer treats as
+	// front-facing here. Vertex normals stay outward (computed above)
+	// so the lit shader uses the correct direction regardless of what
+	// the rasterizer's front-face determination is.
 	geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 	geo.tri_bary_colors.push_back(bary_v0);
 	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
-	geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
-	geo.tri_bary_colors.push_back(bary_v1);
-	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 	geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
 	geo.tri_bary_colors.push_back(bary_v2);
+	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+	geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
+	geo.tri_bary_colors.push_back(bary_v1);
 	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 }
 
@@ -2576,17 +2615,15 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 				const int ic = ia + W;
 				const int id = ic + 1;
 				const Vector3 va = verts[ia], vb = verts[ib], vc = verts[ic], vd = verts[id];
-				// Emit CCW-from-outside so Godot's cull_back front-shader
-				// renders the visible (outward-facing) hemisphere surface.
-				// Position-based outward normals already point away from
-				// the hemisphere centre.
+				// Flipped winding (v0, v2, v1) — matches `_add_mesh_face` /
+				// `_add_mesh_quad_face`. Position-based outward normals.
 				auto push = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2) {
 					const Vector3 n0 = (p0 - Vector3(0, center_y, 0)).normalized();
 					const Vector3 n1 = (p1 - Vector3(0, center_y, 0)).normalized();
 					const Vector3 n2 = (p2 - Vector3(0, center_y, 0)).normalized();
 					out_verts.push_back(p0); out_normals.push_back(n0);
-					out_verts.push_back(p1); out_normals.push_back(n1);
 					out_verts.push_back(p2); out_normals.push_back(n2);
+					out_verts.push_back(p1); out_normals.push_back(n1);
 				};
 				push(va, vb, vd);
 				push(va, vd, vc);
@@ -4003,12 +4040,15 @@ void SuperMarker3D::_rebuild_mesh() {
 	const bool is_mesh = (get_type() == TYPE_MESH);
 
 	if (is_mesh) {
-		// Mesh subtypes — identical vertex data is emitted multiple times
-		// as separate surfaces, each receiving a different material.
-		// One-sided: fill surface + bary surface (sphere: just one surface).
-		// Two-sided: back fill, back bary, front fill, front bary
-		//            (sphere: back sphere, front sphere).
-		// Capsule caps follow the same pattern after the cylinder surfaces.
+		// Mesh subtypes — single combined-shader surface per side
+		// (back when two_sided, then front). Sphere uses its analytic
+		// shader; other mesh subtypes use the BARY shader which now
+		// paints both fill and outline in one opaque pass — no more
+		// separate fill surface, which both halves the draw count and
+		// makes depth occlusion strict (single opaque pass writes
+		// depth fragment-by-fragment, so wheels-inside-bodies hide
+		// correctly).
+		// Capsule caps follow as additional sphere-shader surfaces.
 		if (geo.tri_bary_verts.size() > 0) {
 			Array a; a.resize(Mesh::ARRAY_MAX);
 			a[Mesh::ARRAY_VERTEX]  = geo.tri_bary_verts;
@@ -4017,17 +4057,9 @@ void SuperMarker3D::_rebuild_mesh() {
 			a[Mesh::ARRAY_TEX_UV]  = geo.tri_bary_uvs;
 			a[Mesh::ARRAY_TEX_UV2] = geo.tri_bary_uv2s;
 			if (_two_sided) {
-				// Back pass first (lower render_priority draws earlier).
-				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back fill / back sphere
-				if (_shape != MESH_SPHERE) {
-					_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back bary
-				}
+				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back
 			}
-			// Front pass.
-			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front fill / sphere
-			if (_shape != MESH_SPHERE) {
-				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front bary
-			}
+			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front
 		}
 		// Capsule hemisphere caps.
 		if (_shape == MESH_CAPSULE) {
