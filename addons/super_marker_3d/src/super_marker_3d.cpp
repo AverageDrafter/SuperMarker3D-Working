@@ -95,14 +95,10 @@ uniform float outline_thickness            = 0.05;
 
 void fragment() {
 	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
-	// DIAGNOSTIC: output min_dist directly as grayscale. If ortho and
-	// perspective views of the same body show DIFFERENT grayscale
-	// patterns for the same screen position, the per-fragment distance
-	// computation differs between projections — which would point at a
-	// perspective-correct interpolation issue or a fwidth side-effect.
-	// Expected: identical patterns regardless of projection.
-	float g = clamp(min_dist * 2.0, 0.0, 1.0);
-	ALBEDO = vec3(g);
+	float aa = max(fwidth(min_dist), 1.0e-5);
+	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+	if (outline_thickness <= 0.0) edge = 0.0;
+	ALBEDO = mix(fill_color.rgb, outline_color.rgb, edge);
 	ALPHA  = 1.0;
 }
 )";
@@ -117,13 +113,25 @@ void fragment() {
 // transparency, so we can stay opaque AND keep clean outlines.
 static const char *RM_UNSHADED      = "shader_type spatial;\nrender_mode unshaded, cull_back, depth_draw_opaque;\n";
 static const char *RM_LIT           = "shader_type spatial;\nrender_mode cull_back, depth_draw_opaque;\n";
-static const char *RM_UNSHADED_BACK = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_draw_never;\n";
-static const char *RM_LIT_BACK      = "shader_type spatial;\nrender_mode cull_front, depth_draw_never;\n";
+// Back-face variants used to be `depth_draw_never` — that was a leftover
+// from the transparent-queue era when the back shader's role was
+// painting the inside of the mesh without contributing to depth. With
+// the opaque-queue combined shader, we want depth from BOTH sides:
+// in perspective, fragments that hover near grazing angles can flip
+// between front-facing and back-facing winding interpretation per
+// Godot's rasterizer; if only the front-shader wrote depth, those
+// flipped fragments would silently leave a depth-hole that things
+// behind (like a wheel inside a body) would render through. With both
+// sides writing depth_draw_opaque, every rasterized fragment writes
+// its depth and the front-vs-back-shader split becomes purely about
+// the shading direction — depth occlusion is bullet-proof.
+static const char *RM_UNSHADED_BACK = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_draw_opaque;\n";
+static const char *RM_LIT_BACK      = "shader_type spatial;\nrender_mode cull_front, depth_draw_opaque;\n";
 // Always-on-top variants — depth_test_disabled so the surface ignores world
 // depth. Forces unshaded (lights/shadows are hidden when always_on_top is on),
 // so no LIT counterparts exist.
 static const char *RM_UNSHADED_TOP      = "shader_type spatial;\nrender_mode unshaded, cull_back, depth_draw_opaque, depth_test_disabled;\n";
-static const char *RM_UNSHADED_BACK_TOP = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_draw_never, depth_test_disabled;\n";
+static const char *RM_UNSHADED_BACK_TOP = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_draw_opaque, depth_test_disabled;\n";
 
 Ref<Shader> SuperMarker3D::_mesh_shader;
 Ref<Shader> SuperMarker3D::_mesh_shader_lit;
