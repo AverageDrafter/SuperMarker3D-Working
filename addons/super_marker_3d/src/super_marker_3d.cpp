@@ -1897,9 +1897,16 @@ void SuperMarker3D::_build_materials() {
 	if (is_mesh_type) {
 		const bool use_sphere_shader = (_shape == MESH_SPHERE);
 		const bool is_capsule        = (_shape == MESH_CAPSULE);
-		// Lazily compile each render_mode variant on first use.
+		// Lazily compile each render_mode variant on first use, and
+		// REFRESH the code if the Ref<Shader> survived a GDExtension
+		// hot-reload with stale code (common during development —
+		// Godot's static Ref<Shader> may persist across .dll reloads,
+		// holding the old shader source). Comparing get_code() to
+		// the freshly-built `code` ensures any code change actually
+		// reaches the shader without a full editor restart.
 		auto ensure_shader = [](Ref<Shader> &s, const String &code) {
-			if (s.is_null()) { s.instantiate(); s->set_code(code); }
+			if (s.is_null()) s.instantiate();
+			if (s->get_code() != code) s->set_code(code);
 		};
 		// always_on_top picks the *_top variant which adds
 		// `depth_test_disabled` to the render_mode — that is what makes
