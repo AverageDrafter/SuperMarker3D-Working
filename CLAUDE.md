@@ -32,25 +32,9 @@ SuperMarker3D-Working/
 
 ### Categories (v1.0 — locked)
 
-```
-Shape enum — single source of truth:
-  AXIS_PLAIN     6 lines along ±X ±Y ±Z, single outline_color
-  AXIS_XYZ       3 lines along +X +Y +Z, per-axis color override
-  AXIS_NEG_XYZ   6 lines along ±X ±Y ±Z, per-axis color override
-  AXIS_BURR      12 lines: AXIS_PLAIN + 6 more rotated 45° about each axis
-  MESH_SPHERE    UV sphere
-  MESH_BOX       cube (renamed from CUBE)
-  MESH_DIAMOND   octahedral
-  SHAPE_CROSS    flat cross
-  CURVE_FLAT     billboarded ribbon along Curve3D, with caps (DOT/ARROW/LINE)
-  CURVE_LINE_3D  tube extrusion along Curve3D
-  ARROW_FLAT     2D arrow (billboarded)
-  ARROW_EXTRUDED 3D arrow with shaft and head
-  FIGURE         humanoid: head_yaw, left/right arm direction (Vector3),
-                 leg pose (LEFT_FWD/RIGHT_FWD/TOGETHER)
-```
+`MarkerType` is the top-level dropdown (Axis / Mesh / Shape / Curve / Arrow / Figure). `Subtype` enumerates every variant; each value belongs to exactly one type. The canonical list — with frozen integer values for scene-file compatibility — is the `Subtype` enum in `addons/super_marker_3d/src/super_marker_3d.h`. Keep that header as the single source of truth and don't duplicate it here.
 
-Old names (CROSS, DIAMOND, SPHERE, AXIS, CUBE, ARROW, FLAT_ARROW, CURVE) remain as deprecated enum aliases through 1.x; emit `WARN_DEPRECATED_MSG` on use. v2.0 removes them.
+Old names (CROSS, DIAMOND, SPHERE, AXIS, CUBE, ARROW, FLAT_ARROW, CURVE) remain as deprecated enum aliases through 1.x and v2.0 removes them. They share integer values with their replacements (e.g. `SHAPE_CROSS == AXIS_CROSS == 0`), so a runtime use-site warning is not feasible — `set_subtype(int)` cannot tell them apart. Aliases are documented as deprecated in `super_marker_3d.h` and the F1 class XML; that is the only signal users see.
 
 ### API stability
 

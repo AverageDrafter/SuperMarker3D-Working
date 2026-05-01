@@ -639,23 +639,6 @@ private:
 			bool e1_boundary = true,
 			bool e2_boundary = true) const;
 
-	/// Quad-face helper — emits 4 fan triangles meeting at `center`,
-	/// each owning one perimeter edge of the quad. `p0..p3` are CCW
-	/// from outside; `e01..e30` flag whether each perimeter edge is a
-	/// real face boundary. The two radial edges in each fan triangle
-	/// are always flagged internal so the shader skips outlining them.
-	/// Use this instead of two diagonal-split triangles for any flat
-	/// or near-flat quad face — the diagonal split creates corner
-	/// "outline tabs" along the diagonal direction; the center fan
-	/// has no diagonal corners and the per-edge outline strips meet
-	/// cleanly at the perimeter vertices.
-	void _add_mesh_quad(GeoBuf &geo,
-			const Vector3 &p0, const Vector3 &p1,
-			const Vector3 &p2, const Vector3 &p3,
-			const Vector3 &center,
-			bool e01_boundary, bool e12_boundary,
-			bool e23_boundary, bool e30_boundary) const;
-
 	/// Quad face emitted as a 2-triangle diagonal split where each
 	/// vertex carries the perpendicular distance to all FOUR perimeter
 	/// edges of the quad (not the local triangle's edges). The shader

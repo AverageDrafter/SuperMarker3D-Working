@@ -1,0 +1,19 @@
+[gd_scene format=3 uid="uid://bei3ie1h1xv76"]
+
+[ext_resource type="Shape3D" uid="uid://dy5hrhk7uxkqt" path="res://marker_convex.tres" id="1_q274h"]
+
+[node name="SuperMarkerMobile" type="Node3D" unique_id=773152739]
+
+[node name="VehicleBody3D" type="VehicleBody3D" parent="." unique_id=729454018]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="VehicleBody3D" unique_id=161604659]
+shape = ExtResource("1_q274h")
+
+[node name="Body" type="SuperMarker3D" parent="." unique_id=819050772]
+type = 1
+subtype = 16
+outline_color = Color(0.3137255, 0.078431375, 0.078431375, 1)
+outline_thickness = 0.07
+capsule_height = 1.0
+fill_color = Color(0.7058824, 0.23529412, 0.23529412, 1)
+transform = Transform3D(-1.0932218e-07, -5, 0, 2.501, -2.1855695e-07, 0, 0, 0, 5, 0, 0, 0)

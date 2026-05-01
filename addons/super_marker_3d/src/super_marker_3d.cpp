@@ -673,7 +673,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Sphere:2,Cube:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16";
 				break;
 			case TYPE_SHAPE:
-				p_property.hint_string = "Circle:17,Square:18,Diamond:19,Triangle:20,Capsule:21,X:22";
+				p_property.hint_string = "Circle:17,Square:18,Diamond:19,Triangle:20,Capsule:21,X:22,Arrow:6";
 				break;
 			case TYPE_CURVE:
 				// Legacy CURVE_FLAT(7) and CURVE_LINE_3D(9) are hidden from
@@ -682,7 +682,10 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Line:23,Right Angle:24,Arc:25,Sine:26,Helix:27,Bezier:28,Custom:29";
 				break;
 			case TYPE_ARROW:
-				p_property.hint_string = "Extruded:5,Flat:6";
+				// Flat moved to TYPE_SHAPE. ARROW stays a top-level type
+				// for the 3D extruded arrow until the universal extrude
+				// feature lands (which will fold this back into Shape).
+				p_property.hint_string = "Extruded:5";
 				break;
 			case TYPE_FIGURE:
 				p_property.hint_string = "Figure:10";
@@ -759,9 +762,18 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "marker_size" && is_axis) hide();
 	if (name == "outline_color" && is_axis_xyz) hide();
 
-	if ((name == "head_length" || name == "head_width") && !is_arrow) hide();
-	if (name == "arrowhead_style" && !is_arrow) hide();
+	// Arrow proportions: head_length / head_width apply to BOTH the 3D
+	// extruded arrow AND the flat-arrow shape (now under TYPE_SHAPE).
+	// arrowhead_style and tail_* are extruded-only (the flat-arrow
+	// generator doesn't read them).
+	const bool is_arrow_subtype = (_shape == ARROW_EXTRUDED || _shape == ARROW_FLAT);
+	if ((name == "head_length" || name == "head_width") && !is_arrow_subtype) hide();
+	if (name == "arrowhead_style" && _shape != ARROW_EXTRUDED) hide();
 	if ((name == "tail_style" || name == "tail_length") && _shape != ARROW_EXTRUDED) hide();
+	// rounded_corners on ARROW_FLAT isn't wired yet — its outline disc
+	// blobs are unconditional. Hide the toggle so the user doesn't see a
+	// dead control until the polish pass implements it.
+	if (name == "rounded_corners" && _shape == ARROW_FLAT) hide();
 
 	// Curve shape uses its own width; generic marker_size / outline_thickness don't apply.
 	if ((name == "marker_size" || name == "outline_thickness") && is_curve) hide();
@@ -931,13 +943,14 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 			return TYPE_MESH;
 		case FLAT_CIRCLE: case FLAT_SQUARE: case FLAT_DIAMOND:
 		case FLAT_TRIANGLE: case FLAT_CAPSULE: case FLAT_X:
+		case ARROW_FLAT: // 2D arrow lives in the Shape category alongside the other flat polys
 			return TYPE_SHAPE;
 		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
 		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
 		case CURVE_CUSTOM:
 		case CURVE_FLAT: case CURVE_LINE_3D: // legacy aliases
 			return TYPE_CURVE;
-		case ARROW_EXTRUDED: case ARROW_FLAT:
+		case ARROW_EXTRUDED:
 			return TYPE_ARROW;
 		case FIGURE:
 			return TYPE_FIGURE;
@@ -1838,18 +1851,18 @@ void SuperMarker3D::_build_materials() {
 			}
 		}
 
-		Ref<Shader> fill_s        = _always_on_top ? _mesh_shader_top
-		                          : effective_lit ? _mesh_shader_lit         : _mesh_shader;
-		Ref<Shader> bary_s        = _always_on_top ? _bary_shader_top
-		                          : effective_lit ? _bary_shader_lit         : _bary_shader;
-		Ref<Shader> sphere_s      = _always_on_top ? _sphere_shader_top
-		                          : effective_lit ? _sphere_shader_lit       : _sphere_shader;
-		Ref<Shader> fill_s_back   = _always_on_top ? _mesh_shader_back_top
-		                          : effective_lit ? _mesh_shader_back_lit    : _mesh_shader_back;
-		Ref<Shader> bary_s_back   = _always_on_top ? _bary_shader_back_top
-		                          : effective_lit ? _bary_shader_back_lit    : _bary_shader_back;
-		Ref<Shader> sphere_s_back = _always_on_top ? _sphere_shader_back_top
-		                          : effective_lit ? _sphere_shader_back_lit  : _sphere_shader_back;
+		// Pick the active variant from the {top, lit, unshaded} triplet
+		// per shader family. always_on_top wins over lit (UI use case
+		// forces unshaded) — same precedence the ensure_shader block above.
+		auto pick = [&](Ref<Shader> &top_v, Ref<Shader> &lit_v, Ref<Shader> &un_v) -> Ref<Shader> {
+			return _always_on_top ? top_v : (effective_lit ? lit_v : un_v);
+		};
+		Ref<Shader> fill_s        = pick(_mesh_shader_top,        _mesh_shader_lit,        _mesh_shader);
+		Ref<Shader> bary_s        = pick(_bary_shader_top,        _bary_shader_lit,        _bary_shader);
+		Ref<Shader> sphere_s      = pick(_sphere_shader_top,      _sphere_shader_lit,      _sphere_shader);
+		Ref<Shader> fill_s_back   = pick(_mesh_shader_back_top,   _mesh_shader_back_lit,   _mesh_shader_back);
+		Ref<Shader> bary_s_back   = pick(_bary_shader_back_top,   _bary_shader_back_lit,   _bary_shader_back);
+		Ref<Shader> sphere_s_back = pick(_sphere_shader_back_top, _sphere_shader_back_lit, _sphere_shader_back);
 
 		// Front-face fill material (priority 0).
 		if (_mesh_material.is_null()) _mesh_material.instantiate();
@@ -2041,21 +2054,6 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 	emit(p1, p2, p3, e23, false, e12);
 }
 
-void SuperMarker3D::_add_mesh_quad(GeoBuf &geo,
-		const Vector3 &p0, const Vector3 &p1, const Vector3 &p2, const Vector3 &p3,
-		const Vector3 &center,
-		bool e01, bool e12, bool e23, bool e30) const {
-	// 4 fan triangles, each with the quad's center as v0 and a
-	// consecutive pair of perimeter vertices as v1, v2. The edge
-	// opposite v0 is the perimeter edge — its boundary flag carries
-	// over from the caller. The two radial edges (center→pi) are
-	// flagged internal so the shader doesn't paint them.
-	_add_mesh_face(geo, center, p0, p1, e01, false, false);
-	_add_mesh_face(geo, center, p1, p2, e12, false, false);
-	_add_mesh_face(geo, center, p2, p3, e23, false, false);
-	_add_mesh_face(geo, center, p3, p0, e30, false, false);
-}
-
 // Mesh subtype face helper for triangle faces. Pushes one triangle with
 // per-vertex barycentric tag in COLOR.rgb plus the constant per-tri
 // heights (h0, h1, h2) in UV.xy + UV2.x. h_i = -1 marks edge i as
@@ -2119,31 +2117,33 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 	else             geo.add_line(a, b);
 }
 
-// Round 3D arrowhead at the tip of an axis arm. Geometry is a frustum
-// (truncated cone): base ring of radius `_axis_arrow_width` sits
-// `_axis_arrow_length` back from the tip; apex ring of radius
-// `_outline_thickness * 0.5` sits at the tip. So at thickness 0 the
-// apex collapses to a point (classic cone); at thickness > 0 the apex
-// matches the arm tube exactly so the tip carries the line's
-// thickness rather than pinching to a sharp dot.
+// Round 3D arrowhead at the tip of an axis arm. Curve-cap-style
+// EXTERNAL cone: base disk sits at the arm tip (`p_arm_len * dir`),
+// apex extends OUTWARD past the tip by `_axis_arrow_length` along the
+// arm direction, base radius = `_axis_arrow_width`. Sharp point.
 //
-// Closed front and back: an apex disk (visible when thickness > 0) and
-// a base disk (visible from behind so the arrowhead doesn't read as
-// hollow when the camera circles around).
+// The cone's base disk overlaps and buries the tube's hemisphere cap —
+// no z-fighting because they're co-planar at the same axis position
+// and share the same outline_color (or matching per-arm color in
+// AXIS_XYZ). No tangent-fitting math needed: arm tube ends cleanly at
+// the tip, arrow takes over from there.
 //
-// At width = 0 we fall back to a single line from base to tip in the
-// arm color — the user's "pixel length" indicator so the arm doesn't
-// visually vanish past the body.
+// Side effect of the new convention: the visible arm reaches
+// `p_arm_len + _axis_arrow_length`. Treat `axis_length_*` as the
+// SHAFT length and `axis_arrow_length` as the ADDITIONAL pointer past
+// the shaft. Cleaner mental model, simpler geometry.
+//
+// At width = 0 we fall back to a single line from tip outward — keeps
+// the arrow region visible even with no splay.
 //
 // `p_use_color` piggybacks `_add_tube_colored`'s color-array
 // bookkeeping so AXIS_XYZ keeps its per-arm color on the cone.
 void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		float p_arm_len, const Color &p_color, bool p_use_color) const {
 	if (_axis_arrow_length <= 0.0f || p_arm_len <= 0.0f) return;
-	const float head = MIN(_axis_arrow_length, p_arm_len * 0.9f);
 	const Vector3 d = dir.normalized();
-	const Vector3 tip = d * p_arm_len;
-	const Vector3 base_center = d * (p_arm_len - head);
+	const Vector3 base_center = d * p_arm_len;
+	const Vector3 tip         = base_center + d * _axis_arrow_length;
 
 	// Width = 0 → degenerate cone. Render a single line indicator so
 	// the arrow region stays visible even with no splay.
@@ -2154,41 +2154,7 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 	}
 
 	const float base_r = _axis_arrow_width;
-	const float R      = (_outline_thickness > 0.0f) ? _outline_thickness * 0.5f : 0.0f;
-
-	// Tangent join: when the cone is wider than the tube (typical case),
-	// fit the cone slant tangent to the tube's tip hemisphere instead of
-	// joining at the hemisphere equator. Apex ring sits at the tangent
-	// point on the dome — past the equator in +d, smaller than R — so the
-	// cone slant transitions smoothly into the dome's curve and the dome
-	// itself fills the cone's open tip. No apex disk is needed in this
-	// mode; the dome closes the geometry.
-	//
-	// External point E = (base_r, p_arm_len - head) in the (r, z) plane.
-	// Sphere centre  C = (0,      p_arm_len), radius R. Tangent point T is
-	// the forward-most tangent from E to the circle:
-	//   D² = base_r² + head²
-	//   L  = sqrt(D² - R²)
-	//   T_r = R*(base_r*R + head*L) / D²
-	//   T_z = p_arm_len + R*(base_r*L - head*R) / D²
-	const bool tangent_join = (R > 0.0f) && (base_r > R);
-	float apex_r;
-	Vector3 apex_center;
-	if (tangent_join) {
-		const float D2 = base_r * base_r + head * head;
-		const float L  = std::sqrt(MAX(D2 - R * R, 0.0f));
-		apex_r            = R * (base_r * R + head * L) / D2;
-		const float dz_off = R * (base_r * L - head * R) / D2;
-		apex_center = d * (p_arm_len + dz_off);
-	} else {
-		// Fallback: cone narrower than or equal to tube. No forward
-		// tangent exists; keep the classic apex-at-tip geometry with
-		// apex_r = R (or 0 when thickness=0). Apex disk closes the ring.
-		apex_r      = R;
-		apex_center = tip;
-	}
-
-	const int segs = 12;
+	const int   segs   = 12;
 	Vector3 up    = Math::abs(d.dot(Vector3(0, 1, 0))) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	Vector3 right = d.cross(up).normalized();
 	Vector3 up_p  = right.cross(d).normalized();
@@ -2205,11 +2171,10 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		}
 	}
 
-	// Pass 1 — base disks. Emitted first so that, under always_on_top
-	// (FLAG_DISABLE_DEPTH_TEST), the slant triangles drawn afterwards
-	// overdraw the disk wherever they share screen-space pixels. Without
-	// depth-test the GPU resolves overlaps by draw order alone, so the
-	// surface that should be in front must be the one drawn last.
+	// Pass 1 — base disk (closes the back of the cone, faces -d).
+	// Emitted first so under always_on_top (FLAG_DISABLE_DEPTH_TEST)
+	// the slant triangles drawn afterwards overdraw the disk wherever
+	// they share screen-space pixels.
 	const Vector3 back_n = -d;
 	for (int i = 0; i < segs; i++) {
 		float t0 = SM_TAU * (float)i / segs;
@@ -2218,15 +2183,14 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		Vector3 dir1 = std::cos(t1) * right + std::sin(t1) * up_p;
 		Vector3 b0 = base_center + dir0 * base_r;
 		Vector3 b1 = base_center + dir1 * base_r;
-
-		// Base disk — closes the back of the arrowhead, faces -d.
 		// Winding (base_center, b1, b0) under the flipped convention.
 		geo.outline_verts.push_back(base_center); geo.outline_normals.push_back(back_n);
 		geo.outline_verts.push_back(b1);          geo.outline_normals.push_back(back_n);
 		geo.outline_verts.push_back(b0);          geo.outline_normals.push_back(back_n);
 	}
 
-	// Pass 2 — slant + (fallback) apex disks.
+	// Pass 2 — slant. Single triangle per segment from base ring to
+	// apex point (apex collapses to `tip`, no apex disk needed).
 	for (int i = 0; i < segs; i++) {
 		float t0 = SM_TAU * (float)i / segs;
 		float t1 = SM_TAU * (float)(i + 1) / segs;
@@ -2234,39 +2198,20 @@ void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		Vector3 dir1 = std::cos(t1) * right + std::sin(t1) * up_p;
 		Vector3 b0 = base_center + dir0 * base_r;
 		Vector3 b1 = base_center + dir1 * base_r;
-		Vector3 a0 = apex_center + dir0 * apex_r;
-		Vector3 a1 = apex_center + dir1 * apex_r;
 
 		// Slant face normal — outward radial + slight axial component
-		// because the surface tilts inward toward apex. Cross product
-		// of two edges gives the geometric face normal; orient outward
-		// using the segment midpoint's radial direction.
-		Vector3 mid_radial = ((dir0 + dir1) * 0.5f);
-		Vector3 face_n = ((a1 - b0).cross(b1 - b0)).normalized();
+		// because the surface tilts inward toward apex. Geometric
+		// cross product of the two slant edges, oriented outward via
+		// the segment midpoint's radial direction.
+		Vector3 mid_radial = (dir0 + dir1) * 0.5f;
+		Vector3 face_n = ((tip - b0).cross(b1 - b0)).normalized();
 		if (face_n.dot(mid_radial) < 0.0f) face_n = -face_n;
 
-		// Side: two triangles per segment. Wind (b0, b1, a1) and
-		// (b0, a1, a0) — CCW from OUTSIDE the cone, matching the
+		// Wind (b0, b1, tip) — CCW from OUTSIDE the cone under the
 		// flipped tube/hemisphere convention.
-		geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-		geo.outline_verts.push_back(b1); geo.outline_normals.push_back(face_n);
-		geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
-		// Skip the second triangle when apex collapses to a point — it
-		// would be degenerate (zero area).
-		if (apex_r > 0.0f) {
-			geo.outline_verts.push_back(b0); geo.outline_normals.push_back(face_n);
-			geo.outline_verts.push_back(a1); geo.outline_normals.push_back(face_n);
-			geo.outline_verts.push_back(a0); geo.outline_normals.push_back(face_n);
-		}
-
-		// Apex disk — only emitted in the non-tangent fallback. In the
-		// tangent join case the tube's hemisphere cap closes the cone's
-		// open tip, so painting a disk here would cover the dome.
-		if (apex_r > 0.0f && !tangent_join) {
-			geo.outline_verts.push_back(tip); geo.outline_normals.push_back(d);
-			geo.outline_verts.push_back(a0);  geo.outline_normals.push_back(d);
-			geo.outline_verts.push_back(a1);  geo.outline_normals.push_back(d);
-		}
+		geo.outline_verts.push_back(b0);  geo.outline_normals.push_back(face_n);
+		geo.outline_verts.push_back(b1);  geo.outline_normals.push_back(face_n);
+		geo.outline_verts.push_back(tip); geo.outline_normals.push_back(face_n);
 	}
 	if (p_use_color) {
 		const int end = geo.outline_verts.size();
@@ -2406,17 +2351,14 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 	// real boundaries; the diagonal itself is flagged internal so the
 	// shader doesn't paint it.
 	//
-	// Why diagonal split instead of `_add_mesh_quad` (4-triangle center
-	// fan): the lateral face is a tall thin rectangle (chord ≪ height
-	// at low side counts). In a center fan the seam-side wedges have
-	// h = chord/2 — tiny — so the bary-distance strip floods the entire
-	// wedge for any modest outline_thickness. With a diagonal split each
-	// boundary edge sees its triangle's *full* quad dimension as h
-	// (chord length for seams, quad height for top/bottom chords), so
-	// strip widths scale correctly with outline_thickness regardless of
-	// aspect ratio. Caveat: each triangle still tapers the strip at one
-	// corner (where the diagonal meets the boundary) — much milder
-	// artifact than the 4-corner pinches the fan produced.
+	// Diagonal split (vs a 4-triangle center fan): the lateral face is
+	// a tall thin rectangle (chord ≪ height at low side counts). A
+	// center fan's seam-side wedges have h = chord/2 — tiny — so any
+	// modest outline_thickness floods the wedge with strip. The
+	// diagonal split below uses `_add_mesh_quad_face`, where each
+	// vertex carries the perpendicular distance to all four perimeter
+	// edges, so the strip math sees the full quad geometry and the
+	// diagonal becomes invisible to strip painting.
 	// 4-perimeter-distance quad face. Quad order (btm[i], top[i],
 	// top[j], btm[j]) is CCW from outside; edges in slot order are
 	// (left seam, top chord, right seam, bottom chord). All four
@@ -2691,13 +2633,14 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 	if (L <= 0.0001f) return;
 
 	const float radius = MAX(0.001f, _curve_width * 0.5f);
-	const int sides = 6;
+	const int   sides  = 8;
 
-	// Step ≈ 2 * radius — keeps each sub-tube about as long as its
-	// diameter, so curves stay smooth without runaway vertex counts.
-	auto step_for = [radius](float seg_len) {
-		return MAX(radius * 2.0f, seg_len / 256.0f);
-	};
+	// User-facing knob `_curve_segments` is the SOLID resolution across
+	// the full curve. Sub-spans (dashes) are subdivided proportionally
+	// at this density, with a 1-segment minimum so very short dashes
+	// still emit at least one ring-to-ring tube quad set.
+	const int   target_N    = MAX(_curve_segments, 4);
+	const float global_step = L_total / (float)target_N;
 
 	// Tangent at arc-length s, for end-cap orientation.
 	auto tangent_at = [&](float s) -> Vector3 {
@@ -2709,33 +2652,121 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 		return t.normalized();
 	};
 
-	// Helper: emit a tube run from arc-length sa→sb with hemisphere
-	// caps at both ends + interior joint blobs.
+	// Continuous mitered tube. Builds one cross-section ring per pivot
+	// in the bisector plane of the incoming/outgoing tangents — adjacent
+	// ring-to-ring quad strips share their boundary ring exactly, so
+	// inside overlap and outside gap on bends both vanish by
+	// construction. No more interior sphere-blob bandages.
+	//
+	// Ring basis is referenced to world-Y (same convention as the old
+	// per-segment _add_tube), so vertical-tangent helices may show a
+	// basis flip near the |bisect.dot(Y)| > 0.9 threshold; for typical
+	// horizontal helices and arcs this is invisible. (Parallel-transport
+	// frames would handle vertical tangents; deferred until needed.)
+	//
+	// Per-ring radius is scaled by a miter factor (1/cos(half-angle))
+	// clamped so a near-180° flip can't blow up the geometry.
 	auto emit_tube_run = [&](float sa, float sb) {
 		const float seg_len = sb - sa;
 		if (seg_len < 1e-4f) return;
-		const float step = step_for(seg_len);
-		const int subs = MAX(1, (int)Math::ceil(seg_len / step));
-		Vector3 prev = active->sample_baked(sa, true);
-		_add_sphere_blob(geo, prev, radius, 4, sides);
-		for (int i = 1; i <= subs; i++) {
-			float s = sa + seg_len * (float)i / subs;
-			Vector3 p = active->sample_baked(s, true);
-			_add_tube(geo, prev, p, radius, sides);
-			if (i < subs) _add_sphere_blob(geo, p, radius, 3, sides);
-			prev = p;
+
+		const int subs = MAX(1, (int)Math::ceil(seg_len / global_step));
+		const int Np   = subs + 1;
+
+		PackedVector3Array pos;     pos.resize(Np);
+		PackedVector3Array right_v; right_v.resize(Np);
+		PackedVector3Array up_v;    up_v.resize(Np);
+		PackedFloat32Array miter;   miter.resize(Np);
+
+		for (int i = 0; i < Np; i++) {
+			const float s = sa + seg_len * (float)i / (float)subs;
+			pos.set(i, active->sample_baked(CLAMP(s, 0.0f, L_total), true));
 		}
-		_add_sphere_blob(geo, prev, radius, 4, sides);
+
+		for (int i = 0; i < Np; i++) {
+			Vector3 t_in, t_out;
+			if (i == 0)        { t_in = pos[1] - pos[0];   t_out = t_in; }
+			else if (i == Np-1){ t_in = pos[i] - pos[i-1]; t_out = t_in; }
+			else               { t_in = pos[i] - pos[i-1]; t_out = pos[i+1] - pos[i]; }
+			if (t_in.length_squared()  < 1e-12f) t_in  = t_out;
+			if (t_out.length_squared() < 1e-12f) t_out = t_in;
+			if (t_in.length_squared()  < 1e-12f) { t_in = Vector3(0,0,1); t_out = t_in; }
+			t_in.normalize(); t_out.normalize();
+
+			Vector3 bisect = t_in + t_out;
+			if (bisect.length_squared() < 1e-8f) bisect = t_in;
+			bisect.normalize();
+
+			const Vector3 ref_up = (Math::abs(bisect.dot(Vector3(0,1,0))) < 0.9f)
+					? Vector3(0,1,0) : Vector3(1,0,0);
+			Vector3 r = ref_up.cross(bisect).normalized();
+			Vector3 u = bisect.cross(r).normalized();
+			const float cos_half = std::sqrt(MAX(0.0f, (1.0f + t_in.dot(t_out)) * 0.5f));
+			const float m = (cos_half > 0.1f) ? (1.0f / cos_half) : 10.0f;
+
+			right_v.set(i, r);
+			up_v.set(i, u);
+			miter.set(i, m);
+		}
+
+		// Ring-to-ring tube quads. Wind matches `_add_tube` so the
+		// CULL_BACK convention is preserved.
+		for (int i = 0; i < subs; i++) {
+			const Vector3 &pa = pos[i];
+			const Vector3 &pb = pos[i + 1];
+			const Vector3 &ra = right_v[i];
+			const Vector3 &ua = up_v[i];
+			const Vector3 &rb = right_v[i + 1];
+			const Vector3 &ub = up_v[i + 1];
+			const float    Ra = radius * miter[i];
+			const float    Rb = radius * miter[i + 1];
+			for (int j = 0; j < sides; j++) {
+				const float a0 = SM_TAU * (float)j / sides;
+				const float a1 = SM_TAU * (float)(j + 1) / sides;
+				const float c0 = std::cos(a0), s0 = std::sin(a0);
+				const float c1 = std::cos(a1), s1 = std::sin(a1);
+				const Vector3 nA0 = ra * c0 + ua * s0;
+				const Vector3 nA1 = ra * c1 + ua * s1;
+				const Vector3 nB0 = rb * c0 + ub * s0;
+				const Vector3 nB1 = rb * c1 + ub * s1;
+				const Vector3 vA0 = pa + nA0 * Ra;
+				const Vector3 vA1 = pa + nA1 * Ra;
+				const Vector3 vB0 = pb + nB0 * Rb;
+				const Vector3 vB1 = pb + nB1 * Rb;
+
+				geo.outline_verts.push_back(vA0); geo.outline_normals.push_back(nA0);
+				geo.outline_verts.push_back(vB1); geo.outline_normals.push_back(nB1);
+				geo.outline_verts.push_back(vB0); geo.outline_normals.push_back(nB0);
+				geo.outline_verts.push_back(vA0); geo.outline_normals.push_back(nA0);
+				geo.outline_verts.push_back(vA1); geo.outline_normals.push_back(nA1);
+				geo.outline_verts.push_back(vB1); geo.outline_normals.push_back(nB1);
+			}
+		}
+
+		// Hemisphere caps at the run endpoints — flush-fit per the
+		// _add_hemisphere_cap contract. Tangent uses the local segment
+		// direction (same as `_add_tube`'s end-cap convention).
+		Vector3 tan_a = pos[1] - pos[0];
+		if (tan_a.length_squared() > 1e-12f) tan_a.normalize();
+		else tan_a = Vector3(0, 0, 1);
+		Vector3 tan_b = pos[subs] - pos[subs - 1];
+		if (tan_b.length_squared() > 1e-12f) tan_b.normalize();
+		else tan_b = tan_a;
+		_add_hemisphere_cap(geo, pos[0],    -tan_a, radius, sides, 4);
+		_add_hemisphere_cap(geo, pos[subs],  tan_b, radius, sides, 4);
 	};
 
 	// Pattern dispatch.
 	if (_curve_pattern == CURVE_PATTERN_DOT) {
-		// Sphere stamps. Cycle = diameter + gap → spheres just touch
-		// when gap = 0 and space out as gap grows.
+		// Sphere stamps. Diameter = dash_length (decoupled from tube
+		// radius so the user can size dots independently of the curve
+		// width). Cycle = diameter + gap → spheres just touch at gap=0
+		// and space out as gap grows.
+		const float dot_r = MAX(0.001f, _dash_length * 0.5f);
 		const float gap   = MAX(0.001f, _dash_gap);
-		const float cycle = (radius * 2.0f) + gap;
-		for (float s = radius; s <= L - radius + 1e-4f; s += cycle) {
-			_add_sphere_blob(geo, active->sample_baked(s, true), radius, 4, sides);
+		const float cycle = (dot_r * 2.0f) + gap;
+		for (float s = dot_r; s <= L - dot_r + 1e-4f; s += cycle) {
+			_add_sphere_blob(geo, active->sample_baked(s, true), dot_r, 4, sides);
 		}
 	} else if (_curve_pattern == CURVE_PATTERN_DASH) {
 		// Tube sub-segments separated by gaps. No geometry in the gaps —
@@ -2801,12 +2832,22 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 			// arbitrary `up_p`. Matches the flat ribbon's perp choice.
 			// Linked = SYMMETRIC (both halves of length sx); unlinked
 			// = independent legs (sx on the −perp side, sy on the +perp).
+			//
+			// Shifted along the HORIZONTAL projection of `dir` by 2*radius
+			// so the bar tube sits flush with the main tube's hemisphere
+			// end-cap and stays in the world XZ plane (matches the flat
+			// ribbon's pad-style cap; the bar reads as a horizontal stop
+			// plate even on a climbing helix).
 			Vector3 perp;
 			Vector3 wup(0, 1, 0);
 			if (Math::abs(dir.dot(wup)) > 0.98f) perp = Vector3(1, 0, 0);
 			else perp = wup.cross(dir).normalized();
-			Vector3 lo = linked ? (p - perp * sx) : (p - perp * sx);
-			Vector3 hi = linked ? (p + perp * sx) : (p + perp * sy);
+			Vector3 dir_h(dir.x, 0.0f, dir.z);
+			if (dir_h.length_squared() > 1e-8f) dir_h.normalize();
+			else dir_h = dir;
+			Vector3 cap_p = p + dir_h * (2.0f * radius);
+			Vector3 lo = linked ? (cap_p - perp * sx) : (cap_p - perp * sx);
+			Vector3 hi = linked ? (cap_p + perp * sx) : (cap_p + perp * sy);
 			_add_tube(geo, lo, hi, radius, sides);
 			_add_sphere_blob(geo, lo, radius, 3, sides);
 			_add_sphere_blob(geo, hi, radius, 3, sides);
@@ -3311,23 +3352,49 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	const float width  = MAX(0.001f, _curve_width);
 	const float half_w = width * 0.5f;
 
-	// Tessellation step — use curve's bake_interval, with a floor for safety.
-	float step = active->get_bake_interval();
-	if (step < 0.01f) step = 0.2f;
+	// Tessellation step driven by the user's `_curve_segments` knob —
+	// gives N quads across the full curve at SOLID, and proportional
+	// sub-segment counts on dashes (min 1 per dash). Drops the
+	// bake_interval-driven oversampling that was emitting hundreds of
+	// quads at default 0.05m intervals; the mesh export shrinks
+	// proportionally.
+	const int   _seg_N = MAX(_curve_segments, 4);
+	const float step   = L / (float)_seg_N;
 
-	// Perpendicular at arc-length s (ribbon-right vector in the horizontal plane).
-	// Tangent is estimated by a small central finite difference on the baked curve.
+	// Mitered ribbon-right offset at arc-length s. Returns a vector
+	// already scaled by half_w * miter, so adjacent quads sharing an
+	// arc-length boundary share their cross-section edge exactly —
+	// inside overlap and outside gap on bends both vanish by
+	// construction (no more disc-blob bandage at corners).
+	//
+	// Sampled at three points (s-eps, s, s+eps) to get incoming and
+	// outgoing tangents independently. The cross-section sits in the
+	// plane perpendicular to the bisector of those tangents, and the
+	// offset is scaled by 1/cos(half-angle) so the ribbon's projected
+	// width along EACH adjacent segment stays equal to half_w. Clamped
+	// at ~84° half-angle (cos_half = 0.1) so a near-180° flip doesn't
+	// blow up the offset.
 	auto perp_at = [&](float s) -> Vector3 {
 		const float eps = MIN(0.05f, L * 0.01f + 0.0001f);
-		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps), true);
-		Vector3 pb = active->sample_baked(MIN(L,    s + eps), true);
-		Vector3 tan = pb - pa;
-		if (tan.length_squared() < 1e-8f) return Vector3(1, 0, 0);
-		tan.normalize();
+		Vector3 p0 = active->sample_baked(MAX(0.0f, s - eps), true);
+		Vector3 p1 = active->sample_baked(CLAMP(s, 0.0f, L), true);
+		Vector3 p2 = active->sample_baked(MIN(L,    s + eps), true);
+		Vector3 t0 = p1 - p0;
+		Vector3 t1 = p2 - p1;
+		if (t0.length_squared() < 1e-12f) t0 = t1;
+		if (t1.length_squared() < 1e-12f) t1 = t0;
+		if (t0.length_squared() < 1e-12f) return Vector3(1, 0, 0) * half_w;
+		t0.normalize();
+		t1.normalize();
+		Vector3 bisect = t0 + t1;
+		if (bisect.length_squared() < 1e-8f) bisect = t0;
+		bisect.normalize();
 		const Vector3 up(0, 1, 0);
-		// If tangent is ≈ vertical, fall back to world-X so we don't get a zero cross.
-		if (Math::abs(tan.dot(up)) > 0.98f) return Vector3(1, 0, 0);
-		return up.cross(tan).normalized();
+		const Vector3 perp = (Math::abs(bisect.dot(up)) > 0.98f)
+				? Vector3(1, 0, 0) : up.cross(bisect).normalized();
+		const float cos_half = std::sqrt(MAX(0.0f, (1.0f + t0.dot(t1)) * 0.5f));
+		const float miter    = (cos_half > 0.1f) ? (1.0f / cos_half) : 10.0f;
+		return perp * (half_w * miter);
 	};
 
 	// Ribbon normal is always +Y — flat ribbon, two-sided material handles the underside.
@@ -3346,8 +3413,8 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 			float s1 = sa + (sb - sa) * (float)(k + 1) / (float)subs;
 			Vector3 p0 = active->sample_baked(s0, true);
 			Vector3 p1 = active->sample_baked(s1, true);
-			Vector3 r0 = perp_at(s0) * half_w;
-			Vector3 r1 = perp_at(s1) * half_w;
+			Vector3 r0 = perp_at(s0);
+			Vector3 r1 = perp_at(s1);
 			Vector3 v0 = p0 - r0, v1 = p0 + r0, v2 = p1 + r1, v3 = p1 - r1;
 			verts.push_back(v0); norms.push_back(n);
 			verts.push_back(v1); norms.push_back(n);
@@ -3367,10 +3434,12 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	if (_curve_pattern == CURVE_PATTERN_SOLID) {
 		emit_segment(0.0f, L_end, true);
 	} else if (_curve_pattern == CURVE_PATTERN_DOT) {
-		// Disc per stamp — radius = curve_width/2, lying in the ribbon
-		// plane (XZ, normal +Y). Cycle stride = diameter + gap, so dots
-		// just touch when gap = 0 and space out as gap grows.
-		const float radius = half_w;
+		// Disc per stamp — diameter = dash_length (decoupled from
+		// curve_width so the user can size dots independently of the
+		// ribbon width). Discs lie in the ribbon plane (XZ, normal +Y).
+		// Cycle stride = diameter + gap, so dots just touch at gap = 0
+		// and space out as gap grows.
+		const float radius = MAX(0.001f, _dash_length * 0.5f);
 		const float gap    = MAX(0.001f, _dash_gap);
 		const float cycle  = (radius * 2.0f) + gap;
 		const int   DISC_SEGS = 16;
@@ -3398,25 +3467,9 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		}
 	}
 
-	// Corner discs at every INTERIOR curve point. The ribbon is built
-	// from per-segment quads whose perpendicular flips abruptly at sharp
-	// turns (Right Angle's L-bend, hand-authored polylines), producing
-	// a visible inner overlap + outer gap. A disc of radius half_w
-	// stamped at each pivot fills the outer gap and covers the inner
-	// overlap; both share `outline_color`, so any z-fighting between
-	// the disc and ribbon quads renders the same colour. Skipped on
-	// dashed/dotted patterns (the gaps already break visual continuity)
-	// and on smoothly-sampled presets (no abrupt perp flip).
-	if (_curve_pattern == CURVE_PATTERN_SOLID) {
-		const bool sampled_smooth = (_shape == CURVE_ARC || _shape == CURVE_SINE
-				|| _shape == CURVE_HELIX || _shape == CURVE_BEZIER);
-		if (!sampled_smooth) {
-			const int pc = active->get_point_count();
-			for (int i = 1; i < pc - 1; i++) {
-				_add_disc_blob(geo, active->get_point_position(i), half_w, 16);
-			}
-		}
-	}
+	// (No corner-disc bandage: mitered cross-sections in `perp_at` make
+	// adjacent quads share their boundary edge cleanly — outside gap
+	// and inside overlap on bends both vanish by construction.)
 
 	// Endcaps — ARROW/DOT/LINE stamped at s=0 (pointing back) and s=L_end (pointing forward).
 	// Each cap has its own Vector2 size + linked flag, interpreted per cap kind:
@@ -3455,9 +3508,15 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 
 		if (cap == CURVE_CAP_ARROW) {
 			// Flat triangle: tip extends along tangent by sy, base half-width = sx.
+			// Same winding-direction story as CURVE_CAP_LINE below — the
+			// natural (tip, lt, rt) order winds CW from above for END
+			// caps but CCW for START caps (because `out` is negated for
+			// start, and `right` only gets re-flipped on END). Swap lt
+			// and rt on START so both ends light from above consistently.
 			Vector3 tip = p + out   * sy;
 			Vector3 lt  = p + right * sx;
 			Vector3 rt  = p - right * sx;
+			if (is_start) std::swap(lt, rt);
 			geo.outline_verts.push_back(tip); geo.outline_normals.push_back(n);
 			geo.outline_verts.push_back(lt);  geo.outline_normals.push_back(n);
 			geo.outline_verts.push_back(rt);  geo.outline_normals.push_back(n);
@@ -3474,29 +3533,66 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 				geo.outline_verts.push_back(p1); geo.outline_normals.push_back(n);
 			}
 		} else if (cap == CURVE_CAP_LINE) {
-			// Perpendicular bar. Thickness = curve_width (same as main ribbon).
-			// Linked: SYMMETRIC (sx in -perp + sx in +perp); both halves
-			// visible. Unlinked: independent (sx left, sy right) so the
-			// user can dial in the asymmetric "one-lane" / long-arm cap.
+			// Horizontal "pad" / stop plate (thinking of it as a starting
+			// pad or landing pad). Built from the HORIZONTAL projection
+			// of `out`, so the slab always lies flat in the world XZ
+			// plane regardless of the curve tangent's vertical
+			// component — at the start of a climbing helix `out` tilts
+			// downward and would otherwise plant the slab into the
+			// ground. (For a tangent-aligned ramp/launcher use ARROW;
+			// LINE is the flat pad variant.)
+			//
+			// Linked: SYMMETRIC (sx in −perp + sx in +perp). Unlinked:
+			// independent (sx left, sy right) for asymmetric one-sided pads.
+			//
+			// Winding flips between start and end caps because `out_h`
+			// reverses direction; that sign flip is folded back here so
+			// the geometric face normal is +Y at both ends and the
+			// hardcoded +Y vertex normal lights both consistently.
+			Vector3 out_h(out.x, 0.0f, out.z);
+			if (out_h.length_squared() > 1e-8f) out_h.normalize();
+			else out_h = out; // curve tangent is purely vertical — fall back
+			Vector3 right_h = Vector3(0, 1, 0).cross(out_h).normalized();
+			if (!is_start) right_h = -right_h;
+
 			Vector3 left_end, right_end;
 			if (linked) {
-				left_end  = p - right * sx;
-				right_end = p + right * sx;
+				left_end  = p - right_h * sx;
+				right_end = p + right_h * sx;
 			} else {
-				left_end  = p - right * sx;
-				right_end = p + right * sy;
+				left_end  = p - right_h * sx;
+				right_end = p + right_h * sy;
 			}
-			Vector3 bo = out * (width * 0.5f);
-			Vector3 v0 = left_end  - bo;
-			Vector3 v1 = left_end  + bo;
-			Vector3 v2 = right_end + bo;
-			Vector3 v3 = right_end - bo;
-			geo.outline_verts.push_back(v0); geo.outline_normals.push_back(n);
-			geo.outline_verts.push_back(v1); geo.outline_normals.push_back(n);
-			geo.outline_verts.push_back(v2); geo.outline_normals.push_back(n);
-			geo.outline_verts.push_back(v0); geo.outline_normals.push_back(n);
-			geo.outline_verts.push_back(v2); geo.outline_normals.push_back(n);
-			geo.outline_verts.push_back(v3); geo.outline_normals.push_back(n);
+			Vector3 bo = out_h * width;
+			Vector3 vA = left_end;
+			Vector3 vB = left_end  + bo;
+			Vector3 vC = right_end + bo;
+			Vector3 vD = right_end;
+
+			// Match the ribbon body's winding so Godot's front-face
+			// convention treats the TOP of the slab as the lit side
+			// (the ribbon emits CW from above, which is what Godot's
+			// CULL_BACK / shadow-receive logic expects for "this face
+			// catches light from above"). `out_h` reverses direction
+			// between start and end caps; the natural (vA, vB, vC, vD)
+			// order winds CW for END (correct) but CCW for START
+			// (renders shadow-side up — exactly the bug we were
+			// chasing). Flip the START emission order to compensate.
+			if (is_start) {
+				geo.outline_verts.push_back(vA); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vD); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vC); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vA); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vC); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vB); geo.outline_normals.push_back(n);
+			} else {
+				geo.outline_verts.push_back(vA); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vB); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vC); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vA); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vC); geo.outline_normals.push_back(n);
+				geo.outline_verts.push_back(vD); geo.outline_normals.push_back(n);
+			}
 		}
 	};
 	emit_cap(_curve_start_cap, 0.0f, true,  _start_cap_size, _start_cap_linked);

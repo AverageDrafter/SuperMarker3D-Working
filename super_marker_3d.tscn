@@ -5,21 +5,19 @@
 [sub_resource type="BoxMesh" id="BoxMesh_4j8hf"]
 
 [node name="SuperMarker3D" type="SuperMarker3D" unique_id=29451092]
-type = 3
-subtype = 27
+subtype = 8
 outline_color = Color(0.12941177, 1, 0, 1)
-outline_thickness = 0.131
+outline_thickness = 0.127
 fill_enabled = true
-axis_link_mode = 2
-axis_length_x_pos = 1.69
-axis_length_x_neg = 1.293
-axis_length_y_pos = 1.995
-axis_length_y_neg = 0.897
-axis_length_z_pos = 0.932
-axis_length_z_neg = 1.69
+axis_length_x_pos = 0.911
+axis_length_x_neg = 0.911
+axis_length_y_pos = 0.911
+axis_length_y_neg = 0.911
+axis_length_z_pos = 0.911
+axis_length_z_neg = 0.911
 axis_arrows = true
-axis_arrow_length = 0.051
-axis_arrow_width = 0.105
+axis_arrow_length = 0.152
+axis_arrow_width = 0.07
 axis_color_x_pos = Color(1, 0.039215688, 0.039215688, 1)
 axis_color_x_neg = Color(0.15686275, 0.039215688, 0.039215688, 1)
 axis_color_y_pos = Color(0.039215688, 1, 0.039215688, 1)
