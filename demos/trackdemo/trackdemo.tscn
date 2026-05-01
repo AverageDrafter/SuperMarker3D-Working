@@ -1,10 +1,7 @@
-[gd_scene load_steps=6 format=3 uid="uid://b3ilfjprp70l5"]
+[gd_scene format=3 uid="uid://b3ilfjprp70l5"]
 
 [ext_resource type="Script" uid="uid://cpuj0l0ud3goa" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
-
-[sub_resource type="Curve3D" id="Curve3D_4j8hf"]
-
-[sub_resource type="BoxMesh" id="BoxMesh_4j8hf"]
+[ext_resource type="Shape3D" uid="uid://bl8c6tn32f4tn" path="res://Helix Track.tres" id="2_655f5"]
 
 [sub_resource type="ProceduralSkyMaterial" id="Sky_default"]
 sky_horizon_color = Color(0.6477, 0.6939, 0.7351, 1)
@@ -20,16 +17,20 @@ ambient_light_source = 3
 tonemap_mode = 2
 glow_enabled = true
 
+[sub_resource type="Curve3D" id="Curve3D_4j8hf"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_4j8hf"]
+
 [node name="Node3D" type="Node3D" unique_id=1359668448]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1367347538]
 environment = SubResource("Env_default")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.707, -0.707, 0, 0.707, 0.707, 0, 30, 0)
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1599229044]
+transform = Transform3D(1, 0, 0, 0, -0.42261833, 0.90630776, 0, -0.90630776, -0.42261833, 0, 0, 0)
 shadow_enabled = true
 
-[node name="FlyingCamera" type="Camera3D" parent="."]
+[node name="FlyingCamera" type="Camera3D" parent="." unique_id=594741911]
 transform = Transform3D(0.707, 0, -0.707, -0.05, 0.996, -0.05, 0.705, 0.071, 0.705, 50, 20, 50)
 current = true
 far = 1000.0
@@ -81,6 +82,7 @@ lights_and_shadows = true
 [node name="StaticBody3D" type="StaticBody3D" parent="HelixTrack" unique_id=574428605]
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="HelixTrack/StaticBody3D" unique_id=1761647412]
+shape = ExtResource("2_655f5")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=49429962]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09686518, 0, -0.09216046)

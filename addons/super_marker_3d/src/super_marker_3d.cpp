@@ -95,15 +95,14 @@ uniform float outline_thickness            = 0.05;
 
 void fragment() {
 	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
-	float aa = max(fwidth(min_dist), 1.0e-5);
-	// outline_thickness <= 0 -> threshold -aa..+aa straddles 0, so
-	// even min_dist=0 (right on an edge) reads as past the threshold;
-	// edge factor collapses to 0 across the whole face -> pure fill.
-	// Avoids a `return` early-out (Godot 4 disallows return in fragment).
-	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
-	if (outline_thickness <= 0.0) edge = 0.0;
-
-	ALBEDO = mix(fill_color.rgb, outline_color.rgb, edge);
+	// DIAGNOSTIC: output min_dist directly as grayscale. If ortho and
+	// perspective views of the same body show DIFFERENT grayscale
+	// patterns for the same screen position, the per-fragment distance
+	// computation differs between projections — which would point at a
+	// perspective-correct interpolation issue or a fwidth side-effect.
+	// Expected: identical patterns regardless of projection.
+	float g = clamp(min_dist * 2.0, 0.0, 1.0);
+	ALBEDO = vec3(g);
 	ALPHA  = 1.0;
 }
 )";

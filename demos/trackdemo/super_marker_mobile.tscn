@@ -1,19 +1,44 @@
 [gd_scene format=3 uid="uid://bei3ie1h1xv76"]
 
-[ext_resource type="Shape3D" uid="uid://dy5hrhk7uxkqt" path="res://marker_convex.tres" id="1_q274h"]
+[sub_resource type="BoxMesh" id="BoxMesh_hjd5n"]
+size = Vector3(4.453, 1.092, 1.657)
 
 [node name="SuperMarkerMobile" type="Node3D" unique_id=773152739]
 
 [node name="VehicleBody3D" type="VehicleBody3D" parent="." unique_id=729454018]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="VehicleBody3D" unique_id=161604659]
-shape = ExtResource("1_q274h")
-
-[node name="Body" type="SuperMarker3D" parent="." unique_id=819050772]
+[node name="Body" type="SuperMarker3D" parent="VehicleBody3D" unique_id=819050772]
 type = 1
 subtype = 16
 outline_color = Color(0.3137255, 0.078431375, 0.078431375, 1)
 outline_thickness = 0.07
-capsule_height = 1.0
+marker_size = 1.15
 fill_color = Color(0.7058824, 0.23529412, 0.23529412, 1)
-transform = Transform3D(-1.0932218e-07, -5, 0, 2.501, -2.1855695e-07, 0, 0, 0, 5, 0, 0, 0)
+two_sided = false
+lights_and_shadows = true
+transform = Transform3D(-1.9670125e-08, -1, 0, 0.45, -4.371139e-08, 0, 0, 0, 0.75, 0, 0, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="VehicleBody3D" unique_id=161604659]
+transform = Transform3D(-4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0, 0, 1, 0, 0, 0)
+
+[node name="VehicleWheel3D" type="VehicleWheel3D" parent="VehicleBody3D" unique_id=1952587891]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 1.1, -0.5, 0.635)
+wheel_radius = 0.337
+
+[node name="AnimatableBody3D" type="AnimatableBody3D" parent="VehicleBody3D/VehicleWheel3D" unique_id=1992455583]
+
+[node name="TireCollider" type="CollisionShape3D" parent="VehicleBody3D/VehicleWheel3D/AnimatableBody3D" unique_id=2096901115]
+transform = Transform3D(-4.371139e-08, -1, -4.371139e-08, 0, -4.371139e-08, 1, -1, 4.371139e-08, 1.9106855e-15, 0, 0, 0)
+
+[node name="TireMesh" type="SuperMarker3D" parent="VehicleBody3D/VehicleWheel3D" unique_id=572698282]
+type = 1
+subtype = 14
+outline_thickness = 0.03
+marker_size = 0.34
+lights_and_shadows = true
+transform = Transform3D(-4.371139e-08, -0.2, -4.371139e-08, 0, -8.742278e-09, 1, -1, 8.742278e-09, 1.9106855e-15, 0, 0, 0)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=1413384076]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.07052401, 0)
+visible = false
+mesh = SubResource("BoxMesh_hjd5n")
