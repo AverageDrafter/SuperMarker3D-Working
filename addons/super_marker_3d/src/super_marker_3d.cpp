@@ -1269,11 +1269,69 @@ static void _for_each_surface(const Ref<ArrayMesh> &primary,
 	for (int i = 0; i < arms.size(); i++) run(arms[i]);
 }
 
+// Bake the node's local scale into a position array. Component-wise
+// multiply since `get_scale()` is axis-aligned. Returns the input
+// unchanged for unit scale to skip the per-vertex copy.
+static PackedVector3Array _bake_scale_positions(const PackedVector3Array &src, const Vector3 &s) {
+	if (s.is_equal_approx(Vector3(1, 1, 1))) return src;
+	PackedVector3Array out;
+	out.resize(src.size());
+	for (int i = 0; i < src.size(); i++) {
+		const Vector3 v = src[i];
+		out.set(i, Vector3(v.x * s.x, v.y * s.y, v.z * s.z));
+	}
+	return out;
+}
+
+// Inverse-transpose for an axis-aligned scale: divide each normal
+// component by its scale, then renormalize. Uniform scale leaves
+// normalized direction unchanged; non-uniform scale needs this so a
+// stretched cube's face normals stay perpendicular to the stretched
+// faces.
+static PackedVector3Array _bake_scale_normals(const PackedVector3Array &src, const Vector3 &s) {
+	if (s.is_equal_approx(Vector3(1, 1, 1))) return src;
+	const Vector3 inv(s.x != 0.0f ? 1.0f / s.x : 0.0f,
+			s.y != 0.0f ? 1.0f / s.y : 0.0f,
+			s.z != 0.0f ? 1.0f / s.z : 0.0f);
+	PackedVector3Array out;
+	out.resize(src.size());
+	for (int i = 0; i < src.size(); i++) {
+		Vector3 n = src[i];
+		Vector3 scaled(n.x * inv.x, n.y * inv.y, n.z * inv.z);
+		if (scaled.length_squared() > 1e-12f) scaled.normalize();
+		out.set(i, scaled);
+	}
+	return out;
+}
+
+// Why bake scale into exported geometry: the live render uses the
+// node's transform (Godot applies scale at draw time), but exported
+// resources are typically reparented under StaticBody3D /
+// CollisionShape3D / MeshInstance3D nodes that the user wants at
+// scale = (1, 1, 1). Godot's collision shapes especially dislike
+// non-unit scale on their owners — non-uniform scale on a Shape3D
+// produces incorrect collisions. Baking the marker's local scale
+// at export time means the exported resource is the actual visible
+// shape and works correctly under any consumer transform.
+//
+// Rotation and translation are NOT baked — those belong to the
+// consumer's node transform. Just scale.
+
 Ref<ArrayMesh> SuperMarker3D::export_mesh() const {
 	Ref<ArrayMesh> out;
 	out.instantiate();
+	const Vector3 s = get_scale();
 	_for_each_surface(_mesh, _arm_meshes,
 			[&](Mesh::PrimitiveType prim, Array a) {
+		// Scale positions; transform normals via inverse-transpose so
+		// non-uniform scale doesn't skew them off-perpendicular.
+		a[Mesh::ARRAY_VERTEX] = _bake_scale_positions(a[Mesh::ARRAY_VERTEX], s);
+		if (a.size() > Mesh::ARRAY_NORMAL) {
+			Variant nv = a[Mesh::ARRAY_NORMAL];
+			if (nv.get_type() == Variant::PACKED_VECTOR3_ARRAY) {
+				a[Mesh::ARRAY_NORMAL] = _bake_scale_normals(nv, s);
+			}
+		}
 		out->add_surface_from_arrays(prim, a);
 	});
 	return out;
@@ -1284,10 +1342,11 @@ Ref<ConvexPolygonShape3D> SuperMarker3D::export_convex_shape() const {
 	// surfaces (axis arms at thickness=0, dashed-fill ribbons) are skipped —
 	// hulls of line points are degenerate.
 	PackedVector3Array points;
+	const Vector3 s = get_scale();
 	_for_each_surface(_mesh, _arm_meshes,
 			[&](Mesh::PrimitiveType prim, Array a) {
 		if (prim != Mesh::PRIMITIVE_TRIANGLES) return;
-		PackedVector3Array v = a[Mesh::ARRAY_VERTEX];
+		PackedVector3Array v = _bake_scale_positions(a[Mesh::ARRAY_VERTEX], s);
 		points.append_array(v);
 	});
 	Ref<ConvexPolygonShape3D> shape;
@@ -1301,10 +1360,11 @@ Ref<ConcavePolygonShape3D> SuperMarker3D::export_concave_shape() const {
 	// triangle. PRIMITIVE_TRIANGLES surfaces are already in that order;
 	// indexed surfaces (rare here, but possible) get expanded.
 	PackedVector3Array faces;
+	const Vector3 s = get_scale();
 	_for_each_surface(_mesh, _arm_meshes,
 			[&](Mesh::PrimitiveType prim, Array a) {
 		if (prim != Mesh::PRIMITIVE_TRIANGLES) return;
-		PackedVector3Array v = a[Mesh::ARRAY_VERTEX];
+		PackedVector3Array v = _bake_scale_positions(a[Mesh::ARRAY_VERTEX], s);
 		PackedInt32Array idx;
 		if (a.size() > Mesh::ARRAY_INDEX) {
 			Variant iv = a[Mesh::ARRAY_INDEX];
@@ -2014,7 +2074,7 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 		bool e01, bool e12, bool e23, bool e30) const {
 	auto emit = [&](const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
 			bool e0_b, bool e1_b, bool e2_b) {
-		const Vector3 face_n = ((v2 - v0).cross(v1 - v0)).normalized();
+		const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
 		const float dbl_area = (v1 - v0).cross(v2 - v0).length();
 		if (dbl_area < 1e-9f) return;
 		const float NN = -1.0f;
@@ -2026,16 +2086,17 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 		const Color bary_v2(0, 0, 1, 1);
 		const Vector2 bary_uv (e0_b ? h0 : NN, e1_b ? h1 : NN);
 		const Vector2 bary_uv2(e2_b ? h2 : NN, 0.0f);
-		// Winding-flip (v0, v2, v1) — same convention as `_add_mesh_face`,
-		// front-facing from outside given CCW-from-outside (v0, v1, v2).
+		// Emit (v0, v1, v2) directly — CCW from outside, outward face
+		// normal. Front-face per Godot's CCW-front convention; the
+		// front shader (cull_back) renders correctly lit from above.
 		geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 		geo.tri_bary_colors.push_back(bary_v0);
 		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
-		geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
-		geo.tri_bary_colors.push_back(bary_v2);
-		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 		geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
 		geo.tri_bary_colors.push_back(bary_v1);
+		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+		geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
+		geo.tri_bary_colors.push_back(bary_v2);
 		geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 	};
 
@@ -2059,12 +2120,19 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 // heights (h0, h1, h2) in UV.xy + UV2.x. h_i = -1 marks edge i as
 // INTERNAL (the bary shader skips it).
 //
-// Winding is flipped to (v0, v2, v1) — front-facing from outside under
-// Godot's CULL_BACK convention given a CCW-from-outside (v0, v1, v2)
-// caller-side input.
+// Caller passes CCW-from-outside (v0, v1, v2). Standard right-hand
+// cross product gives an OUTWARD face normal; emission is (v0, v1, v2)
+// directly (also CCW from outside) so Godot's CCW-front / cull_back
+// convention treats this as the front face. The earlier "winding flip"
+// here was a leftover that emitted CW + stored inverted normals — only
+// the back-face shader (cull_front, depth_draw_never, two-sided pass)
+// rendered the mesh and lit it from below. Symptom: cylinder lateral
+// surface and cube/diamond/etc. all looked lit "backwards" relative
+// to a sun above. Hemispheres were unaffected because they compute
+// position-based outward normals (not face cross-products).
 void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3 &v1,
 		const Vector3 &v2, bool e0_boundary, bool e1_boundary, bool e2_boundary) const {
-	const Vector3 face_n = ((v2 - v0).cross(v1 - v0)).normalized();
+	const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
 
 	const float double_area = (v1 - v0).cross(v2 - v0).length();
 	if (double_area < 1e-9f) return; // degenerate
@@ -2080,15 +2148,16 @@ void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3
 	const Vector2 bary_uv (e0_boundary ? h0 : NN, e1_boundary ? h1 : NN);
 	const Vector2 bary_uv2(e2_boundary ? h2 : NN, 0.0f);
 
-	// Emit (v0, v2, v1) winding flip.
+	// Emit (v0, v1, v2) — CCW from outside, front-face per Godot's
+	// default CCW-front convention.
 	geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 	geo.tri_bary_colors.push_back(bary_v0);
 	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
-	geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
-	geo.tri_bary_colors.push_back(bary_v2);
-	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 	geo.tri_bary_verts.push_back(v1); geo.tri_bary_normals.push_back(face_n);
 	geo.tri_bary_colors.push_back(bary_v1);
+	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
+	geo.tri_bary_verts.push_back(v2); geo.tri_bary_normals.push_back(face_n);
+	geo.tri_bary_colors.push_back(bary_v2);
 	geo.tri_bary_uvs.push_back(bary_uv); geo.tri_bary_uv2s.push_back(bary_uv2);
 }
 
@@ -2507,18 +2576,17 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 				const int ic = ia + W;
 				const int id = ic + 1;
 				const Vector3 va = verts[ia], vb = verts[ib], vc = verts[ic], vd = verts[id];
-				// Flipped winding (v0, v2, v1) so the front face points
-				// outward from the hemisphere centre, matching CULL_BACK.
+				// Emit CCW-from-outside so Godot's cull_back front-shader
+				// renders the visible (outward-facing) hemisphere surface.
+				// Position-based outward normals already point away from
+				// the hemisphere centre.
 				auto push = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2) {
-					const Vector3 n = (p0 - Vector3(0, center_y, 0)).normalized();
-					out_verts.push_back(p0);
-					out_verts.push_back(p2);
-					out_verts.push_back(p1);
-					Vector3 n1 = (p1 - Vector3(0, center_y, 0)).normalized();
-					Vector3 n2 = (p2 - Vector3(0, center_y, 0)).normalized();
-					out_normals.push_back(n);
-					out_normals.push_back(n2);
-					out_normals.push_back(n1);
+					const Vector3 n0 = (p0 - Vector3(0, center_y, 0)).normalized();
+					const Vector3 n1 = (p1 - Vector3(0, center_y, 0)).normalized();
+					const Vector3 n2 = (p2 - Vector3(0, center_y, 0)).normalized();
+					out_verts.push_back(p0); out_normals.push_back(n0);
+					out_verts.push_back(p1); out_normals.push_back(n1);
+					out_verts.push_back(p2); out_normals.push_back(n2);
 				};
 				push(va, vb, vd);
 				push(va, vd, vc);

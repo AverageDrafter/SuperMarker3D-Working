@@ -1,10 +1,39 @@
-[gd_scene format=3 uid="uid://b3ilfjprp70l5"]
+[gd_scene load_steps=6 format=3 uid="uid://b3ilfjprp70l5"]
+
+[ext_resource type="Script" uid="uid://cpuj0l0ud3goa" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
 
 [sub_resource type="Curve3D" id="Curve3D_4j8hf"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_4j8hf"]
 
+[sub_resource type="ProceduralSkyMaterial" id="Sky_default"]
+sky_horizon_color = Color(0.6477, 0.6939, 0.7351, 1)
+ground_horizon_color = Color(0.6477, 0.6939, 0.7351, 1)
+
+[sub_resource type="Sky" id="Sky_env"]
+sky_material = SubResource("Sky_default")
+
+[sub_resource type="Environment" id="Env_default"]
+background_mode = 2
+sky = SubResource("Sky_env")
+ambient_light_source = 3
+tonemap_mode = 2
+glow_enabled = true
+
 [node name="Node3D" type="Node3D" unique_id=1359668448]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_default")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.707, -0.707, 0, 0.707, 0.707, 0, 30, 0)
+shadow_enabled = true
+
+[node name="FlyingCamera" type="Camera3D" parent="."]
+transform = Transform3D(0.707, 0, -0.707, -0.05, 0.996, -0.05, 0.705, 0.071, 0.705, 50, 20, 50)
+current = true
+far = 1000.0
+script = ExtResource("1_flycam")
 
 [node name="HelixTrack" type="SuperMarker3D" parent="." unique_id=29451092]
 type = 3
