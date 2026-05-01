@@ -93,13 +93,18 @@ uniform vec4  fill_color    : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
 
+// Do NOT assign ALPHA here. In Godot 4, any write to ALPHA in
+// `fragment()` reclassifies the shader into the transparent queue,
+// which sorts per-object by object center — so under perspective
+// the wheel-inside-capsule pair flips draw order at certain camera
+// angles and the wheel renders through the body. `depth_draw_opaque`
+// in render_mode does not override that classification.
 void fragment() {
 	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
 	float aa = max(fwidth(min_dist), 1.0e-5);
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	if (outline_thickness <= 0.0) edge = 0.0;
 	ALBEDO = mix(fill_color.rgb, outline_color.rgb, edge);
-	ALPHA  = 1.0;
 }
 )";
 
@@ -2215,7 +2220,11 @@ void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3
 	const Vector2 uv_v1(D0_v1, D1_v1), uv2_v1(D2_v1, SKIP);
 	const Vector2 uv_v2(D0_v2, D1_v2), uv2_v2(D2_v2, SKIP);
 
-	// Emit (v0, v2, v1).
+	// Emit (v0, v2, v1) — Godot 4 treats CW-from-camera as front-facing
+	// (per project memory `project_curve_cap_winding.md`), so given a
+	// CCW-from-outside caller-side input, this flipped emission yields
+	// CW-from-camera = front-facing under cull_back. Natural CCW
+	// emission would be back-facing and culled.
 	geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 	geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
 	geo.tri_bary_uvs.push_back(uv_v0); geo.tri_bary_uv2s.push_back(uv2_v0);
