@@ -309,6 +309,8 @@ public:
 	void set_curve_turns(float p);          float get_curve_turns() const;
 	void set_curve_segments(int p);         int get_curve_segments() const;
 	void set_curve_width(float p);          float get_curve_width() const;
+	void set_curve_bank(float p);           float get_curve_bank() const;
+	void set_bank_easing(float p);          float get_bank_easing() const;
 	void set_curve_pattern(int p);          int get_curve_pattern() const;
 	void set_dash_length(float p);          float get_dash_length() const;
 	void set_dash_gap(float p);             float get_dash_gap() const;
@@ -338,11 +340,27 @@ public:
 	/// first and are overwritten where front faces overlap them.
 	void set_two_sided(bool p);  bool get_two_sided() const;
 
+	/// Reset the physics interpolation state on this marker's render
+	/// instances so the next frame draws at the current transform with
+	/// no blend from the previous one. Call after teleporting the
+	/// marker (or its parent) — otherwise the engine will draw a smear
+	/// from the old position to the new one for one render frame.
+	void reset_interpolation();
+
 	void set_template_mode(bool p);
 	bool is_template_mode() const { return _template_mode; }
 	RID get_mesh_rid() const;
 
 private:
+	// Physics interpolation state — `_xf_target` is the latest transform
+	// captured on a transform-change notification (per physics tick),
+	// `_xf_prev` is what it was the previous tick. Each render frame we
+	// lerp between them by the engine's physics-interpolation fraction
+	// so the visible mesh stays smooth between physics ticks even when
+	// the parent body translates/rotates fast (vehicle wheels, etc).
+	Transform3D _xf_prev;
+	Transform3D _xf_target;
+
 	int   _shape = SHAPE_CROSS;
 	float _marker_size = 0.5f;
 	int   _detail_mode = DETAIL_WIREFRAME;
@@ -431,6 +449,8 @@ private:
 	mutable Ref<Curve3D> _preset_curve;
 	mutable bool _preset_curve_dirty = true;
 	float _curve_width = 0.15f;
+	float _curve_bank  = 0.0f;
+	float _bank_easing = 0.15f;
 	int   _curve_pattern = CURVE_PATTERN_SOLID;
 	float _dash_length = 1.0f;
 	float _dash_gap = 0.5f;
@@ -653,6 +673,8 @@ private:
 			const Vector3 &p2, const Vector3 &p3,
 			bool e01_boundary, bool e12_boundary,
 			bool e23_boundary, bool e30_boundary) const;
+	void _add_flat_polygon_fan(GeoBuf &geo, const Vector3 &center,
+			const Vector3 *ring, int count) const;
 	void _gen_flat_circle(GeoBuf &geo) const;
 	void _gen_flat_square(GeoBuf &geo) const;
 	void _gen_flat_diamond(GeoBuf &geo) const;

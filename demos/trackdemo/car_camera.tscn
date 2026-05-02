@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://b8ccarcam001"]
+
+[ext_resource type="Script" path="res://demos/trackdemo/car_camera.gd" id="1_carcam"]
+
+[node name="CarCamera" type="Camera3D"]
+current = true
+far = 1000.0
+script = ExtResource("1_carcam")
+car_forward_local = Vector3(1, 0, 0)

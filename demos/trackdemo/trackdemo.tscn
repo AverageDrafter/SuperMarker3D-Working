@@ -1,7 +1,9 @@
 [gd_scene format=3 uid="uid://b3ilfjprp70l5"]
 
-[ext_resource type="Script" uid="uid://cpuj0l0ud3goa" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
-[ext_resource type="Shape3D" uid="uid://bl8c6tn32f4tn" path="res://Helix Track.tres" id="2_655f5"]
+[ext_resource type="Shape3D" uid="uid://bdeivca18ow3j" path="res://Helix.tres" id="1_2mnaj"]
+[ext_resource type="PackedScene" uid="uid://bei3ie1h1xv76" path="res://demos/trackdemo/super_marker_mobile.tscn" id="3_xbywn"]
+[ext_resource type="Shape3D" uid="uid://dghwvppep06w8" path="res://ground.tres" id="4_2mnaj"]
+[ext_resource type="PackedScene" uid="uid://b8ccarcam001" path="res://demos/trackdemo/car_camera.tscn" id="5_carcam"]
 
 [sub_resource type="ProceduralSkyMaterial" id="Sky_default"]
 sky_horizon_color = Color(0.6477, 0.6939, 0.7351, 1)
@@ -27,14 +29,8 @@ glow_enabled = true
 environment = SubResource("Env_default")
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=1599229044]
-transform = Transform3D(1, 0, 0, 0, -0.42261833, 0.90630776, 0, -0.90630776, -0.42261833, 0, 0, 0)
+transform = Transform3D(1, 0, 0, 0, 0.42261833, -0.90630776, 0, 0.90630776, 0.42261833, 0, 0, 0)
 shadow_enabled = true
-
-[node name="FlyingCamera" type="Camera3D" parent="." unique_id=594741911]
-transform = Transform3D(0.707, 0, -0.707, -0.05, 0.996, -0.05, 0.705, 0.071, 0.705, 50, 20, 50)
-current = true
-far = 1000.0
-script = ExtResource("1_flycam")
 
 [node name="HelixTrack" type="SuperMarker3D" parent="." unique_id=29451092]
 type = 3
@@ -63,17 +59,19 @@ head_length = 3.5
 head_width = 1.94
 curve_length = 30.0
 curve_amplitude = 20.0
-curve_segments = 42
+curve_segments = 84
 curve = SubResource("Curve3D_4j8hf")
-curve_width = 10.0
+curve_width = 20.0
+curve_bank = 1.5
+bank_easing = 0.5
 curve_pattern = 1
 dash_length = 5.0
 dash_gap = 5.0
 curve_start_cap = 3
-start_cap_size = Vector2(10, 10)
+start_cap_size = Vector2(20, 20)
 start_cap_linked = false
 curve_end_cap = 1
-end_cap_size = Vector2(10, 10)
+end_cap_size = Vector2(20, 20)
 end_cap_linked = false
 billboard_xz = true
 billboard_y = true
@@ -82,9 +80,32 @@ lights_and_shadows = true
 [node name="StaticBody3D" type="StaticBody3D" parent="HelixTrack" unique_id=574428605]
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="HelixTrack/StaticBody3D" unique_id=1761647412]
-shape = ExtResource("2_655f5")
+shape = ExtResource("1_2mnaj")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=49429962]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09686518, 0, -0.09216046)
 mesh = SubResource("BoxMesh_4j8hf")
 skeleton = NodePath("../HelixTrack")
+
+[node name="SuperMarkerMobile" parent="." unique_id=773152739 instance=ExtResource("3_xbywn")]
+transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, 20, 1, -7)
+
+[node name="CarCamera" parent="SuperMarkerMobile" unique_id=2054999540 instance=ExtResource("5_carcam")]
+transform = Transform3D(-4.1075268e-08, -0.34202015, 0.9396927, -1.4950174e-08, 0.9396927, 0.34202015, -1, 0, -4.3711392e-08, 5, 3, 0)
+target_path = NodePath("../VehicleBody3D")
+
+[node name="Ground" type="StaticBody3D" parent="." unique_id=910328485]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -5.0511937, 0)
+
+[node name="SuperMarker3D" type="SuperMarker3D" parent="Ground" unique_id=1030103907]
+type = 1
+subtype = 4
+outline_color = Color(0.56078434, 1, 0.63529414, 1)
+outline_thickness = 5.0
+marker_size = 50.0
+fill_color = Color(0.039215688, 0.078431375, 0.11764706, 1)
+lights_and_shadows = true
+transform = Transform3D(1, 0, 0, 0, 0.1, 0, 0, 0, 1, 0, 0, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=342858463]
+shape = ExtResource("4_2mnaj")
