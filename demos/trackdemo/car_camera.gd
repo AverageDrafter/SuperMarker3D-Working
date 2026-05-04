@@ -8,7 +8,7 @@ extends Camera3D
 ## roll/pitch on the target (e.g. when the car flips) won't tumble
 ## the camera.
 ##
-## Right stick / middle-mouse drag orbits around the target IMMEDIATELY
+## Right stick / right-mouse drag orbits around the target IMMEDIATELY
 ## (no smoothing on the user component, so you feel it). Releasing the
 ## input doesn't snap back — the camera glides back to the rest pose
 ## as the target moves forward, scaled by forward speed. So at a
@@ -73,7 +73,7 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb: InputEventMouseButton = event
 		match mb.button_index:
-			MOUSE_BUTTON_MIDDLE:
+			MOUSE_BUTTON_RIGHT:
 				_orbit_drag = mb.pressed
 			MOUSE_BUTTON_WHEEL_UP:
 				if mb.pressed:

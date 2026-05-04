@@ -8,19 +8,18 @@ extends VehicleBody3D
 
 @export var max_engine_force: float = 220.0
 @export var max_reverse_force: float = 140.0
-@export var max_brake: float = 6.0
-@export var max_steer: float = 0.55
+@export var max_brake: float = 25.0
+@export var max_steer: float = 0.45
 @export var steer_response: float = 2.0
 @export var throttle_response: float = 2.5
 @export var steer_speed_falloff: float = 0.025  # less steer at higher speed
 
-# Damping applied to the VehicleBody3D on _ready. Linear damp settles
-# fore-aft pumping under engine force; angular damp settles pitch/roll
-# oscillation from the wheel-body coupling. Tune on the body itself
-# (export overrides) per scene if needed.
+# Damping applied to the VehicleBody3D on _ready. Keep light — high angular
+# damp masks CoG/suspension issues but makes the car feel sluggish. Tune on
+# the body itself (export overrides) per scene if needed.
 @export var apply_damping: bool = true
-@export var body_linear_damp: float = 0.15
-@export var body_angular_damp: float = 2.5
+@export var body_linear_damp: float = 0.1
+@export var body_angular_damp: float = 1.0
 
 var _steer_wheels: Array[VehicleWheel3D] = []
 var _drive_wheels: Array[VehicleWheel3D] = []
