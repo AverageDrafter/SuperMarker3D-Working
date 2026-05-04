@@ -65,93 +65,124 @@ static const int CONE_SEGS = 16;
 // Outline at thickness 0: pass B early-discards every fragment, so the
 // mesh renders as pure fill from pass A. No AA bleed.
 
-// Bodies — render_mode line is concatenated at runtime (see RM_*).
-static const char *FILL_SHADER_BODY = R"(
-uniform vec4 fill_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
+// Shader bodies — render_mode line is built by _render_mode() and
+// concatenated at material-setup time. Each shader has an OPAQUE
+// variant (no ALPHA write → stays in opaque queue, perfect depth)
+// and a TRANSPARENT variant (writes ALPHA → uses blend_mix render
+// mode for proper alpha blending). _build_materials picks based on
+// whether any relevant color has alpha < 1.0.
 
+static const char *FILL_SHADER_OPAQUE = R"(
+uniform vec4 fill_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
+void fragment() { ALBEDO = fill_color.rgb; }
+)";
+static const char *FILL_SHADER_ALPHA = R"(
+uniform vec4 fill_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 void fragment() {
 	ALBEDO = fill_color.rgb;
 	ALPHA  = fill_color.a;
 }
 )";
 
-// Combined fill + outline shader for mesh subtypes. Opaque output —
-// stays in Godot's opaque queue (no blend_mix on render_mode) so
-// depth occlusion works fragment-by-fragment.
-//
-// Each vertex carries up to four perpendicular distances to face
-// boundary edges, packed into UV (d0, d1) and UV2 (d2, d3). Linear
-// barycentric interpolation across the triangle gives the correct
-// per-fragment perpendicular distance to each edge — for a quad
-// face that's split by a single diagonal, the four real perimeter
-// edges are all visible in the math everywhere, including across
-// the diagonal split (no diagonal-tab tapers like the bary*h
-// approach had). Sentinel value 1e8 marks an unused/internal slot
-// so its distance is too large to compete in `min`.
-static const char *BARY_SHADER_BODY = R"(
-uniform vec4  fill_color    : source_color = vec4(0.0, 1.0, 0.8, 1.0);
-uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
-uniform float outline_thickness            = 0.05;
+// Combined fill + outline shader for mesh subtypes. Each vertex
+// carries up to four perpendicular distances to face boundary edges
+// in UV (d0, d1) and UV2 (d2, d3). Sentinel value 1e8 marks
+// unused/internal slots. The shader paints an outline strip where
+// min(distances) < outline_thickness, fill elsewhere.
+// Common part: uniforms + vertex().
+static const char *BARY_SHADER_COMMON = R"(
+uniform vec4  fill_color       : source_color = vec4(0.0, 1.0, 0.8, 1.0);
+uniform vec4  outline_color    : source_color = vec4(0.0, 1.0, 0.8, 1.0);
+uniform vec4  background_color : source_color = vec4(0.0, 0.0, 0.0, 0.0);
+uniform float outline_thickness               = 0.05;
+uniform int billboard_mode = 0;
 
-// Writing to ALPHA reclassifies the shader into Godot's transparent
-// queue, which sorts per-object by object center — that's the bug we
-// hit with the wheel-inside-capsule renders-through case. The fix is
-// `render_mode depth_prepass_alpha` (set on each RM_* prefix below):
-// fragments at full opacity participate in the depth prepass and
-// occlude things behind them like an opaque shader, while genuinely
-// translucent fragments (fill_color.a < 1) blend on top normally.
+void vertex() {
+	if (billboard_mode == 1) {
+		vec3 cam_right = INV_VIEW_MATRIX[0].xyz;
+		vec3 cam_up    = INV_VIEW_MATRIX[1].xyz;
+		vec3 cam_fwd   = INV_VIEW_MATRIX[2].xyz;
+		MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
+			vec4(cam_right, 0.0), vec4(cam_up, 0.0),
+			vec4(cam_fwd, 0.0), MODEL_MATRIX[3]);
+		MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
+			vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0),
+			vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0),
+			vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0),
+			vec4(0.0, 0.0, 0.0, 1.0));
+		MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
+	} else if (billboard_mode == 2) {
+		vec3 cam_fwd = INV_VIEW_MATRIX[2].xyz;
+		vec3 dir = normalize(vec3(cam_fwd.x, 0.0, cam_fwd.z));
+		vec3 right = cross(vec3(0.0, 1.0, 0.0), dir);
+		MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
+			vec4(right, 0.0), vec4(vec3(0.0, 1.0, 0.0), 0.0),
+			vec4(dir, 0.0), MODEL_MATRIX[3]);
+		MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
+			vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0),
+			vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0),
+			vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0),
+			vec4(0.0, 0.0, 0.0, 1.0));
+		MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
+	}
+}
+)";
+// Opaque fragment — no ALPHA write, stays in opaque queue.
+// Discards fully-transparent fragments (background_color.a=0 gaps).
+static const char *BARY_FRAG_OPAQUE = R"(
 void fragment() {
+	if (!FRONT_FACING) NORMAL = -NORMAL;
 	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
 	float aa = max(fwidth(min_dist), 1.0e-5);
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	if (outline_thickness <= 0.0) edge = 0.0;
-	ALBEDO = mix(fill_color.rgb, outline_color.rgb, edge);
-	ALPHA  = mix(fill_color.a,   outline_color.a,   edge);
+	vec4 base = (COLOR.r > 0.5) ? background_color : fill_color;
+	float a = mix(base.a, outline_color.a, edge);
+	if (a < 0.01) discard;
+	ALBEDO = mix(base.rgb, outline_color.rgb, edge);
+}
+)";
+// Transparent fragment — writes ALPHA for proper alpha blending.
+// Requires blend_mix in the render_mode.
+static const char *BARY_FRAG_ALPHA = R"(
+void fragment() {
+	if (!FRONT_FACING) NORMAL = -NORMAL;
+	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+	float aa = max(fwidth(min_dist), 1.0e-5);
+	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+	if (outline_thickness <= 0.0) edge = 0.0;
+	vec4 base = (COLOR.r > 0.5) ? background_color : fill_color;
+	ALBEDO = mix(base.rgb, outline_color.rgb, edge);
+	ALPHA  = mix(base.a,   outline_color.a,   edge);
 }
 )";
 
-// render_mode prefixes. All mesh shaders are in the OPAQUE render
-// queue (no `blend_mix`) so depth-occlusion works strictly at the
-// fragment level — transparent-queue shaders sort by object-center
-// depth, which fails to correctly hide a wheel whose center is
-// closer to the camera but whose surface is behind a larger mesh's
-// surface (wheel-inside-capsule case). The combined fill+outline
-// shader uses a smoothstep color mix for AA edges instead of alpha
-// transparency, so we can stay opaque AND keep clean outlines.
-static const char *RM_UNSHADED      = "shader_type spatial;\nrender_mode unshaded, cull_back, depth_prepass_alpha;\n";
-static const char *RM_LIT           = "shader_type spatial;\nrender_mode cull_back, depth_prepass_alpha;\n";
-// Back-face variants used to be `depth_draw_never` — that was a leftover
-// from the transparent-queue era when the back shader's role was
-// painting the inside of the mesh without contributing to depth. With
-// the opaque-queue combined shader, we want depth from BOTH sides:
-// in perspective, fragments that hover near grazing angles can flip
-// between front-facing and back-facing winding interpretation per
-// Godot's rasterizer; if only the front-shader wrote depth, those
-// flipped fragments would silently leave a depth-hole that things
-// behind (like a wheel inside a body) would render through. With both
-// sides writing depth_prepass_alpha, every rasterized fragment writes
-// its depth and the front-vs-back-shader split becomes purely about
-// the shading direction — depth occlusion is bullet-proof.
-static const char *RM_UNSHADED_BACK = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_prepass_alpha;\n";
-static const char *RM_LIT_BACK      = "shader_type spatial;\nrender_mode cull_front, depth_prepass_alpha;\n";
-// Always-on-top variants — depth_test_disabled so the surface ignores world
-// depth. Forces unshaded (lights/shadows are hidden when always_on_top is on),
-// so no LIT counterparts exist.
-static const char *RM_UNSHADED_TOP      = "shader_type spatial;\nrender_mode unshaded, cull_back, depth_prepass_alpha, depth_test_disabled;\n";
-static const char *RM_UNSHADED_BACK_TOP = "shader_type spatial;\nrender_mode unshaded, cull_front, depth_prepass_alpha, depth_test_disabled;\n";
+// --- Shader cache + render-mode builder ---
+// Replaces the old fixed static Ref<Shader> members. Each unique
+// (render_mode + body) source string maps to one shared Shader object.
+HashMap<String, Ref<Shader>> SuperMarker3D::_shader_cache;
 
-Ref<Shader> SuperMarker3D::_mesh_shader;
-Ref<Shader> SuperMarker3D::_mesh_shader_lit;
-Ref<Shader> SuperMarker3D::_bary_shader;
-Ref<Shader> SuperMarker3D::_bary_shader_lit;
-Ref<Shader> SuperMarker3D::_mesh_shader_back;
-Ref<Shader> SuperMarker3D::_mesh_shader_back_lit;
-Ref<Shader> SuperMarker3D::_bary_shader_back;
-Ref<Shader> SuperMarker3D::_bary_shader_back_lit;
-Ref<Shader> SuperMarker3D::_mesh_shader_top;
-Ref<Shader> SuperMarker3D::_bary_shader_top;
-Ref<Shader> SuperMarker3D::_mesh_shader_back_top;
-Ref<Shader> SuperMarker3D::_bary_shader_back_top;
+Ref<Shader> SuperMarker3D::_cached_shader(const String &code) {
+	Ref<Shader> *p = _shader_cache.getptr(code);
+	if (p) return *p;
+	Ref<Shader> s;
+	s.instantiate();
+	s->set_code(code);
+	_shader_cache.insert(code, s);
+	return s;
+}
+
+// cull: 0=cull_back, 1=cull_front, 2=cull_disabled
+String SuperMarker3D::_render_mode(bool lit, int cull, bool transparent, bool top) {
+	static const char *cull_str[] = { "cull_back", "cull_front", "cull_disabled" };
+	String rm = "shader_type spatial;\nrender_mode ";
+	if (!lit) rm += "unshaded, ";
+	rm += cull_str[cull];
+	if (transparent) rm += ", blend_mix";
+	if (top) rm += ", depth_test_disabled";
+	rm += ";\n";
+	return rm;
+}
 
 // Sphere shader — paints lat/lon wireframe lines analytically from each
 // fragment's local-space position. Independent of the fill triangulation,
@@ -165,14 +196,11 @@ Ref<Shader> SuperMarker3D::_bary_shader_back_top;
 // Wireframe pattern: 5 latitudes (equator, ±30°, ±60°) and 12 meridians
 // (every 30° — 6 great-circles drawn, one through each fill-mesh edge
 // when SPHERE_FILL_LON = 12).
-static const char *SPHERE_SHADER_BODY = R"(
+static const char *SPHERE_SHADER_COMMON = R"(
 uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
 uniform float marker_size                  = 1.0;
-// Sphere centre in object space. Default (0,0,0) for plain sphere; for
-// the capsule's hemisphere caps the caller passes the hemisphere's
-// true centre so phi/theta are computed relative to it.
 uniform vec3  sphere_center                = vec3(0.0);
 
 const float SPHERE_PI = 3.14159265359;
@@ -183,60 +211,48 @@ varying vec3 v_local_pos;
 void vertex() {
 	v_local_pos = VERTEX - sphere_center;
 }
-
-void fragment() {
-	float edge = 0.0;
-	if (outline_thickness > 0.0) {
-		float min_dist = 1.0e9;
-		float r = length(v_local_pos);
-		if (r > 1.0e-5) {
-			float phi   = acos(clamp(v_local_pos.y / r, -1.0, 1.0));
-			float theta = atan(v_local_pos.z, v_local_pos.x);
-
-			// 5 latitudes by symmetry around the equator: |φ - π/2|
-			// matches one of {0, π/6, π/3} for an outline-painted lat.
-			float lat_off = abs(phi - SPHERE_PI * 0.5);
-			float d0 = lat_off;
-			float d1 = abs(lat_off - SPHERE_PI / 6.0);
-			float d2 = abs(lat_off - SPHERE_PI / 3.0);
-			float lat_diff = min(d0, min(d1, d2));
-			float lat_w = marker_size * lat_diff;
-
-			// Meridians every 30°. Folded modulo gives angular distance
-			// to nearest meridian in [0, MER_STEP/2]. Multiplying by
-			// sin(phi) converts that to perpendicular world distance on
-			// the sphere surface — constant line thickness at every
-			// latitude. Near the pole sin(phi) → 0, so the strips
-			// overlap and flood; the user explicitly wants this look.
-			float theta_off = abs(mod(theta + MER_STEP * 0.5, MER_STEP) - MER_STEP * 0.5);
-			float sin_phi   = sin(phi);
-			float mer_w     = marker_size * sin_phi * theta_off;
-
-			min_dist = min(lat_w, mer_w);
-		}
-
-		float aa = max(fwidth(min_dist), 1.0e-5);
-		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
-	}
-
-	// Alpha-weighted compositing: each layer contributes proportionally to
-	// its own alpha, so the outline's AA edge stays outline_color.rgb even
-	// when fill_color.a = 0 (no fill RGB bleed into the strip border).
-	float out_a  = outline_color.a * edge;
-	float fill_a = fill_color.a * (1.0 - edge);
-	ALPHA  = clamp(out_a + fill_a, 0.0, 1.0);
-	ALBEDO = (out_a * outline_color.rgb + fill_a * fill_color.rgb)
-	         / max(ALPHA, 1.0e-5);
-	if (ALPHA < 0.001) discard;
-}
 )";
+// Sphere edge-detection logic shared by both opaque/alpha fragments.
+#define SPHERE_FRAG_EDGE \
+"void fragment() {\n" \
+"	float edge = 0.0;\n" \
+"	if (outline_thickness > 0.0) {\n" \
+"		float min_dist = 1.0e9;\n" \
+"		float r = length(v_local_pos);\n" \
+"		if (r > 1.0e-5) {\n" \
+"			float phi   = acos(clamp(v_local_pos.y / r, -1.0, 1.0));\n" \
+"			float theta = atan(v_local_pos.z, v_local_pos.x);\n" \
+"			float lat_off = abs(phi - SPHERE_PI * 0.5);\n" \
+"			float d0 = lat_off;\n" \
+"			float d1 = abs(lat_off - SPHERE_PI / 6.0);\n" \
+"			float d2 = abs(lat_off - SPHERE_PI / 3.0);\n" \
+"			float lat_diff = min(d0, min(d1, d2));\n" \
+"			float lat_w = marker_size * lat_diff;\n" \
+"			float theta_off = abs(mod(theta + MER_STEP * 0.5, MER_STEP) - MER_STEP * 0.5);\n" \
+"			float sin_phi   = sin(phi);\n" \
+"			float mer_w     = marker_size * sin_phi * theta_off;\n" \
+"			min_dist = min(lat_w, mer_w);\n" \
+"		}\n" \
+"		float aa = max(fwidth(min_dist), 1.0e-5);\n" \
+"		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);\n" \
+"	}\n" \
+"	float out_a  = outline_color.a * edge;\n" \
+"	float fill_a = fill_color.a * (1.0 - edge);\n" \
+"	float a = clamp(out_a + fill_a, 0.0, 1.0);\n"
 
-Ref<Shader> SuperMarker3D::_sphere_shader;
-Ref<Shader> SuperMarker3D::_sphere_shader_lit;
-Ref<Shader> SuperMarker3D::_sphere_shader_back;
-Ref<Shader> SuperMarker3D::_sphere_shader_back_lit;
-Ref<Shader> SuperMarker3D::_sphere_shader_top;
-Ref<Shader> SuperMarker3D::_sphere_shader_back_top;
+static const char *SPHERE_FRAG_OPAQUE =
+SPHERE_FRAG_EDGE
+"	if (a < 0.01) discard;\n"
+"	ALBEDO = (out_a * outline_color.rgb + fill_a * fill_color.rgb)\n"
+"	         / max(a, 1.0e-5);\n"
+"}\n";
+
+static const char *SPHERE_FRAG_ALPHA =
+SPHERE_FRAG_EDGE
+"	ALPHA  = a;\n"
+"	ALBEDO = (out_a * outline_color.rgb + fill_a * fill_color.rgb)\n"
+"	         / max(a, 1.0e-5);\n"
+"}\n";
 
 // ---------------------------------------------------------------------------
 // GeoBuf helpers
@@ -371,6 +387,9 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fill_color", "color"), &SuperMarker3D::set_fill_color);
 	ClassDB::bind_method(D_METHOD("get_fill_color"), &SuperMarker3D::get_fill_color);
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "fill_color"), "set_fill_color", "get_fill_color");
+	ClassDB::bind_method(D_METHOD("set_background_color", "color"), &SuperMarker3D::set_background_color);
+	ClassDB::bind_method(D_METHOD("get_background_color"), &SuperMarker3D::get_background_color);
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "background_color"), "set_background_color", "get_background_color");
 
 	// Axis — link mode + 6 lengths. Sits in its own group so the
 	// inspector can collapse it. Axis Colors (XYZ-only) follows
@@ -582,6 +601,9 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_two_sided", "enabled"), &SuperMarker3D::set_two_sided);
 	ClassDB::bind_method(D_METHOD("get_two_sided"), &SuperMarker3D::get_two_sided);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "two_sided"), "set_two_sided", "get_two_sided");
+	ClassDB::bind_method(D_METHOD("set_flip_faces", "enabled"), &SuperMarker3D::set_flip_faces);
+	ClassDB::bind_method(D_METHOD("get_flip_faces"), &SuperMarker3D::get_flip_faces);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flip_faces"), "set_flip_faces", "get_flip_faces");
 
 	// Shape group — billboard flags, corner style, circle sides. Hidden for non-Shape types.
 	ADD_GROUP("Shape", "");
@@ -737,17 +759,20 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	const bool curve_flat_style = is_curve && _is_curve_flat_style();
 	// fill_color shows on every category that has a fillable interior.
 	if (name == "fill_color" && !(is_mesh || is_arrow || curve_flat_style || is_shape)) hide();
+	if (name == "background_color" && !is_curve) hide();
 	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
 			|| _shape == MESH_DIAMOND);
 	// Mesh group: hide entirely for non-Mesh types; mesh_sides further restricted to round subtypes.
 	if (name == "mesh_sides" && !is_mesh) hide();
 	if (name == "two_sided" && !(is_mesh || is_shape || is_curve)) hide();
+	if (name == "flip_faces" && (_two_sided || !(is_mesh || is_shape || is_curve))) hide();
 	if (name == "mesh_sides" && !is_round_mesh) hide();
 	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
+	// Billboard: Shape + Curve only (2D shapes and flat ribbons).
+	if ((name == "billboard_xz" || name == "billboard_y") && !(is_shape || is_curve)) hide();
 	// Shape group: hide for non-Shape; rounded_corners has no effect on smooth curves.
-	if ((name == "billboard_xz" || name == "billboard_y"
-			|| name == "rounded_corners" || name == "shape_sides") && !is_shape) hide();
+	if ((name == "rounded_corners" || name == "shape_sides") && !is_shape) hide();
 	if (name == "rounded_corners" && (_shape == FLAT_CIRCLE || _shape == FLAT_CAPSULE)) hide();
 	if (name == "capsule_height" && _shape != MESH_CAPSULE && _shape != FLAT_CAPSULE) hide();
 
@@ -812,7 +837,8 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Curve shape uses its own width; generic marker_size / outline_thickness don't apply.
 	if ((name == "marker_size" || name == "outline_thickness") && is_curve) hide();
 	// Curve-specific props.
-	if ((name == "curve" || name == "curve_preset" || name == "curve_length"
+	if ((name == "curve" || name == "curve_preset" || name == "curve_flat"
+			|| name == "curve_length"
 			|| name == "curve_amplitude" || name == "curve_turns"
 			|| name == "curve_segments" || name == "curve_width"
 			|| name == "curve_bank" || name == "bank_easing"
@@ -1112,6 +1138,14 @@ void SuperMarker3D::set_fill_color(const Color &p) {
 		_cap_bot_material_back->set_shader_parameter("fill_color", _fill_color);
 }
 Color SuperMarker3D::get_fill_color() const { return _fill_color; }
+void SuperMarker3D::set_background_color(const Color &p) {
+	_background_color = p;
+	if (_bary_material.is_valid())
+		_bary_material->set_shader_parameter("background_color", _background_color);
+	if (_bary_material_back.is_valid())
+		_bary_material_back->set_shader_parameter("background_color", _background_color);
+}
+Color SuperMarker3D::get_background_color() const { return _background_color; }
 
 #define AXIS_COLOR_SETTER(name, field) \
 	void SuperMarker3D::set_##name(const Color &p) { \
@@ -1498,10 +1532,9 @@ Ref<Curve3D> SuperMarker3D::_get_active_curve() const {
 // Build a fresh Curve3D for the active preset. Each preset writes points
 // in marker-local space; the user rotates/translates the SuperMarker3D
 // node itself to orient the path. Sampled presets (Arc/Sine/Helix) lay
-// down `_curve_segments+1` points with default in/out tangents — at the
-// sample density we use Curve3D's piecewise-linear interpretation reads
-// as a smooth curve. Bezier uses Curve3D's own cubic interpolation via
-// per-point in/out tangents (only 2 points needed).
+// down `_curve_segments+1` points with analytic in/out tangent handles
+// derived from the parametric derivative, producing smooth cubic Bezier
+// splines. Bezier uses its own two-point cubic with explicit tangents.
 Ref<Curve3D> SuperMarker3D::_make_preset_curve() const {
 	Ref<Curve3D> c;
 	c.instantiate();
@@ -1536,33 +1569,42 @@ Ref<Curve3D> SuperMarker3D::_make_preset_curve() const {
 			// → full circle). Centred so the arc starts at the origin
 			// pointing along +X and curves toward +Z.
 			const float sweep = T * SM_PI;
+			const float du = 1.0f / (float)N;
 			for (int i = 0; i <= N; i++) {
 				const float u = (float)i / (float)N;
 				const float a = u * sweep;
-				// Centre at (0, 0, A); start point (sin 0, _, -cos 0 + 1) = (0, 0, 0).
 				const Vector3 p(A * std::sin(a), 0.0f, A * (1.0f - std::cos(a)));
-				c->add_point(p, Z3, Z3);
+				const Vector3 dp(A * sweep * std::cos(a), 0.0f, A * sweep * std::sin(a));
+				const Vector3 h = dp * (du / 3.0f);
+				c->add_point(p, -h, h);
 			}
 		} break;
 
 		case CURVE_SINE: {
 			// Sine wave along +X, amplitude in +Z, `turns` cycles.
+			const float du = 1.0f / (float)N;
 			for (int i = 0; i <= N; i++) {
 				const float u = (float)i / (float)N;
 				const float x = u * L;
 				const float z = A * std::sin(SM_TAU * T * u);
-				c->add_point(Vector3(x, 0, z), Z3, Z3);
+				const Vector3 p(x, 0, z);
+				const Vector3 dp(L, 0, A * SM_TAU * T * std::cos(SM_TAU * T * u));
+				const Vector3 h = dp * (du / 3.0f);
+				c->add_point(p, -h, h);
 			}
 		} break;
 
 		case CURVE_HELIX: {
 			// Helix: rises along +Y by `length`, radius = amplitude in
 			// the XZ plane, completes `turns` full revolutions.
+			const float du = 1.0f / (float)N;
 			for (int i = 0; i <= N; i++) {
 				const float u = (float)i / (float)N;
 				const float a = SM_TAU * T * u;
 				const Vector3 p(A * std::cos(a), u * L, A * std::sin(a));
-				c->add_point(p, Z3, Z3);
+				const Vector3 dp(-A * SM_TAU * T * std::sin(a), L, A * SM_TAU * T * std::cos(a));
+				const Vector3 h = dp * (du / 3.0f);
+				c->add_point(p, -h, h);
 			}
 		} break;
 
@@ -1679,9 +1721,15 @@ void SuperMarker3D::set_lights_and_shadows(bool p) {
 bool SuperMarker3D::get_lights_and_shadows() const { return _lights_and_shadows; }
 void SuperMarker3D::set_two_sided(bool p) {
 	_two_sided = p;
+	notify_property_list_changed();
 	SM_REBUILD();
 }
 bool SuperMarker3D::get_two_sided() const { return _two_sided; }
+void SuperMarker3D::set_flip_faces(bool p) {
+	_flip_faces = p;
+	SM_REBUILD();
+}
+bool SuperMarker3D::get_flip_faces() const { return _flip_faces; }
 void SuperMarker3D::set_template_mode(bool p) { _template_mode = p; _update_visibility(); }
 RID  SuperMarker3D::get_mesh_rid() const { return _mesh.is_valid() ? _mesh->get_rid() : RID(); }
 
@@ -1925,8 +1973,9 @@ void SuperMarker3D::_build_materials() {
 	}
 
 	// Billboard mode: xz = BILLBOARD_FIXED_Y (rotates in XZ plane), y = BILLBOARD_ENABLED.
+	// Shape + Curve only; Mesh/Axis don't billboard.
 	BaseMaterial3D::BillboardMode bb_mode = BaseMaterial3D::BILLBOARD_DISABLED;
-	if (is_shape_type) {
+	if (is_shape_type || is_curve_flat) {
 		if (_billboard_y)       bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
 		else if (_billboard_xz) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
 	}
@@ -1975,92 +2024,45 @@ void SuperMarker3D::_build_materials() {
 	if (use_bary_path) {
 		const bool use_sphere_shader = (_shape == MESH_SPHERE);
 		const bool is_capsule        = (_shape == MESH_CAPSULE);
-		// Lazily compile each render_mode variant on first use, and
-		// REFRESH the code if the Ref<Shader> survived a GDExtension
-		// hot-reload with stale code (common during development —
-		// Godot's static Ref<Shader> may persist across .dll reloads,
-		// holding the old shader source). Comparing get_code() to
-		// the freshly-built `code` ensures any code change actually
-		// reaches the shader without a full editor restart.
-		auto ensure_shader = [](Ref<Shader> &s, const String &code) {
-			if (s.is_null()) s.instantiate();
-			if (s->get_code() != code) s->set_code(code);
-		};
-		// always_on_top picks the *_top variant which adds
-		// `depth_test_disabled` to the render_mode — that is what makes
-		// mesh subtypes actually render on top of world geometry (the
-		// BaseMaterial3D FLAG_DISABLE_DEPTH_TEST has no effect on these
-		// custom ShaderMaterials). always_on_top forces unshaded, so no
-		// LIT *_top variant exists.
-		// Front-face shaders (cull_back, depth_prepass_alpha).
-		if (use_sphere_shader || is_capsule) {
-			if (_always_on_top)
-				ensure_shader(_sphere_shader_top, String(RM_UNSHADED_TOP) + SPHERE_SHADER_BODY);
-			else if (effective_lit)
-				ensure_shader(_sphere_shader_lit, String(RM_LIT) + SPHERE_SHADER_BODY);
-			else
-				ensure_shader(_sphere_shader,     String(RM_UNSHADED) + SPHERE_SHADER_BODY);
-		}
-		if (!use_sphere_shader) {
-			// Both FILL and BARY shaders share the same OPAQUE-queue
-			// prefix. The BARY shader is now a combined fill+outline
-			// shader; the FILL shader is unused for mesh subtypes
-			// (we only emit BARY surfaces for them). Compile both
-			// regardless so non-mesh paths that share these prefixes
-			// continue to work.
-			if (_always_on_top) {
-				ensure_shader(_mesh_shader_top, String(RM_UNSHADED_TOP) + FILL_SHADER_BODY);
-				ensure_shader(_bary_shader_top, String(RM_UNSHADED_TOP) + BARY_SHADER_BODY);
-			} else if (effective_lit) {
-				ensure_shader(_mesh_shader_lit, String(RM_LIT) + FILL_SHADER_BODY);
-				ensure_shader(_bary_shader_lit, String(RM_LIT) + BARY_SHADER_BODY);
-			} else {
-				ensure_shader(_mesh_shader,     String(RM_UNSHADED) + FILL_SHADER_BODY);
-				ensure_shader(_bary_shader,     String(RM_UNSHADED) + BARY_SHADER_BODY);
-			}
-		}
-		// Back-face shaders (cull_front, depth_draw_never) — only compiled when needed.
-		if (_two_sided) {
-			if (use_sphere_shader || is_capsule) {
-				if (_always_on_top)
-					ensure_shader(_sphere_shader_back_top, String(RM_UNSHADED_BACK_TOP) + SPHERE_SHADER_BODY);
-				else if (effective_lit)
-					ensure_shader(_sphere_shader_back_lit, String(RM_LIT_BACK) + SPHERE_SHADER_BODY);
-				else
-					ensure_shader(_sphere_shader_back,     String(RM_UNSHADED_BACK) + SPHERE_SHADER_BODY);
-			}
-			if (!use_sphere_shader) {
-				if (_always_on_top) {
-					ensure_shader(_mesh_shader_back_top, String(RM_UNSHADED_BACK_TOP) + FILL_SHADER_BODY);
-					ensure_shader(_bary_shader_back_top, String(RM_UNSHADED_BACK_TOP) + BARY_SHADER_BODY);
-				} else if (effective_lit) {
-					ensure_shader(_mesh_shader_back_lit, String(RM_LIT_BACK) + FILL_SHADER_BODY);
-					ensure_shader(_bary_shader_back_lit, String(RM_LIT_BACK) + BARY_SHADER_BODY);
-				} else {
-					ensure_shader(_mesh_shader_back,     String(RM_UNSHADED_BACK) + FILL_SHADER_BODY);
-					ensure_shader(_bary_shader_back,     String(RM_UNSHADED_BACK) + BARY_SHADER_BODY);
-				}
-			}
-		}
+		const bool flat_bary = (is_shape_type || is_curve_flat) && !use_sphere_shader;
 
-		// Pick the active variant from the {top, lit, unshaded} triplet
-		// per shader family. always_on_top wins over lit (UI use case
-		// forces unshaded) — same precedence the ensure_shader block above.
-		auto pick = [&](Ref<Shader> &top_v, Ref<Shader> &lit_v, Ref<Shader> &un_v) -> Ref<Shader> {
-			return _always_on_top ? top_v : (effective_lit ? lit_v : un_v);
-		};
-		Ref<Shader> fill_s        = pick(_mesh_shader_top,        _mesh_shader_lit,        _mesh_shader);
-		Ref<Shader> bary_s        = pick(_bary_shader_top,        _bary_shader_lit,        _bary_shader);
-		Ref<Shader> sphere_s      = pick(_sphere_shader_top,      _sphere_shader_lit,      _sphere_shader);
-		Ref<Shader> fill_s_back   = pick(_mesh_shader_back_top,   _mesh_shader_back_lit,   _mesh_shader_back);
-		Ref<Shader> bary_s_back   = pick(_bary_shader_back_top,   _bary_shader_back_lit,   _bary_shader_back);
-		Ref<Shader> sphere_s_back = pick(_sphere_shader_back_top, _sphere_shader_back_lit, _sphere_shader_back);
+		// Determine opaque vs transparent for each shader family.
+		// Opaque: no ALPHA write → stays in opaque queue, perfect depth.
+		// Transparent: writes ALPHA, render_mode gets blend_mix.
+		const bool sphere_transparent = (_fill_color.a < 1.0f || _outline_color.a < 1.0f);
+		const bool bary_transparent   = (_fill_color.a < 1.0f || _outline_color.a < 1.0f
+				|| (_background_color.a > 0.0f && _background_color.a < 1.0f));
+		const bool fill_transparent   = (_fill_color.a < 1.0f);
 
-		// Front-face material. Sphere subtype keeps the analytic
-		// sphere shader on `_mesh_material`. Other mesh subtypes use
-		// the combined fill+outline BARY shader on `_bary_material`
-		// (single opaque pass) — `_mesh_material` is unused in that
-		// path, so we don't bother configuring it.
+		// Build shader body strings.
+		const String sphere_body = String(SPHERE_SHADER_COMMON)
+				+ (sphere_transparent ? SPHERE_FRAG_ALPHA : SPHERE_FRAG_OPAQUE);
+		const String bary_body = String(BARY_SHADER_COMMON)
+				+ (bary_transparent ? BARY_FRAG_ALPHA : BARY_FRAG_OPAQUE);
+		const String fill_body = fill_transparent ? FILL_SHADER_ALPHA : FILL_SHADER_OPAQUE;
+
+		// Determine cull mode for the primary bary surface.
+		// 0=cull_back, 1=cull_front, 2=cull_disabled.
+		int bary_cull = 0;
+		if (flat_bary && _two_sided)        bary_cull = 2;
+		else if (_flip_faces && !_two_sided) bary_cull = 1;
+
+		// Get shaders from cache using dynamic render_mode + body.
+		const bool top = _always_on_top;
+		auto get_shader = [&](int cull, bool transparent, const String &body) -> Ref<Shader> {
+			return _cached_shader(_render_mode(effective_lit && !top, cull, transparent, top) + body);
+		};
+
+		// Primary (front-face or cull_disabled) shaders.
+		Ref<Shader> sphere_s = get_shader(0, sphere_transparent, sphere_body);
+		Ref<Shader> bary_s   = get_shader(bary_cull, bary_transparent, bary_body);
+		Ref<Shader> fill_s   = get_shader(0, fill_transparent, fill_body);
+
+		// Back-face shaders (cull_front).
+		Ref<Shader> sphere_s_back = get_shader(1, sphere_transparent, sphere_body);
+		Ref<Shader> bary_s_back   = get_shader(1, bary_transparent, bary_body);
+
+		// Front-face material.
 		if (use_sphere_shader) {
 			if (_mesh_material.is_null()) _mesh_material.instantiate();
 			_mesh_material->set_shader(sphere_s);
@@ -2076,14 +2078,17 @@ void SuperMarker3D::_build_materials() {
 			_bary_material->set_shader_parameter("fill_color", _fill_color);
 			_bary_material->set_shader_parameter("outline_color", _outline_color);
 			_bary_material->set_shader_parameter("outline_thickness", _outline_thickness);
+			_bary_material->set_shader_parameter("background_color", _background_color);
+			int bb = 0;
+			if (_billboard_y) bb = 1;
+			else if (_billboard_xz) bb = 2;
+			_bary_material->set_shader_parameter("billboard_mode", bb);
 			_bary_material->set_render_priority(0);
 		}
 
-		// Back-face material — draws the inside of the mesh when the
-		// camera goes inside (priority -1, depth_draw_never). Sphere
-		// uses its own analytic shader; other mesh subtypes use the
-		// combined fill+outline BARY shader (no separate fill pass).
-		if (_two_sided) {
+		// Back-face material — only for 3D two-sided geometry (not flat).
+		const bool need_back = _two_sided && !flat_bary;
+		if (need_back) {
 			if (use_sphere_shader) {
 				if (_mesh_material_back.is_null()) _mesh_material_back.instantiate();
 				_mesh_material_back->set_shader(sphere_s_back);
@@ -2099,6 +2104,11 @@ void SuperMarker3D::_build_materials() {
 				_bary_material_back->set_shader_parameter("fill_color", _fill_color);
 				_bary_material_back->set_shader_parameter("outline_color", _outline_color);
 				_bary_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
+				_bary_material_back->set_shader_parameter("background_color", _background_color);
+				int bb = 0;
+				if (_billboard_y) bb = 1;
+				else if (_billboard_xz) bb = 2;
+				_bary_material_back->set_shader_parameter("billboard_mode", bb);
 				_bary_material_back->set_render_priority(-1);
 			}
 		}
@@ -2138,20 +2148,19 @@ void SuperMarker3D::_build_materials() {
 	}
 
 	// Apply to surfaces.
-	// Surface layout depends on `_two_sided` (single combined shader
-	// per side now — sphere + non-sphere have the same count):
-	//   one-sided          : [0]=front
-	//   one-sided capsule  : [0]=front,[1]=top cap,[2]=bot cap
-	//   two-sided          : [0]=back, [1]=front
-	//   two-sided capsule  : [0]=back, [1]=front, [2]=back top, [3]=back bot,
-	//                        [4]=front top, [5]=front bot
+	// Surface layout:
+	//   one-sided / flat two-sided : [0]=primary
+	//   one-sided capsule          : [0]=primary,[1]=top cap,[2]=bot cap
+	//   3D two-sided               : [0]=back, [1]=front
+	//   3D two-sided capsule       : [0]=back, [1]=front, [2..5]=caps
+	const bool flat_bary_assign = (is_shape_type || is_curve_flat);
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
 		if (use_bary_path) {
 			const bool use_sphere_shader = (_shape == MESH_SPHERE);
 			Ref<ShaderMaterial> front_mat = use_sphere_shader ? _mesh_material : _bary_material;
 			Ref<ShaderMaterial> back_mat  = use_sphere_shader ? _mesh_material_back : _bary_material_back;
-			if (_two_sided) {
+			if (_two_sided && !flat_bary_assign) {
 				if (sc > 0 && back_mat.is_valid())  _mesh->surface_set_material(0, back_mat);
 				if (sc > 1 && front_mat.is_valid()) _mesh->surface_set_material(1, front_mat);
 				if (_shape == MESH_CAPSULE) {
@@ -2239,8 +2248,6 @@ void SuperMarker3D::_add_mesh_quad_face(GeoBuf &geo,
 
 	auto push_tri = [&](const Vector3 &a, const Vector3 &b, const Vector3 &c,
 			const Vector4 &da, const Vector4 &db, const Vector4 &dc) {
-		// Flipped emission (a, c, b) for the rasterizer's front-face
-		// determination — same convention as `_add_mesh_face`.
 		auto push_v = [&](const Vector3 &v, const Vector4 &d) {
 			geo.tri_bary_verts.push_back(v);
 			geo.tri_bary_normals.push_back(face_n);
@@ -2296,11 +2303,7 @@ void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3
 	const Vector2 uv_v1(D0_v1, D1_v1), uv2_v1(D2_v1, SKIP);
 	const Vector2 uv_v2(D0_v2, D1_v2), uv2_v2(D2_v2, SKIP);
 
-	// Emit (v0, v2, v1) — Godot 4 treats CW-from-camera as front-facing
-	// (per project memory `project_curve_cap_winding.md`), so given a
-	// CCW-from-outside caller-side input, this flipped emission yields
-	// CW-from-camera = front-facing under cull_back. Natural CCW
-	// emission would be back-facing and culled.
+	// Emit (v0, v2, v1) — Godot 4 treats CW-from-camera as front-facing.
 	geo.tri_bary_verts.push_back(v0); geo.tri_bary_normals.push_back(face_n);
 	geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
 	geo.tri_bary_uvs.push_back(uv_v0); geo.tri_bary_uv2s.push_back(uv2_v0);
@@ -2345,7 +2348,6 @@ void SuperMarker3D::_add_flat_polygon_fan(GeoBuf &geo, const Vector3 &center,
 		const Vector2 uv_i(0.0f, SKIP);  const Vector2 uv2_i(SKIP, SKIP);
 		const Vector2 uv_j(0.0f, SKIP);  const Vector2 uv2_j(SKIP, SKIP);
 		const Vector3 face_n = ((vi - center).cross(vj - center)).normalized();
-		// Emit flipped: (center, vj, vi) for CW-from-camera = front face
 		auto push_v = [&](const Vector3 &v, const Vector3 &n, const Vector2 &uv, const Vector2 &uv2) {
 			geo.tri_bary_verts.push_back(v);
 			geo.tri_bary_normals.push_back(n);
@@ -2909,8 +2911,8 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 	// Tangent at arc-length s, for end-cap orientation.
 	auto tangent_at = [&](float s) -> Vector3 {
 		const float eps = MIN(0.05f, L * 0.01f + 0.0001f);
-		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps), true);
-		Vector3 pb = active->sample_baked(MIN(L,    s + eps), true);
+		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps), false);
+		Vector3 pb = active->sample_baked(MIN(L,    s + eps), false);
 		Vector3 t = pb - pa;
 		if (t.length_squared() < 1e-8f) return Vector3(0, 0, 1);
 		return t.normalized();
@@ -2944,7 +2946,7 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 
 		for (int i = 0; i < Np; i++) {
 			const float s = sa + seg_len * (float)i / (float)subs;
-			pos.set(i, active->sample_baked(CLAMP(s, 0.0f, L_total), true));
+			pos.set(i, active->sample_baked(CLAMP(s, 0.0f, L_total), false));
 		}
 
 		for (int i = 0; i < Np; i++) {
@@ -3030,7 +3032,7 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 		const float gap   = MAX(0.001f, _dash_gap);
 		const float cycle = (dot_r * 2.0f) + gap;
 		for (float s = dot_r; s <= L - dot_r + 1e-4f; s += cycle) {
-			_add_sphere_blob(geo, active->sample_baked(s, true), dot_r, 4, sides);
+			_add_sphere_blob(geo, active->sample_baked(s, false), dot_r, 4, sides);
 		}
 	} else if (_curve_pattern == CURVE_PATTERN_DASH) {
 		// Tube sub-segments separated by gaps. No geometry in the gaps —
@@ -3052,7 +3054,7 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 	auto emit_3d_cap = [&](int kind, float s, bool is_start,
 			const Vector2 &sz, bool linked) {
 		if (kind == CURVE_CAP_NONE || kind == CURVE_CAP_DOT) return;
-		const Vector3 p = active->sample_baked(s, true);
+		const Vector3 p = active->sample_baked(s, false);
 		Vector3 dir = tangent_at(s);
 		if (is_start) dir = -dir;
 		const float sx = MAX(0.0f, sz.x);
@@ -3457,9 +3459,9 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	// blow up the offset.
 	auto perp_at = [&](float s) -> Vector3 {
 		const float eps = MIN(0.05f, L * 0.01f + 0.0001f);
-		Vector3 p0 = active->sample_baked(MAX(0.0f, s - eps), true);
-		Vector3 p1 = active->sample_baked(CLAMP(s, 0.0f, L), true);
-		Vector3 p2 = active->sample_baked(MIN(L,    s + eps), true);
+		Vector3 p0 = active->sample_baked(MAX(0.0f, s - eps), false);
+		Vector3 p1 = active->sample_baked(CLAMP(s, 0.0f, L), false);
+		Vector3 p2 = active->sample_baked(MIN(L,    s + eps), false);
 		Vector3 t0 = p1 - p0;
 		Vector3 t1 = p2 - p1;
 		if (t0.length_squared() < 1e-12f) t0 = t1;
@@ -3494,8 +3496,8 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		// curvature across the local region.
 		const float seg_step = L / (float)MAX(_curve_segments, 4);
 		const float eps_b    = MAX(eps * 4.0f, seg_step * 2.0f);
-		Vector3 pb0 = active->sample_baked(MAX(0.0f, s - eps_b), true);
-		Vector3 pb2 = active->sample_baked(MIN(L,    s + eps_b), true);
+		Vector3 pb0 = active->sample_baked(MAX(0.0f, s - eps_b), false);
+		Vector3 pb2 = active->sample_baked(MIN(L,    s + eps_b), false);
 		Vector3 tb0 = p1 - pb0;
 		Vector3 tb1 = pb2 - p1;
 		if (tb0.length_squared() > 1e-12f && tb1.length_squared() > 1e-12f) {
@@ -3526,27 +3528,32 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	};
 
 	// Emit a quad strip from arc-length sa → sb into the BARY buffer.
-	// Side edges (along curve direction) are boundaries; cross edges
-	// (perpendicular, shared between adjacent quads) are internal except
-	// at the start/end of the strip where they cap the ribbon.
-	auto emit_segment = [&](float sa, float sb) {
+	// `is_gap` = true for dash gaps: all edges internal → shader paints
+	// pure fill_color (the "background" between dashes).
+	auto emit_segment = [&](float sa, float sb, bool is_gap = false) {
 		if (sb - sa < 1e-4f) return;
 		int subs = MAX(1, (int)std::ceil((sb - sa) / step));
 		for (int k = 0; k < subs; k++) {
 			float s0 = sa + (sb - sa) * (float)k / (float)subs;
 			float s1 = sa + (sb - sa) * (float)(k + 1) / (float)subs;
-			Vector3 p0 = active->sample_baked(s0, true);
-			Vector3 p1 = active->sample_baked(s1, true);
+			Vector3 p0 = active->sample_baked(s0, false);
+			Vector3 p1 = active->sample_baked(s1, false);
 			Vector3 r0 = perp_at(s0);
 			Vector3 r1 = perp_at(s1);
-			// Quad: v0=left-start, v1=right-start, v2=right-end, v3=left-end
-			// CCW from above (+Y looking down): v0, v1, v2, v3
 			Vector3 v0 = p0 - r0, v1 = p0 + r0, v2 = p1 + r1, v3 = p1 - r1;
-			const bool start_edge = (k == 0);
-			const bool end_edge   = (k == subs - 1);
-			// Edge order for quad (v0,v1,v2,v3): e01=start cross, e12=right side, e23=end cross, e30=left side
-			_add_mesh_quad_face(geo, v0, v1, v2, v3,
-					start_edge, true, end_edge, true);
+			// Swap v0↔v1 and v2↔v3 so the quad is CCW-from-above,
+			// matching the convention the helpers expect (cube, cylinder).
+			if (is_gap) {
+				_add_mesh_quad_face(geo, v1, v0, v3, v2,
+						false, false, false, false);
+				for (int g = geo.tri_bary_colors.size() - 6; g < geo.tri_bary_colors.size(); g++)
+					geo.tri_bary_colors.set(g, Color(1, 0, 0, 1));
+			} else {
+				const bool start_edge = (k == 0);
+				const bool end_edge   = (k == subs - 1);
+				_add_mesh_quad_face(geo, v1, v0, v3, v2,
+						start_edge, true, end_edge, true);
+			}
 		}
 	};
 
@@ -3564,7 +3571,7 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		const float cycle  = (radius * 2.0f) + gap;
 		const int   DISC_SEGS = 16;
 		for (float s = radius; s <= L_end - radius + 1e-4f; s += cycle) {
-			Vector3 c = active->sample_baked(s, true);
+			Vector3 c = active->sample_baked(s, false);
 			// Emit disc as a polygon fan into BARY buffer
 			Vector<Vector3> disc_ring;
 			disc_ring.resize(DISC_SEGS);
@@ -3581,10 +3588,9 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		for (float s = 0.0f; s < L_end; s += cycle) {
 			const float on_end  = MIN(s + dash,  L_end);
 			emit_segment(s, on_end);
-			// Gap quads — same geometry, same shader. The "gap" distinction
-			// is lost in this unified path; user controls appearance via
-			// fill_color alpha or outline pattern. For now, gaps are simply
-			// not emitted (true gap = transparent).
+			const float off_end = MIN(s + cycle, L_end);
+			if (off_end > on_end)
+				emit_segment(on_end, off_end, true);
 		}
 	}
 
@@ -3605,10 +3611,10 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	// predictable now.
 	auto emit_cap = [&](int cap, float s, bool is_start, const Vector2 &sz, bool linked) {
 		if (cap == CURVE_CAP_NONE) return;
-		Vector3 p = active->sample_baked(s, true);
+		Vector3 p = active->sample_baked(s, false);
 		const float eps_c = MIN(0.05f, L * 0.01f + 0.0001f);
-		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps_c), true);
-		Vector3 pb = active->sample_baked(MIN(L,    s + eps_c), true);
+		Vector3 pa = active->sample_baked(MAX(0.0f, s - eps_c), false);
+		Vector3 pb = active->sample_baked(MIN(L,    s + eps_c), false);
 		Vector3 tan = pb - pa;
 		Vector3 out(0, 0, 1);
 		if (tan.length_squared() > 1e-8f) out = tan.normalized();
@@ -3627,14 +3633,17 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 			Vector3 lt  = p + right * sx;
 			Vector3 rt  = p - right * sx;
 			if (is_start) std::swap(lt, rt);
-			// CCW from above: (tip, lt, rt)
-			_add_mesh_face(geo, tip, lt, rt, true, true, true);
+			// CCW from above: (tip, rt, lt) — face_n points UP matching ribbon
+			_add_mesh_face(geo, tip, rt, lt, true, true, true);
 		} else if (cap == CURVE_CAP_DOT) {
 			const int DISC_SEGS = 24;
 			Vector<Vector3> disc_ring;
 			disc_ring.resize(DISC_SEGS);
 			for (int i = 0; i < DISC_SEGS; i++) {
+				// Negate angle for start cap so ring winds CCW-from-above,
+				// producing face_n UP consistent with the ribbon.
 				float a0 = SM_TAU * (float)i / DISC_SEGS;
+				if (is_start) a0 = -a0;
 				disc_ring.set(i, p + right * (std::cos(a0) * sx) + out * (std::sin(a0) * sy));
 			}
 			_add_flat_polygon_fan(geo, p, disc_ring.ptr(), DISC_SEGS);
@@ -3658,11 +3667,13 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 			Vector3 vB = left_end  + bo;
 			Vector3 vC = right_end + bo;
 			Vector3 vD = right_end;
-			// CCW from above for _add_mesh_quad_face
+			// face_n must point UP to match the ribbon's CCW-from-above convention.
+			// Start and end caps need opposite vertex orders because `out` (and thus
+			// the quad's spatial orientation) reverses between them.
 			if (is_start)
-				_add_mesh_quad_face(geo, vA, vD, vC, vB, true, true, true, true);
-			else
 				_add_mesh_quad_face(geo, vA, vB, vC, vD, true, true, true, true);
+			else
+				_add_mesh_quad_face(geo, vA, vD, vC, vB, true, true, true, true);
 		}
 	};
 	emit_cap(_curve_start_cap, 0.0f, true,  _start_cap_size, _start_cap_linked);
@@ -4013,6 +4024,7 @@ void SuperMarker3D::_rebuild_mesh() {
 		// Sphere uses its analytic shader; everything else uses the BARY
 		// shader which paints both fill and outline in one opaque pass.
 		// Capsule caps follow as additional sphere-shader surfaces.
+		const bool flat_bary = is_shape || is_curve_flat;
 		if (geo.tri_bary_verts.size() > 0) {
 			Array a; a.resize(Mesh::ARRAY_MAX);
 			a[Mesh::ARRAY_VERTEX]  = geo.tri_bary_verts;
@@ -4020,7 +4032,9 @@ void SuperMarker3D::_rebuild_mesh() {
 			a[Mesh::ARRAY_COLOR]   = geo.tri_bary_colors;
 			a[Mesh::ARRAY_TEX_UV]  = geo.tri_bary_uvs;
 			a[Mesh::ARRAY_TEX_UV2] = geo.tri_bary_uv2s;
-			if (_two_sided) {
+			// Flat two-sided uses a single cull_disabled surface —
+			// no duplicate needed (avoids z-fighting at Z=0).
+			if (_two_sided && !flat_bary) {
 				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back
 			}
 			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front

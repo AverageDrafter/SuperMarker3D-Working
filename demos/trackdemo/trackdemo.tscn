@@ -13,7 +13,6 @@ ground_horizon_color = Color(0.6477, 0.6939, 0.7351, 1)
 sky_material = SubResource("Sky_default")
 
 [sub_resource type="Environment" id="Env_default"]
-background_mode = 2
 sky = SubResource("Sky_env")
 ambient_light_source = 3
 tonemap_mode = 2
@@ -29,7 +28,7 @@ glow_enabled = true
 environment = SubResource("Env_default")
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=1599229044]
-transform = Transform3D(1, 0, 0, 0, 0.42261833, -0.90630776, 0, 0.90630776, 0.42261833, 0, 0, 0)
+transform = Transform3D(1, 0, 0, 0, -0.8694949, 0.49394184, 0, -0.49394184, -0.8694949, 0, 0, 0)
 shadow_enabled = true
 
 [node name="HelixTrack" type="SuperMarker3D" parent="." unique_id=29451092]
@@ -39,6 +38,7 @@ outline_color = Color(1, 1, 0.21176471, 1)
 outline_thickness = 0.131
 fill_enabled = true
 fill_color = Color(0.11764706, 0.039215688, 0.11764706, 1)
+background_color = Color(1, 1, 0, 1)
 axis_link_mode = 2
 axis_length_x_pos = 1.69
 axis_length_x_neg = 1.293
@@ -59,11 +59,11 @@ head_length = 3.5
 head_width = 1.94
 curve_length = 30.0
 curve_amplitude = 20.0
-curve_segments = 84
+curve_segments = 256
 curve = SubResource("Curve3D_4j8hf")
-curve_width = 20.0
-curve_bank = 1.5
-bank_easing = 0.5
+curve_width = 20.235
+curve_bank = 2.0
+bank_easing = 0.41
 curve_pattern = 1
 dash_length = 5.0
 dash_gap = 5.0
@@ -73,8 +73,6 @@ start_cap_linked = false
 curve_end_cap = 1
 end_cap_size = Vector2(20, 20)
 end_cap_linked = false
-billboard_xz = true
-billboard_y = true
 lights_and_shadows = true
 
 [node name="StaticBody3D" type="StaticBody3D" parent="HelixTrack" unique_id=574428605]
@@ -103,7 +101,7 @@ subtype = 4
 outline_color = Color(0.56078434, 1, 0.63529414, 1)
 outline_thickness = 5.0
 marker_size = 50.0
-fill_color = Color(0.039215688, 0.078431375, 0.11764706, 1)
+fill_color = Color(0.5529412, 0.078431375, 0.11764706, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 0.1, 0, 0, 0, 1, 0, 0, 0)
 

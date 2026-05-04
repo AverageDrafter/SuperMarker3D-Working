@@ -38,6 +38,15 @@
 		<member name="fill_color" type="Color" setter="set_fill_color" getter="get_fill_color" default="Color(0, 1, 0.8, 1)">
 			Fill color when [member fill_enabled] is true.
 		</member>
+		<member name="background_color" type="Color" setter="set_background_color" getter="get_background_color" default="Color(0, 0, 0, 0)">
+			Curve only: color of dash/dot gap panels. Transparent by default (gaps are invisible).
+		</member>
+		<member name="two_sided" type="bool" setter="set_two_sided" getter="get_two_sided" default="true">
+			Render both sides of the geometry. Mesh types use two surfaces; flat types (Shape, flat Curve) use a single cull-disabled surface.
+		</member>
+		<member name="flip_faces" type="bool" setter="set_flip_faces" getter="get_flip_faces" default="false">
+			When [member two_sided] is false, renders the back face instead of the front face.
+		</member>
 		<member name="axis_x_color" type="Color" setter="set_axis_x_color" getter="get_axis_x_color" default="Color(1, 0.3, 0.3, 1)">
 			Axis shape only: color of the X axis line.
 		</member>

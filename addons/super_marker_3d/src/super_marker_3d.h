@@ -15,6 +15,7 @@
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/packed_color_array.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
 
 namespace godot {
 
@@ -189,6 +190,7 @@ public:
 
 	void set_fill_enabled(bool p);  bool get_fill_enabled() const;
 	void set_fill_color(const Color &p); Color get_fill_color() const;
+	void set_background_color(const Color &p); Color get_background_color() const;
 
 	// Per-direction colors for AXIS_XYZ. Six explicit fields — bright
 	// on positive directions, darker on negatives by default. The user
@@ -339,6 +341,7 @@ public:
 	/// cull_front + depth_draw_never and lower render_priority so they draw
 	/// first and are overwritten where front faces overlap them.
 	void set_two_sided(bool p);  bool get_two_sided() const;
+	void set_flip_faces(bool p); bool get_flip_faces() const;
 
 	/// Reset the physics interpolation state on this marker's render
 	/// instances so the next frame draws at the current transform with
@@ -370,6 +373,7 @@ private:
 
 	bool  _fill_enabled = false;
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);     // teal/cyan
+	Color _background_color = Color(0.0f, 0.0f, 0.0f, 0.0f); // curve gap fill
 
 	// Six direction colors for AXIS_XYZ. Pure primaries on positives,
 	// dark versions on negatives (10/255 ≈ 0.039, 40/255 ≈ 0.157).
@@ -476,6 +480,7 @@ private:
 	bool _always_on_top  = false;
 	bool _lights_and_shadows = false;
 	bool _two_sided      = true;
+	bool _flip_faces     = false;
 	bool _template_mode  = false;
 
 	Ref<ArrayMesh>         _mesh;
@@ -506,32 +511,12 @@ private:
 	Ref<ShaderMaterial>     _bary_material_back;
 	Ref<ShaderMaterial>     _cap_top_material_back;
 	Ref<ShaderMaterial>     _cap_bot_material_back;
-	/// Two render_mode variants per mesh shader — `_*_shader` is
-	/// `unshaded` (HUD-flat, ignores environment lights) and
-	/// `_*_shader_lit` is the default shaded mode (receives lights and
-	/// casts shadows like a real mesh). `_build_materials` picks based
-	/// on `_lights_and_shadows`.
-	static Ref<Shader>      _mesh_shader;
-	static Ref<Shader>      _mesh_shader_lit;
-	static Ref<Shader>      _bary_shader;
-	static Ref<Shader>      _bary_shader_lit;
-	static Ref<Shader>      _sphere_shader;
-	static Ref<Shader>      _sphere_shader_lit;
-	/// Back-face shader variants (cull_front + depth_draw_never).
-	static Ref<Shader>      _mesh_shader_back;
-	static Ref<Shader>      _mesh_shader_back_lit;
-	static Ref<Shader>      _bary_shader_back;
-	static Ref<Shader>      _bary_shader_back_lit;
-	static Ref<Shader>      _sphere_shader_back;
-	static Ref<Shader>      _sphere_shader_back_lit;
-	/// Always-on-top variants (depth_test_disabled). always_on_top forces
-	/// unshaded (UI use case), so only UNSHADED variants exist here.
-	static Ref<Shader>      _mesh_shader_top;
-	static Ref<Shader>      _bary_shader_top;
-	static Ref<Shader>      _sphere_shader_top;
-	static Ref<Shader>      _mesh_shader_back_top;
-	static Ref<Shader>      _bary_shader_back_top;
-	static Ref<Shader>      _sphere_shader_back_top;
+	/// Shader cache — keyed by full source code. Replaces named static
+	/// Ref<Shader> members; each unique render_mode + body combination
+	/// gets one entry, shared across all instances that need it.
+	static HashMap<String, Ref<Shader>> _shader_cache;
+	static Ref<Shader> _cached_shader(const String &code);
+	static String _render_mode(bool lit, int cull, bool transparent, bool top);
 	RID _instance;
 
 	// Per-arm renderables for Axis subtypes. Each arm (and each Burr
