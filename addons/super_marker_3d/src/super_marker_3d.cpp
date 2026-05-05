@@ -4236,6 +4236,9 @@ void SuperMarker3D::_rebuild_mesh() {
 			if (geo.cap_top_verts.size() > 0) emit_cap(geo.cap_top_verts, geo.cap_top_normals);
 			if (geo.cap_bot_verts.size() > 0) emit_cap(geo.cap_bot_verts, geo.cap_bot_normals);
 		}
+		// Refresh editor gizmo collision triangles so click-to-select
+		// keeps tracking the live mesh after every property edit.
+		update_gizmos();
 		return;
 	}
 
@@ -4264,4 +4267,5 @@ void SuperMarker3D::_rebuild_mesh() {
 		a[Mesh::ARRAY_NORMAL] = geo.tri_normals;
 		_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 	}
+	update_gizmos();
 }
