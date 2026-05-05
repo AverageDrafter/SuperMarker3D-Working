@@ -202,6 +202,7 @@ uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
 uniform float marker_size                  = 1.0;
 uniform vec3  sphere_center                = vec3(0.0);
+uniform float cyl_half                     = 0.0;
 
 const float SPHERE_PI = 3.14159265359;
 const float MER_STEP  = SPHERE_PI / 6.0; // 30° between adjacent meridians (12 total)
@@ -220,18 +221,25 @@ void vertex() {
 "		float min_dist = 1.0e9;\n" \
 "		float r = length(v_local_pos);\n" \
 "		if (r > 1.0e-5) {\n" \
-"			float phi   = acos(clamp(v_local_pos.y / r, -1.0, 1.0));\n" \
 "			float theta = atan(v_local_pos.z, v_local_pos.x);\n" \
-"			float lat_off = abs(phi - SPHERE_PI * 0.5);\n" \
-"			float d0 = lat_off;\n" \
-"			float d1 = abs(lat_off - SPHERE_PI / 6.0);\n" \
-"			float d2 = abs(lat_off - SPHERE_PI / 3.0);\n" \
-"			float lat_diff = min(d0, min(d1, d2));\n" \
-"			float lat_w = marker_size * lat_diff;\n" \
 "			float theta_off = abs(mod(theta + MER_STEP * 0.5, MER_STEP) - MER_STEP * 0.5);\n" \
-"			float sin_phi   = sin(phi);\n" \
-"			float mer_w     = marker_size * sin_phi * theta_off;\n" \
-"			min_dist = min(lat_w, mer_w);\n" \
+"			if (cyl_half > 0.0) {\n" \
+"				float mer_w = marker_size * theta_off;\n" \
+"				float rim_d = min(abs(v_local_pos.y - cyl_half),\n" \
+"				                  abs(v_local_pos.y + cyl_half));\n" \
+"				min_dist = min(mer_w, rim_d);\n" \
+"			} else {\n" \
+"				float phi   = acos(clamp(v_local_pos.y / r, -1.0, 1.0));\n" \
+"				float lat_off = abs(phi - SPHERE_PI * 0.5);\n" \
+"				float d0 = lat_off;\n" \
+"				float d1 = abs(lat_off - SPHERE_PI / 6.0);\n" \
+"				float d2 = abs(lat_off - SPHERE_PI / 3.0);\n" \
+"				float lat_diff = min(d0, min(d1, d2));\n" \
+"				float lat_w = marker_size * lat_diff;\n" \
+"				float sin_phi   = sin(phi);\n" \
+"				float mer_w     = marker_size * sin_phi * theta_off;\n" \
+"				min_dist = min(lat_w, mer_w);\n" \
+"			}\n" \
 "		}\n" \
 "		float aa = max(fwidth(min_dist), 1.0e-5);\n" \
 "		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);\n" \
@@ -2022,7 +2030,7 @@ void SuperMarker3D::_build_materials() {
 	// computed from per-vertex perpendicular distances to face-boundary edges.
 	const bool use_bary_path = is_mesh_type || is_shape_type || is_curve_flat;
 	if (use_bary_path) {
-		const bool use_sphere_shader = (_shape == MESH_SPHERE);
+		const bool use_sphere_shader = (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
 		const bool is_capsule        = (_shape == MESH_CAPSULE);
 		const bool flat_bary = (is_shape_type || is_curve_flat) && !use_sphere_shader;
 
@@ -2071,6 +2079,8 @@ void SuperMarker3D::_build_materials() {
 			_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
 			_mesh_material->set_shader_parameter("marker_size", _marker_size);
 			_mesh_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
+			const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? (_capsule_height * _marker_size * 0.5f) : 0.0f;
+			_mesh_material->set_shader_parameter("cyl_half", mesh_cyl_half);
 			_mesh_material->set_render_priority(0);
 		} else {
 			if (_bary_material.is_null()) _bary_material.instantiate();
@@ -2097,6 +2107,8 @@ void SuperMarker3D::_build_materials() {
 				_mesh_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
 				_mesh_material_back->set_shader_parameter("marker_size", _marker_size);
 				_mesh_material_back->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
+				const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? (_capsule_height * _marker_size * 0.5f) : 0.0f;
+				_mesh_material_back->set_shader_parameter("cyl_half", mesh_cyl_half);
 				_mesh_material_back->set_render_priority(-1);
 			} else {
 				if (_bary_material_back.is_null()) _bary_material_back.instantiate();
@@ -2128,6 +2140,7 @@ void SuperMarker3D::_build_materials() {
 				caps[i]->set_shader_parameter("outline_thickness", _outline_thickness);
 				caps[i]->set_shader_parameter("marker_size", _marker_size);
 				caps[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
+				caps[i]->set_shader_parameter("cyl_half", 0.0f);
 				caps[i]->set_render_priority(0);
 			}
 			if (_two_sided) {
@@ -2141,8 +2154,34 @@ void SuperMarker3D::_build_materials() {
 					caps_back[i]->set_shader_parameter("outline_thickness", _outline_thickness);
 					caps_back[i]->set_shader_parameter("marker_size", _marker_size);
 					caps_back[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
+					caps_back[i]->set_shader_parameter("cyl_half", 0.0f);
 					caps_back[i]->set_render_priority(-1);
 				}
+			}
+		}
+		// Cylinder band / cone lateral — sphere shader. Cylinder uses
+		// cyl_half > 0 (meridian + rim); cone uses cyl_half = 0 (lat/lon).
+		if (_shape == MESH_CYLINDER || _shape == MESH_CONE) {
+			const float cap_cyl_half = (_shape == MESH_CYLINDER) ? _marker_size : 0.0f;
+			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
+			_cap_top_material->set_shader(sphere_s);
+			_cap_top_material->set_shader_parameter("fill_color", _fill_color);
+			_cap_top_material->set_shader_parameter("outline_color", _outline_color);
+			_cap_top_material->set_shader_parameter("outline_thickness", _outline_thickness);
+			_cap_top_material->set_shader_parameter("marker_size", _marker_size);
+			_cap_top_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
+			_cap_top_material->set_shader_parameter("cyl_half", cap_cyl_half);
+			_cap_top_material->set_render_priority(0);
+			if (_two_sided) {
+				if (_cap_top_material_back.is_null()) _cap_top_material_back.instantiate();
+				_cap_top_material_back->set_shader(sphere_s_back);
+				_cap_top_material_back->set_shader_parameter("fill_color", _fill_color);
+				_cap_top_material_back->set_shader_parameter("outline_color", _outline_color);
+				_cap_top_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
+				_cap_top_material_back->set_shader_parameter("marker_size", _marker_size);
+				_cap_top_material_back->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
+				_cap_top_material_back->set_shader_parameter("cyl_half", cap_cyl_half);
+				_cap_top_material_back->set_render_priority(-1);
 			}
 		}
 	}
@@ -2151,13 +2190,17 @@ void SuperMarker3D::_build_materials() {
 	// Surface layout:
 	//   one-sided / flat two-sided : [0]=primary
 	//   one-sided capsule          : [0]=primary,[1]=top cap,[2]=bot cap
+	//   one-sided cylinder         : [0]=primary(caps),[1]=band
+	//   one-sided cone             : [0]=primary(base),[1]=lateral
 	//   3D two-sided               : [0]=back, [1]=front
 	//   3D two-sided capsule       : [0]=back, [1]=front, [2..5]=caps
+	//   3D two-sided cylinder      : [0]=back(caps), [1]=front(caps), [2]=band back, [3]=band front
+	//   3D two-sided cone          : [0]=back(base), [1]=front(base), [2]=lateral back, [3]=lateral front
 	const bool flat_bary_assign = (is_shape_type || is_curve_flat);
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
 		if (use_bary_path) {
-			const bool use_sphere_shader = (_shape == MESH_SPHERE);
+			const bool use_sphere_shader = (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
 			Ref<ShaderMaterial> front_mat = use_sphere_shader ? _mesh_material : _bary_material;
 			Ref<ShaderMaterial> back_mat  = use_sphere_shader ? _mesh_material_back : _bary_material_back;
 			if (_two_sided && !flat_bary_assign) {
@@ -2169,11 +2212,18 @@ void SuperMarker3D::_build_materials() {
 					if (sc > 4 && _cap_top_material.is_valid())      _mesh->surface_set_material(4, _cap_top_material);
 					if (sc > 5 && _cap_bot_material.is_valid())      _mesh->surface_set_material(5, _cap_bot_material);
 				}
+				if (_shape == MESH_CYLINDER || _shape == MESH_CONE) {
+					if (sc > 2 && _cap_top_material_back.is_valid()) _mesh->surface_set_material(2, _cap_top_material_back);
+					if (sc > 3 && _cap_top_material.is_valid())      _mesh->surface_set_material(3, _cap_top_material);
+				}
 			} else {
 				if (sc > 0 && front_mat.is_valid()) _mesh->surface_set_material(0, front_mat);
 				if (_shape == MESH_CAPSULE) {
 					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
 					if (sc > 2 && _cap_bot_material.is_valid()) _mesh->surface_set_material(2, _cap_bot_material);
+				}
+				if (_shape == MESH_CYLINDER || _shape == MESH_CONE) {
+					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
 				}
 			}
 		} else {
@@ -2319,34 +2369,51 @@ void SuperMarker3D::_add_mesh_face(GeoBuf &geo, const Vector3 &v0, const Vector3
 
 // ---------------------------------------------------------------------------
 // Flat polygon → BARY buffer helper. Emits a triangle fan from `center` to
-// `ring[0..N-1]` with all perimeter edges marked as boundaries and all
-// radial (center→vertex) edges marked internal. Each triangle uses the
-// 3-slot scheme from `_add_mesh_face`: slot 0 = perimeter edge (v[i]→v[j]),
-// slot 1 = radial from center to v[i], slot 2 = radial from center to v[j].
-// Only slot 0 carries a real distance at the opposite vertex (center);
-// slots 1 & 2 get SKIP so they never paint outline.
-//
-// This gives the BARY shader a clean outline along the polygon perimeter
-// with no outline on the radial splits — exactly what flat shapes need.
+// `ring[0..N-1]`. Each fan triangle encodes perpendicular distances to
+// three perimeter edges: the triangle's own edge (vi→vj) plus the two
+// adjacent edges (v_prev→vi and vj→v_next). The shader's
+// `min(UV.x, UV.y, UV2.x, UV2.y)` picks the closest edge at each
+// fragment, giving a uniform-width outline that correctly miters at
+// polygon vertices and handles concave notches without bleed artifacts.
 // ---------------------------------------------------------------------------
 void SuperMarker3D::_add_flat_polygon_fan(GeoBuf &geo, const Vector3 &center,
 		const Vector3 *ring, int count) const {
 	const float SKIP = 1.0e8f;
+	auto perp_dist = [](const Vector3 &P, const Vector3 &A, const Vector3 &B) -> float {
+		const Vector3 AB = B - A;
+		const float len = AB.length();
+		if (len < 1e-9f) return 0.0f;
+		return (P - A).cross(AB).length() / len;
+	};
 	for (int i = 0; i < count; i++) {
-		const int j = (i + 1) % count;
+		const int j    = (i + 1) % count;
+		const int prev = (i - 1 + count) % count;
+		const int next = (j + 1) % count;
 		const Vector3 &vi = ring[i];
 		const Vector3 &vj = ring[j];
-		// Perimeter edge is vi→vj (slot 0). Center is opposite that edge.
+		const Vector3 &v_prev = ring[prev];
+		const Vector3 &v_next = ring[next];
+
 		const float edge_len = (vj - vi).length();
 		if (edge_len < 1e-9f) continue;
-		// Height from center to edge vi→vj
-		const float h = ((center - vi).cross(vj - vi)).length() / edge_len;
-		// Vertex distance encoding: center gets h (opposite perimeter),
-		// vi and vj get 0 (they sit on the perimeter edge).
-		// Slots 1,2 = internal radials → SKIP everywhere.
-		const Vector2 uv_c(h, SKIP);     const Vector2 uv2_c(SKIP, SKIP);
-		const Vector2 uv_i(0.0f, SKIP);  const Vector2 uv2_i(SKIP, SKIP);
-		const Vector2 uv_j(0.0f, SKIP);  const Vector2 uv2_j(SKIP, SKIP);
+
+		// Slot 0 (UV.x)  = distance to current edge  vi→vj
+		// Slot 1 (UV.y)  = distance to previous edge  v_prev→vi
+		// Slot 2 (UV2.x) = distance to next edge      vj→v_next
+		// Slot 3 (UV2.y) = SKIP
+		const float h_curr = perp_dist(center, vi, vj);
+		const float h_prev = perp_dist(center, v_prev, vi);
+		const float h_next = perp_dist(center, vj, v_next);
+
+		const Vector2 uv_c(h_curr, h_prev);
+		const Vector2 uv2_c(h_next, SKIP);
+		// vi sits on current edge and previous edge
+		const Vector2 uv_i(0.0f, 0.0f);
+		const Vector2 uv2_i(perp_dist(vi, vj, v_next), SKIP);
+		// vj sits on current edge and next edge
+		const Vector2 uv_j(0.0f, perp_dist(vj, v_prev, vi));
+		const Vector2 uv2_j(0.0f, SKIP);
+
 		const Vector3 face_n = ((vi - center).cross(vj - center)).normalized();
 		auto push_v = [&](const Vector3 &v, const Vector3 &n, const Vector2 &uv, const Vector2 &uv2) {
 			geo.tri_bary_verts.push_back(v);
@@ -2516,16 +2583,18 @@ void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 		const float a = SM_TAU * (float)i / N;
 		eq.set(i, Vector3(std::cos(a) * s, 0.0f, std::sin(a) * s));
 	}
+	auto push = [&](const Vector3 &v) {
+		geo.tri_bary_verts.push_back(v);
+		geo.tri_bary_normals.push_back(v.normalized());
+		geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+		geo.tri_bary_uvs.push_back(Vector2(0, 0));
+		geo.tri_bary_uv2s.push_back(Vector2(0, 0));
+	};
 	for (int i = 0; i < N; i++) {
 		const int j = (i + 1) % N;
-		// Top hemisphere: caller order matches the original octahedron
-		// (top, pz, px)-style — equator vertex with the LATER angle
-		// first, so after `_add_mesh_face`'s winding flip the emitted
-		// triangle is front-facing from outside the top.
-		_add_mesh_face(geo, top, eq[j], eq[i]);
-		// Bottom hemisphere: equator vertex with the EARLIER angle
-		// first, mirroring the original (btm, px, pz) pattern.
-		_add_mesh_face(geo, btm, eq[i], eq[j]);
+		// CW winding for front-facing from outside.
+		push(top); push(eq[i]); push(eq[j]);
+		push(btm); push(eq[j]); push(eq[i]);
 	}
 }
 
@@ -2555,16 +2624,22 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 			verts.set(i * W + j, Vector3(sp * ct, cp, sp * st) * r);
 		}
 	}
+	auto push = [&](const Vector3 &v) {
+		geo.tri_bary_verts.push_back(v);
+		geo.tri_bary_normals.push_back(v.normalized());
+		geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+		geo.tri_bary_uvs.push_back(Vector2(0, 0));
+		geo.tri_bary_uv2s.push_back(Vector2(0, 0));
+	};
 	for (int i = 0; i < SPHERE_FILL_LAT; i++) {
 		for (int j = 0; j < SPHERE_FILL_LON; j++) {
 			const int ia = i * W + j;
 			const int ib = ia + 1;
 			const int ic = ia + W;
 			const int id = ic + 1;
-			// Diagonal-split triangulation. The shader paints lines
-			// analytically, so triangulation choice doesn't matter.
-			_add_mesh_face(geo, verts[ia], verts[ib], verts[id]);
-			_add_mesh_face(geo, verts[ia], verts[id], verts[ic]);
+			// CW winding (v0, v2, v1) for front-facing.
+			push(verts[ia]); push(verts[id]); push(verts[ib]);
+			push(verts[ia]); push(verts[ic]); push(verts[id]);
 		}
 	}
 }
@@ -2597,16 +2672,15 @@ void SuperMarker3D::_gen_cube(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
-// Cylinder — radius and half-height both = marker_size. Caps at y = ±s,
-// lateral surface around the Y axis. Wireframe: top + bottom rings as
-// chord-by-chord edge quads, plus a vertical seam at every CYL_LON
-// boundary so the body silhouette comes from explicit edges (not a
-// view-dependent silhouette trick).
+// Cylinder — radius and half-height both = marker_size. Band uses the
+// sphere shader (cyl_half > 0 mode) for smooth shading and analytical
+// meridian + rim lines matching the sphere's grid. Caps use the BARY
+// shader for rim outlines on the flat disc faces.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 	const float s = _marker_size;
-	const int CYL_LON = MAX(3, _mesh_sides);
+	const int CYL_LON = SPHERE_FILL_LON;
 	PackedVector3Array top, btm;
 	top.resize(CYL_LON); btm.resize(CYL_LON);
 	for (int i = 0; i < CYL_LON; i++) {
@@ -2615,43 +2689,26 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 		top.set(i, Vector3(cx,  s, cz));
 		btm.set(i, Vector3(cx, -s, cz));
 	}
-	// Lateral quads — 2-triangle diagonal split (btm[i] → top[j]). All
-	// four perimeter edges (top/bottom chord + left/right seam) are
-	// real boundaries; the diagonal itself is flagged internal so the
-	// shader doesn't paint it.
-	//
-	// Diagonal split (vs a 4-triangle center fan): the lateral face is
-	// a tall thin rectangle (chord ≪ height at low side counts). A
-	// center fan's seam-side wedges have h = chord/2 — tiny — so any
-	// modest outline_thickness floods the wedge with strip. The
-	// diagonal split below uses `_add_mesh_quad_face`, where each
-	// vertex carries the perpendicular distance to all four perimeter
-	// edges, so the strip math sees the full quad geometry and the
-	// diagonal becomes invisible to strip painting.
-	// 4-perimeter-distance quad face. Quad order (btm[i], top[i],
-	// top[j], btm[j]) is CCW from outside; edges in slot order are
-	// (left seam, top chord, right seam, bottom chord). All four
-	// flagged boundary so each paints a clean rectangular outline
-	// strip; the strips meet at every corner with mitered joints —
-	// no diagonal-split tapers because every fragment, in either of
-	// the 2 split triangles, sees the perpendicular distance to all
-	// 4 perimeter edges via vertex-attribute interpolation.
+	// Band — smooth radial normals, emitted into cap_top surface for
+	// the sphere shader (cyl_half mode draws meridians + rim lines).
 	for (int i = 0; i < CYL_LON; i++) {
-		int j = (i + 1) % CYL_LON;
-		_add_mesh_quad_face(geo, btm[i], top[i], top[j], btm[j],
-				true, true, true, true);
+		const int j = (i + 1) % CYL_LON;
+		const float ai = SM_TAU * (float)i / CYL_LON;
+		const float aj = SM_TAU * (float)j / CYL_LON;
+		const Vector3 ni(std::cos(ai), 0.0f, std::sin(ai));
+		const Vector3 nj(std::cos(aj), 0.0f, std::sin(aj));
+		auto push = [&](const Vector3 &v, const Vector3 &n) {
+			geo.cap_top_verts.push_back(v);
+			geo.cap_top_normals.push_back(n);
+		};
+		push(btm[i], ni); push(top[j], nj); push(top[i], ni);
+		push(btm[i], ni); push(btm[j], nj); push(top[j], nj);
 	}
-	// Cap fans — only the outer chord on each fan triangle is a real
-	// boundary; the two radial fan edges (center → ring vertex) are
-	// internal triangulation.
+	// Cap fans — BARY shader, chord edges as boundary for rim outlines.
 	const Vector3 tc(0,  s, 0), bc(0, -s, 0);
 	for (int i = 0; i < CYL_LON; i++) {
 		int j = (i + 1) % CYL_LON;
-		// Top cap tri (tc, top[j], top[i]): opp v0=(top[j],top[i]) chord,
-		// opp v1=(tc,top[i]) radial, opp v2=(tc,top[j]) radial.
 		_add_mesh_face(geo, tc, top[j], top[i], true, false, false);
-		// Bottom cap tri (bc, btm[i], btm[j]): opp v0=(btm[i],btm[j])
-		// chord, opp v1=(bc,btm[j]) radial, opp v2=(bc,btm[i]) radial.
 		_add_mesh_face(geo, bc, btm[i], btm[j], true, false, false);
 	}
 }
@@ -2672,21 +2729,36 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 		base.set(i, Vector3(std::cos(a) * s, -s, std::sin(a) * s));
 	}
 	const Vector3 apex(0, s, 0), bc(0, -s, 0);
-	// Slant lateral — each segment is a single triangle, all 3 edges
-	// (the two slant edges to apex and the base chord) are real face
-	// boundaries (default flags). The two slant edges shared with
-	// adjacent slant triangles will be painted from both sides — same
-	// outline color, harmless overdraw.
-	for (int i = 0; i < CONE_LON; i++) {
-		int j = (i + 1) % CONE_LON;
-		_add_mesh_face(geo, apex, base[j], base[i]);
+	if (_shape == MESH_CONE) {
+		// Smooth-shaded lateral — sphere shader draws analytical lines.
+		// Cone normal at angle θ: (2cosθ, 1, 2sinθ)/√5.
+		const float inv_sqrt5 = 1.0f / std::sqrt(5.0f);
+		for (int i = 0; i < CONE_LON; i++) {
+			const int j = (i + 1) % CONE_LON;
+			const float ai = SM_TAU * (float)i / CONE_LON;
+			const float aj = SM_TAU * (float)j / CONE_LON;
+			const Vector3 ni = Vector3(2.0f * std::cos(ai), 1.0f, 2.0f * std::sin(ai)) * inv_sqrt5;
+			const Vector3 nj = Vector3(2.0f * std::cos(aj), 1.0f, 2.0f * std::sin(aj)) * inv_sqrt5;
+			// Apex gets average of adjacent face normals — close enough
+			// for smooth shading at the tip.
+			const Vector3 n_apex = (ni + nj).normalized();
+			auto push = [&](const Vector3 &v, const Vector3 &n) {
+				geo.cap_top_verts.push_back(v);
+				geo.cap_top_normals.push_back(n);
+			};
+			// CW winding for front-facing from outside.
+			push(apex, n_apex); push(base[i], ni); push(base[j], nj);
+		}
+	} else {
+		// Pyramid — flat BARY shading on all lateral faces.
+		for (int i = 0; i < CONE_LON; i++) {
+			int j = (i + 1) % CONE_LON;
+			_add_mesh_face(geo, apex, base[j], base[i]);
+		}
 	}
-	// Base fan — only the outer chord is a real boundary; the two
-	// radial fan edges are internal triangulation.
+	// Base fan — only the outer chord is a real boundary.
 	for (int i = 0; i < CONE_LON; i++) {
 		int j = (i + 1) % CONE_LON;
-		// Tri (bc, base[i], base[j]): opp v0=(base[i],base[j]) chord,
-		// opp v1=(bc,base[j]) radial, opp v2=(bc,base[i]) radial.
 		_add_mesh_face(geo, bc, base[i], base[j], true, false, false);
 	}
 }
@@ -2728,18 +2800,23 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 		bot_ring.set(i, Vector3(cx, -cyl_half, cz));
 	}
 	if (_capsule_height > 0.0f) {
-		// Quad order (bot_i, top_i, top_j, bot_j) is CCW from outside.
-		// Edges in slot order: e01 = vertical seam (left), e12 = top
-		// ring chord, e23 = vertical seam (right), e30 = bottom ring
-		// chord. All four flagged boundary so meridian seams paint
-		// continuously from the top hemisphere's meridians, through
-		// the cylinder body, into the bottom hemisphere's meridians.
+		// Band — smooth radial normals, sphere shader draws meridian + rim
+		// lines via cyl_half mode. Emitted into tri_bary arrays (primary surface).
 		for (int i = 0; i < LON; i++) {
 			const int j = (i + 1) % LON;
-			_add_mesh_quad_face(geo,
-					bot_ring[i], top_ring[i], top_ring[j], bot_ring[j],
-					/*e01 seam=*/true, /*e12 top=*/true,
-					/*e23 seam=*/true, /*e30 bot=*/true);
+			const float ai = SM_TAU * (float)i / LON;
+			const float aj = SM_TAU * (float)j / LON;
+			const Vector3 ni(std::cos(ai), 0.0f, std::sin(ai));
+			const Vector3 nj(std::cos(aj), 0.0f, std::sin(aj));
+			auto push = [&](const Vector3 &v, const Vector3 &n) {
+				geo.tri_bary_verts.push_back(v);
+				geo.tri_bary_normals.push_back(n);
+				geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+				geo.tri_bary_uvs.push_back(Vector2(0, 0));
+				geo.tri_bary_uv2s.push_back(Vector2(0, 0));
+			};
+			push(bot_ring[i], ni); push(top_ring[j], nj); push(top_ring[i], ni);
+			push(bot_ring[i], ni); push(bot_ring[j], nj); push(top_ring[j], nj);
 		}
 	}
 
@@ -2965,8 +3042,8 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 
 			const Vector3 ref_up = (Math::abs(bisect.dot(Vector3(0,1,0))) < 0.9f)
 					? Vector3(0,1,0) : Vector3(1,0,0);
-			Vector3 r = ref_up.cross(bisect).normalized();
-			Vector3 u = bisect.cross(r).normalized();
+			Vector3 r = bisect.cross(ref_up).normalized();
+			Vector3 u = r.cross(bisect).normalized();
 			const float cos_half = std::sqrt(MAX(0.0f, (1.0f + t_in.dot(t_out)) * 0.5f));
 			const float m = (cos_half > 0.1f) ? (1.0f / cos_half) : 10.0f;
 
@@ -4039,8 +4116,8 @@ void SuperMarker3D::_rebuild_mesh() {
 			}
 			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front
 		}
-		// Capsule hemisphere caps.
-		if (_shape == MESH_CAPSULE) {
+		// Capsule hemisphere caps / cylinder band / cone lateral — sphere-shader surfaces.
+		if (_shape == MESH_CAPSULE || _shape == MESH_CYLINDER || _shape == MESH_CONE) {
 			auto emit_cap = [&](const PackedVector3Array &verts, const PackedVector3Array &norms) {
 				Array a; a.resize(Mesh::ARRAY_MAX);
 				a[Mesh::ARRAY_VERTEX] = verts;
@@ -4048,11 +4125,9 @@ void SuperMarker3D::_rebuild_mesh() {
 				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 			};
 			if (_two_sided) {
-				// Back caps (cull_front, depth_draw_never).
 				if (geo.cap_top_verts.size() > 0) emit_cap(geo.cap_top_verts, geo.cap_top_normals);
 				if (geo.cap_bot_verts.size() > 0) emit_cap(geo.cap_bot_verts, geo.cap_bot_normals);
 			}
-			// Front caps (cull_back, depth_prepass_alpha).
 			if (geo.cap_top_verts.size() > 0) emit_cap(geo.cap_top_verts, geo.cap_top_normals);
 			if (geo.cap_bot_verts.size() > 0) emit_cap(geo.cap_bot_verts, geo.cap_bot_normals);
 		}
