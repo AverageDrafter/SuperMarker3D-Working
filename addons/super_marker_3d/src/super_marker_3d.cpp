@@ -3531,47 +3531,36 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
-// Flat Arrow — completely 2D in the XZ plane (Y = 0), points +Z.
-// Outline with thickness > 0 uses flat edge quads (NOT 3D tubes).
+// Flat Arrow — 2D in the XY plane (Z = 0) like the other Shape subtypes,
+// pointing +Y. Centered on the origin: tip at (0, +marker_size), base at
+// y=-marker_size (so total length = 2*marker_size). Decomposed into a
+// fan-from-tip of 5 triangles via `_add_mesh_face` so the BARY shader
+// paints outlines on the 7 perimeter edges (sides + shoulders + slants)
+// while skipping the internal "spoke" diagonals from the tip.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
-	const float total = _marker_size;
+	const float total = _marker_size * 2.0f;        // full base→tip length
 	const float hl    = MIN(_head_length, total * 0.9f);
-	const float se    = total - hl;
 	const float hw    = _head_width;
 	const float sw    = hw * 0.4f;
-	const float ew    = _outline_thickness;
+	const float y_tip = total * 0.5f;
+	const float y_base = -y_tip;
+	const float y_sh   = y_tip - hl;                  // shoulder Y (head/shaft junction)
 
-	// Key points of the flat arrow silhouette in XZ plane.
-	Vector3 bl(-sw, 0, 0),    br(sw, 0, 0);
-	Vector3 sl(-sw, 0, se),   sr(sw, 0, se);
-	Vector3 bl2(-hw, 0, se),  br2(hw, 0, se);
-	Vector3 tip(0,  0, total);
+	const Vector3 bl(-sw, y_base, 0),  br(sw, y_base, 0);     // shaft base
+	const Vector3 sl(-sw, y_sh,   0),  sr(sw, y_sh,   0);     // shaft top (inner shoulder)
+	const Vector3 bl2(-hw, y_sh,  0),  br2(hw, y_sh,  0);     // head wing tips
+	const Vector3 tip(0,   y_tip, 0);
 
-	// Fill — always emitted; alpha out fill_color to hide.
-	geo.add_triangle(bl,  br,  sr);
-	geo.add_triangle(bl,  sr,  sl);
-	geo.add_triangle(bl2, br2, tip);
-
-	// Outline — perimeter as flat edge quads + disc corners (if thickness > 0) or lines (if 0)
-	if (ew > 0.0f) {
-		const float dr = ew * 0.5f;
-		geo.add_flat_edge_quad(bl,  sl,  ew); geo.add_flat_edge_quad(sl,  bl2, ew);
-		geo.add_flat_edge_quad(bl2, tip, ew); geo.add_flat_edge_quad(tip, br2, ew);
-		geo.add_flat_edge_quad(br2, sr,  ew); geo.add_flat_edge_quad(sr,  br,  ew);
-		geo.add_flat_edge_quad(br,  bl,  ew);
-		// Disc blobs at every perimeter corner for rounded joins
-		_add_disc_blob(geo, bl,  dr, 10); _add_disc_blob(geo, sl,  dr, 10);
-		_add_disc_blob(geo, bl2, dr, 10); _add_disc_blob(geo, tip, dr, 10);
-		_add_disc_blob(geo, br2, dr, 10); _add_disc_blob(geo, sr,  dr, 10);
-		_add_disc_blob(geo, br,  dr, 10);
-	} else {
-		geo.add_line(bl, sl);   geo.add_line(sl, bl2);
-		geo.add_line(bl2, tip); geo.add_line(tip, br2);
-		geo.add_line(br2, sr);  geo.add_line(sr, br);
-		geo.add_line(br, bl);
-	}
+	// Fan-from-tip. Internal diagonals (tip→bl, tip→br, tip→sr, tip→sl)
+	// are flagged non-boundary; the 7 real perimeter edges are flagged
+	// boundary. Each tri's edge slot e_i is the edge OPPOSITE vertex i.
+	_add_mesh_face(geo, bl,  br,  tip, /*opp bl=br→tip*/ false, /*opp br=tip→bl*/ false, /*opp tip=bl→br*/ true);
+	_add_mesh_face(geo, br,  sr,  tip, false, false, true);                 // br→sr right-shaft
+	_add_mesh_face(geo, sr,  br2, tip, /*opp sr=br2→tip*/ true, false, /*opp tip=sr→br2*/ true); // right slant + right shoulder
+	_add_mesh_face(geo, tip, bl2, sl, /*opp tip=bl2→sl*/ true, false, /*opp sl=tip→bl2*/ true); // left shoulder + left slant
+	_add_mesh_face(geo, tip, sl,  bl,  /*opp tip=sl→bl*/ true, false, false); // left-shaft
 }
 
 // ---------------------------------------------------------------------------
