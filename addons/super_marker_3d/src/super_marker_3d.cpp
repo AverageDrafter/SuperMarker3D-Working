@@ -606,6 +606,10 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_sides",
 			PROPERTY_HINT_RANGE, "3,24,1"),
 			"set_mesh_sides", "get_mesh_sides");
+	ClassDB::bind_method(D_METHOD("set_smooth_shading", "enabled"), &SuperMarker3D::set_smooth_shading);
+	ClassDB::bind_method(D_METHOD("get_smooth_shading"), &SuperMarker3D::get_smooth_shading);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smooth_shading"),
+			"set_smooth_shading", "get_smooth_shading");
 	ClassDB::bind_method(D_METHOD("set_two_sided", "enabled"), &SuperMarker3D::set_two_sided);
 	ClassDB::bind_method(D_METHOD("get_two_sided"), &SuperMarker3D::get_two_sided);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "two_sided"), "set_two_sided", "get_two_sided");
@@ -776,6 +780,11 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "two_sided" && !(is_mesh || is_shape || is_curve)) hide();
 	if (name == "flip_faces" && (_two_sided || !(is_mesh || is_shape || is_curve))) hide();
 	if (name == "mesh_sides" && !is_round_mesh) hide();
+	// Smooth shading: only meaningful on curved mesh subtypes — sphere,
+	// diamond, cone, cylinder, capsule. Pyramid is always faceted.
+	const bool is_smooth_capable = (_shape == MESH_SPHERE || _shape == MESH_DIAMOND
+			|| _shape == MESH_CONE || _shape == MESH_CYLINDER || _shape == MESH_CAPSULE);
+	if (name == "smooth_shading" && !is_smooth_capable) hide();
 	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
 	// Billboard: Shape + Curve only (2D shapes and flat ribbons).
 	if ((name == "billboard_xz" || name == "billboard_y") && !(is_shape || is_curve)) hide();
@@ -1194,6 +1203,14 @@ void SuperMarker3D::set_mesh_sides(int p) {
 	}
 }
 int SuperMarker3D::get_mesh_sides() const { return _mesh_sides; }
+
+void SuperMarker3D::set_smooth_shading(bool p) {
+	if (_smooth_shading == p) return;
+	_smooth_shading = p;
+	_rebuild_mesh();
+	_build_materials();
+}
+bool SuperMarker3D::get_smooth_shading() const { return _smooth_shading; }
 
 void SuperMarker3D::set_capsule_height(float p) {
 	_capsule_height = MAX(0.0f, p);
@@ -2030,7 +2047,8 @@ void SuperMarker3D::_build_materials() {
 	// computed from per-vertex perpendicular distances to face-boundary edges.
 	const bool use_bary_path = is_mesh_type || is_shape_type || is_curve_flat;
 	if (use_bary_path) {
-		const bool use_sphere_shader = (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
+		const bool use_sphere_shader = _smooth_shading
+				&& (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
 		const bool is_capsule        = (_shape == MESH_CAPSULE);
 		const bool flat_bary = (is_shape_type || is_curve_flat) && !use_sphere_shader;
 
@@ -2127,7 +2145,8 @@ void SuperMarker3D::_build_materials() {
 
 		// Capsule hemisphere materials. Each carries a sphere_center
 		// uniform that offsets phi/theta evaluation to the hemisphere's true centre.
-		if (is_capsule) {
+		// Skipped when faceted — caps fold back into the BARY primary surface.
+		if (is_capsule && _smooth_shading) {
 			const float cyl_half = _capsule_height * _marker_size * 0.5f;
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			if (_cap_bot_material.is_null()) _cap_bot_material.instantiate();
@@ -2161,7 +2180,11 @@ void SuperMarker3D::_build_materials() {
 		}
 		// Cylinder band / cone lateral — sphere shader. Cylinder uses
 		// cyl_half > 0 (meridian + rim); cone uses cyl_half = 0 (lat/lon).
-		if (_shape == MESH_CYLINDER || _shape == MESH_CONE) {
+		// Faceted cylinder/cone fold the band/lateral into the BARY primary,
+		// so this block is skipped when smooth shading is off.
+		// Pyramid is always faceted regardless of the flag.
+		if (_smooth_shading && _shape != MESH_PYRAMID
+				&& (_shape == MESH_CYLINDER || _shape == MESH_CONE)) {
 			const float cap_cyl_half = (_shape == MESH_CYLINDER) ? _marker_size : 0.0f;
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			_cap_top_material->set_shader(sphere_s);
@@ -2200,29 +2223,31 @@ void SuperMarker3D::_build_materials() {
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
 		if (use_bary_path) {
-			const bool use_sphere_shader = (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
+			const bool use_sphere_shader = _smooth_shading
+					&& (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
+			const bool sphere_shader_caps = _smooth_shading;
 			Ref<ShaderMaterial> front_mat = use_sphere_shader ? _mesh_material : _bary_material;
 			Ref<ShaderMaterial> back_mat  = use_sphere_shader ? _mesh_material_back : _bary_material_back;
 			if (_two_sided && !flat_bary_assign) {
 				if (sc > 0 && back_mat.is_valid())  _mesh->surface_set_material(0, back_mat);
 				if (sc > 1 && front_mat.is_valid()) _mesh->surface_set_material(1, front_mat);
-				if (_shape == MESH_CAPSULE) {
+				if (_shape == MESH_CAPSULE && sphere_shader_caps) {
 					if (sc > 2 && _cap_top_material_back.is_valid()) _mesh->surface_set_material(2, _cap_top_material_back);
 					if (sc > 3 && _cap_bot_material_back.is_valid()) _mesh->surface_set_material(3, _cap_bot_material_back);
 					if (sc > 4 && _cap_top_material.is_valid())      _mesh->surface_set_material(4, _cap_top_material);
 					if (sc > 5 && _cap_bot_material.is_valid())      _mesh->surface_set_material(5, _cap_bot_material);
 				}
-				if (_shape == MESH_CYLINDER || _shape == MESH_CONE) {
+				if ((_shape == MESH_CYLINDER || _shape == MESH_CONE) && sphere_shader_caps) {
 					if (sc > 2 && _cap_top_material_back.is_valid()) _mesh->surface_set_material(2, _cap_top_material_back);
 					if (sc > 3 && _cap_top_material.is_valid())      _mesh->surface_set_material(3, _cap_top_material);
 				}
 			} else {
 				if (sc > 0 && front_mat.is_valid()) _mesh->surface_set_material(0, front_mat);
-				if (_shape == MESH_CAPSULE) {
+				if (_shape == MESH_CAPSULE && sphere_shader_caps) {
 					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
 					if (sc > 2 && _cap_bot_material.is_valid()) _mesh->surface_set_material(2, _cap_bot_material);
 				}
-				if (_shape == MESH_CYLINDER || _shape == MESH_CONE) {
+				if ((_shape == MESH_CYLINDER || _shape == MESH_CONE) && sphere_shader_caps) {
 					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
 				}
 			}
@@ -2583,18 +2608,27 @@ void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 		const float a = SM_TAU * (float)i / N;
 		eq.set(i, Vector3(std::cos(a) * s, 0.0f, std::sin(a) * s));
 	}
-	auto push = [&](const Vector3 &v) {
-		geo.tri_bary_verts.push_back(v);
-		geo.tri_bary_normals.push_back(v.normalized());
-		geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
-		geo.tri_bary_uvs.push_back(Vector2(0, 0));
-		geo.tri_bary_uv2s.push_back(Vector2(0, 0));
-	};
-	for (int i = 0; i < N; i++) {
-		const int j = (i + 1) % N;
-		// CW winding for front-facing from outside.
-		push(top); push(eq[i]); push(eq[j]);
-		push(btm); push(eq[j]); push(eq[i]);
+	if (_smooth_shading) {
+		auto push = [&](const Vector3 &v) {
+			geo.tri_bary_verts.push_back(v);
+			geo.tri_bary_normals.push_back(v.normalized());
+			geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+			geo.tri_bary_uvs.push_back(Vector2(0, 0));
+			geo.tri_bary_uv2s.push_back(Vector2(0, 0));
+		};
+		for (int i = 0; i < N; i++) {
+			const int j = (i + 1) % N;
+			// CW winding for front-facing from outside.
+			push(top); push(eq[i]); push(eq[j]);
+			push(btm); push(eq[j]); push(eq[i]);
+		}
+	} else {
+		// Faceted — each tri is a real face, all 3 edges as boundaries.
+		for (int i = 0; i < N; i++) {
+			const int j = (i + 1) % N;
+			_add_mesh_face(geo, top, eq[i], eq[j]);
+			_add_mesh_face(geo, btm, eq[j], eq[i]);
+		}
 	}
 }
 
@@ -2624,22 +2658,44 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 			verts.set(i * W + j, Vector3(sp * ct, cp, sp * st) * r);
 		}
 	}
-	auto push = [&](const Vector3 &v) {
-		geo.tri_bary_verts.push_back(v);
-		geo.tri_bary_normals.push_back(v.normalized());
-		geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
-		geo.tri_bary_uvs.push_back(Vector2(0, 0));
-		geo.tri_bary_uv2s.push_back(Vector2(0, 0));
-	};
-	for (int i = 0; i < SPHERE_FILL_LAT; i++) {
-		for (int j = 0; j < SPHERE_FILL_LON; j++) {
-			const int ia = i * W + j;
-			const int ib = ia + 1;
-			const int ic = ia + W;
-			const int id = ic + 1;
-			// CW winding (v0, v2, v1) for front-facing.
-			push(verts[ia]); push(verts[id]); push(verts[ib]);
-			push(verts[ia]); push(verts[ic]); push(verts[id]);
+	if (_smooth_shading) {
+		auto push = [&](const Vector3 &v) {
+			geo.tri_bary_verts.push_back(v);
+			geo.tri_bary_normals.push_back(v.normalized());
+			geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+			geo.tri_bary_uvs.push_back(Vector2(0, 0));
+			geo.tri_bary_uv2s.push_back(Vector2(0, 0));
+		};
+		for (int i = 0; i < SPHERE_FILL_LAT; i++) {
+			for (int j = 0; j < SPHERE_FILL_LON; j++) {
+				const int ia = i * W + j;
+				const int ib = ia + 1;
+				const int ic = ia + W;
+				const int id = ic + 1;
+				// CW winding (v0, v2, v1) for front-facing.
+				push(verts[ia]); push(verts[id]); push(verts[ib]);
+				push(verts[ia]); push(verts[ic]); push(verts[id]);
+			}
+		}
+	} else {
+		// Faceted — every UV-grid quad is a real face with flat normals
+		// and BARY-painted outlines on its 4 perimeter edges. Pole rows
+		// collapse to triangles.
+		for (int i = 0; i < SPHERE_FILL_LAT; i++) {
+			for (int j = 0; j < SPHERE_FILL_LON; j++) {
+				const int ia = i * W + j;
+				const int ib = ia + 1;
+				const int ic = ia + W;
+				const int id = ic + 1;
+				if (i == 0) {
+					_add_mesh_face(geo, verts[ia], verts[id], verts[ic]);
+				} else if (i == SPHERE_FILL_LAT - 1) {
+					_add_mesh_face(geo, verts[ia], verts[ib], verts[ic]);
+				} else {
+					_add_mesh_quad_face(geo, verts[ia], verts[ib], verts[id], verts[ic],
+							true, true, true, true);
+				}
+			}
 		}
 	}
 }
@@ -2689,20 +2745,30 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 		top.set(i, Vector3(cx,  s, cz));
 		btm.set(i, Vector3(cx, -s, cz));
 	}
-	// Band — smooth radial normals, emitted into cap_top surface for
-	// the sphere shader (cyl_half mode draws meridians + rim lines).
-	for (int i = 0; i < CYL_LON; i++) {
-		const int j = (i + 1) % CYL_LON;
-		const float ai = SM_TAU * (float)i / CYL_LON;
-		const float aj = SM_TAU * (float)j / CYL_LON;
-		const Vector3 ni(std::cos(ai), 0.0f, std::sin(ai));
-		const Vector3 nj(std::cos(aj), 0.0f, std::sin(aj));
-		auto push = [&](const Vector3 &v, const Vector3 &n) {
-			geo.cap_top_verts.push_back(v);
-			geo.cap_top_normals.push_back(n);
-		};
-		push(btm[i], ni); push(top[j], nj); push(top[i], ni);
-		push(btm[i], ni); push(btm[j], nj); push(top[j], nj);
+	if (_smooth_shading) {
+		// Band — smooth radial normals, emitted into cap_top surface for
+		// the sphere shader (cyl_half mode draws meridians + rim lines).
+		for (int i = 0; i < CYL_LON; i++) {
+			const int j = (i + 1) % CYL_LON;
+			const float ai = SM_TAU * (float)i / CYL_LON;
+			const float aj = SM_TAU * (float)j / CYL_LON;
+			const Vector3 ni(std::cos(ai), 0.0f, std::sin(ai));
+			const Vector3 nj(std::cos(aj), 0.0f, std::sin(aj));
+			auto push = [&](const Vector3 &v, const Vector3 &n) {
+				geo.cap_top_verts.push_back(v);
+				geo.cap_top_normals.push_back(n);
+			};
+			push(btm[i], ni); push(top[j], nj); push(top[i], ni);
+			push(btm[i], ni); push(btm[j], nj); push(top[j], nj);
+		}
+	} else {
+		// Faceted — each lateral facet is a real quad face on the BARY
+		// primary surface, all 4 perimeter edges as boundaries.
+		for (int i = 0; i < CYL_LON; i++) {
+			const int j = (i + 1) % CYL_LON;
+			_add_mesh_quad_face(geo, btm[i], top[i], top[j], btm[j],
+					true, true, true, true);
+		}
 	}
 	// Cap fans — BARY shader, chord edges as boundary for rim outlines.
 	const Vector3 tc(0,  s, 0), bc(0, -s, 0);
@@ -2729,7 +2795,9 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 		base.set(i, Vector3(std::cos(a) * s, -s, std::sin(a) * s));
 	}
 	const Vector3 apex(0, s, 0), bc(0, -s, 0);
-	if (_shape == MESH_CONE) {
+	// Pyramid is always faceted; cone follows the smooth flag.
+	const bool smooth_lateral = _smooth_shading && _shape != MESH_PYRAMID;
+	if (smooth_lateral) {
 		// Smooth-shaded lateral — sphere shader draws analytical lines.
 		// Cone normal at angle θ: (2cosθ, 1, 2sinθ)/√5.
 		const float inv_sqrt5 = 1.0f / std::sqrt(5.0f);
@@ -2750,7 +2818,7 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 			push(apex, n_apex); push(base[i], ni); push(base[j], nj);
 		}
 	} else {
-		// Pyramid — flat BARY shading on all lateral faces.
+		// Faceted — flat BARY shading on every triangular slant face.
 		for (int i = 0; i < CONE_LON; i++) {
 			int j = (i + 1) % CONE_LON;
 			_add_mesh_face(geo, apex, base[j], base[i]);
@@ -2800,23 +2868,32 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 		bot_ring.set(i, Vector3(cx, -cyl_half, cz));
 	}
 	if (_capsule_height > 0.0f) {
-		// Band — smooth radial normals, sphere shader draws meridian + rim
-		// lines via cyl_half mode. Emitted into tri_bary arrays (primary surface).
-		for (int i = 0; i < LON; i++) {
-			const int j = (i + 1) % LON;
-			const float ai = SM_TAU * (float)i / LON;
-			const float aj = SM_TAU * (float)j / LON;
-			const Vector3 ni(std::cos(ai), 0.0f, std::sin(ai));
-			const Vector3 nj(std::cos(aj), 0.0f, std::sin(aj));
-			auto push = [&](const Vector3 &v, const Vector3 &n) {
-				geo.tri_bary_verts.push_back(v);
-				geo.tri_bary_normals.push_back(n);
-				geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
-				geo.tri_bary_uvs.push_back(Vector2(0, 0));
-				geo.tri_bary_uv2s.push_back(Vector2(0, 0));
-			};
-			push(bot_ring[i], ni); push(top_ring[j], nj); push(top_ring[i], ni);
-			push(bot_ring[i], ni); push(bot_ring[j], nj); push(top_ring[j], nj);
+		if (_smooth_shading) {
+			// Band — smooth radial normals, sphere shader draws meridian + rim
+			// lines via cyl_half mode. Emitted into tri_bary arrays (primary surface).
+			for (int i = 0; i < LON; i++) {
+				const int j = (i + 1) % LON;
+				const float ai = SM_TAU * (float)i / LON;
+				const float aj = SM_TAU * (float)j / LON;
+				const Vector3 ni(std::cos(ai), 0.0f, std::sin(ai));
+				const Vector3 nj(std::cos(aj), 0.0f, std::sin(aj));
+				auto push = [&](const Vector3 &v, const Vector3 &n) {
+					geo.tri_bary_verts.push_back(v);
+					geo.tri_bary_normals.push_back(n);
+					geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+					geo.tri_bary_uvs.push_back(Vector2(0, 0));
+					geo.tri_bary_uv2s.push_back(Vector2(0, 0));
+				};
+				push(bot_ring[i], ni); push(top_ring[j], nj); push(top_ring[i], ni);
+				push(bot_ring[i], ni); push(bot_ring[j], nj); push(top_ring[j], nj);
+			}
+		} else {
+			// Faceted — each lateral facet is a real quad face, all 4 edges boundary.
+			for (int i = 0; i < LON; i++) {
+				const int j = (i + 1) % LON;
+				_add_mesh_quad_face(geo, bot_ring[i], top_ring[i], top_ring[j], bot_ring[j],
+						true, true, true, true);
+			}
 		}
 	}
 
@@ -2825,6 +2902,10 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 	// then partition into upper/lower halves by phi <= π/2 / phi >= π/2.
 	// Each hemisphere is offset along Y by ±cyl_half so its equator sits
 	// at the corresponding cylinder ring.
+	//
+	// Smooth shading: emit into out_verts/out_normals (sphere-shader cap
+	// surfaces). Faceted: emit into tri_bary arrays as real quad faces
+	// so every UV-grid square gets its own outline.
 	auto emit_hemisphere = [&](bool top_half, float y_offset,
 			PackedVector3Array &out_verts, PackedVector3Array &out_normals) {
 		// Phi range: top → [0, π/2], bottom → [π/2, π]. We iterate the
@@ -2846,30 +2927,54 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 			}
 		}
 		const float center_y = y_offset;
-		for (int i = 0; i < phi_end - phi_start; i++) {
+		const int rows = phi_end - phi_start;
+		for (int i = 0; i < rows; i++) {
 			for (int j = 0; j < LON; j++) {
 				const int ia = i * W + j;
 				const int ib = ia + 1;
 				const int ic = ia + W;
 				const int id = ic + 1;
 				const Vector3 va = verts[ia], vb = verts[ib], vc = verts[ic], vd = verts[id];
-				// Flipped winding (v0, v2, v1) — matches `_add_mesh_face` /
-				// `_add_mesh_quad_face`. Position-based outward normals.
-				auto push = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2) {
-					const Vector3 n0 = (p0 - Vector3(0, center_y, 0)).normalized();
-					const Vector3 n1 = (p1 - Vector3(0, center_y, 0)).normalized();
-					const Vector3 n2 = (p2 - Vector3(0, center_y, 0)).normalized();
-					out_verts.push_back(p0); out_normals.push_back(n0);
-					out_verts.push_back(p2); out_normals.push_back(n2);
-					out_verts.push_back(p1); out_normals.push_back(n1);
-				};
-				push(va, vb, vd);
-				push(va, vd, vc);
+				if (_smooth_shading) {
+					// Flipped winding (v0, v2, v1) — matches `_add_mesh_face` /
+					// `_add_mesh_quad_face`. Position-based outward normals.
+					auto push = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2) {
+						const Vector3 n0 = (p0 - Vector3(0, center_y, 0)).normalized();
+						const Vector3 n1 = (p1 - Vector3(0, center_y, 0)).normalized();
+						const Vector3 n2 = (p2 - Vector3(0, center_y, 0)).normalized();
+						out_verts.push_back(p0); out_normals.push_back(n0);
+						out_verts.push_back(p2); out_normals.push_back(n2);
+						out_verts.push_back(p1); out_normals.push_back(n1);
+					};
+					push(va, vb, vd);
+					push(va, vd, vc);
+				} else {
+					// Faceted — quad face per UV cell, with pole-row collapse
+					// to a single triangle. Top hemi pole sits at i=0
+					// (phi=0); bottom hemi pole sits at i=rows (phi=π).
+					const bool at_top_pole = top_half && (i == 0);
+					const bool at_bot_pole = !top_half && (i == rows - 1);
+					if (at_top_pole) {
+						_add_mesh_face(geo, va, vd, vc);
+					} else if (at_bot_pole) {
+						_add_mesh_face(geo, va, vb, vc);
+					} else {
+						_add_mesh_quad_face(geo, va, vb, vd, vc,
+								true, true, true, true);
+					}
+				}
 			}
 		}
 	};
-	emit_hemisphere(true,  +cyl_half, geo.cap_top_verts, geo.cap_top_normals);
-	emit_hemisphere(false, -cyl_half, geo.cap_bot_verts, geo.cap_bot_normals);
+	if (_smooth_shading) {
+		emit_hemisphere(true,  +cyl_half, geo.cap_top_verts, geo.cap_top_normals);
+		emit_hemisphere(false, -cyl_half, geo.cap_bot_verts, geo.cap_bot_normals);
+	} else {
+		// Faceted hemispheres pour into the BARY primary surface.
+		PackedVector3Array unused_v, unused_n;
+		emit_hemisphere(true,  +cyl_half, unused_v, unused_n);
+		emit_hemisphere(false, -cyl_half, unused_v, unused_n);
+	}
 }
 
 // ---------------------------------------------------------------------------

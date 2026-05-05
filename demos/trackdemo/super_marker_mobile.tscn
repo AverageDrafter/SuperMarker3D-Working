@@ -18,11 +18,11 @@ subtype = 14
 outline_color = Color(0.78431374, 0.78431374, 0.47058824, 1)
 outline_thickness = 0.1
 marker_size = 0.9
-fill_color = Color(0, 1, 0.8, 0.19215687)
+fill_color = Color(0, 1, 0.8, 0.6156863)
 mesh_sides = 6
 two_sided = false
 lights_and_shadows = true
-transform = Transform3D(-0.09446463, 3.0781077e-08, 1.1256353, 0.5357354, -2.5828388e-08, 0.1984799, 2.7908177e-08, 0.6, -4.9203077e-08, 0.4, 0.40671465, 0)
+transform = Transform3D(-0.047412723, 2.8512654e-08, 1.1386505, 0.54192996, -2.6127033e-08, 0.09961901, 2.5851474e-08, 0.6, -4.9771998e-08, 0.4, 0.442, 0)
 
 [node name="Body" type="SuperMarker3D" parent="VehicleBody3D" unique_id=819050772]
 type = 1

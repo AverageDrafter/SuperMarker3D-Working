@@ -223,6 +223,14 @@ public:
 	/// both fill tessellation and wireframe segmentation. Range 5..24.
 	void set_mesh_sides(int p);   int get_mesh_sides() const;
 
+	/// When true (default), curved Mesh subtypes (sphere, diamond, cone,
+	/// cylinder, capsule) use smooth per-pixel normals and the analytical
+	/// sphere shader for wireframe lat/lon (or meridian + rim) lines.
+	/// When false, every face uses its flat face normal and outlines are
+	/// painted along the actual mesh edges via the BARY shader — the
+	/// faceted, low-poly look. Pyramid is always faceted regardless.
+	void set_smooth_shading(bool p);  bool get_smooth_shading() const;
+
 
 	// Universal arrow flag for the Axis category. ON: every axis arm in
 	// Cross / Plain / XYZ gets an arrowhead at its tip — `length`
@@ -393,6 +401,10 @@ private:
 	// entry point. 3 = triangular prism / tetrahedron / triangular
 	// bipyramid, 24 = effectively round.
 	int  _mesh_sides = 24;
+	// Smooth shading on curved mesh subtypes (sphere/diamond/cone/cylinder/
+	// capsule). True = per-pixel smooth normals + analytical sphere-shader
+	// lines. False = flat face normals + BARY outline on every actual face.
+	bool _smooth_shading = true;
 	// Capsule-only — cylinder body length as a multiplier of marker_size.
 	// Default 2 → body = sphere diameter, giving a 4:1 pill at any size.
 	// Reused by FLAT_CAPSULE for the 2D pill body length.

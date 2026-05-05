@@ -1,13 +1,13 @@
-[gd_scene load_steps=10 format=3 uid="uid://drendrtst00001"]
+[gd_scene format=3 uid="uid://dge8248a2xra3"]
 
-[ext_resource type="Script" uid="uid://di1ipwlfe34cs" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
-[ext_resource type="Curve3D" uid="uid://cust0cura000000a" path="res://demos/render_test/custom_curve_a.tres" id="2_curveA"]
-[ext_resource type="Curve3D" uid="uid://cust0curb000000b" path="res://demos/render_test/custom_curve_b.tres" id="3_curveB"]
+[ext_resource type="Script" uid="uid://dory58x5yberl" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
+[ext_resource type="Curve3D" uid="uid://w62ydmkmmgss" path="res://demos/render_test/custom_curve_a.tres" id="2_curveA"]
+[ext_resource type="Curve3D" uid="uid://w62yemkmmgst" path="res://demos/render_test/custom_curve_b.tres" id="3_curveB"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
 sky_horizon_color = Color(0.65, 0.69, 0.74, 1)
-ground_horizon_color = Color(0.55, 0.55, 0.5, 1)
 ground_bottom_color = Color(0.35, 0.35, 0.3, 1)
+ground_horizon_color = Color(0.55, 0.55, 0.5, 1)
 
 [sub_resource type="Sky" id="sky"]
 sky_material = SubResource("sky_mat")
@@ -26,139 +26,121 @@ size = Vector2(120, 80)
 
 [sub_resource type="StandardMaterial3D" id="ground_mat"]
 albedo_color = Color(0.55, 0.58, 0.5, 1)
-roughness = 1.0
 
-[node name="RenderTest" type="Node3D"]
+[node name="RenderTest" type="Node3D" unique_id=1521244814]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=2090979684]
 environment = SubResource("env")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1789877900]
 transform = Transform3D(0.866, 0.354, -0.354, 0, 0.707, 0.707, 0.5, -0.612, 0.612, 0, 10, 0)
 shadow_enabled = true
 
-[node name="Ground" type="MeshInstance3D" parent="."]
+[node name="Ground" type="MeshInstance3D" parent="." unique_id=2082667771]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 18)
 mesh = SubResource("ground_mesh")
 surface_material_override/0 = SubResource("ground_mat")
 
-[node name="FlyingCamera" type="Camera3D" parent="."]
+[node name="FlyingCamera" type="Camera3D" parent="." unique_id=1331625445]
 transform = Transform3D(1, 0, 0, 0, 0.906, -0.423, 0, 0.423, 0.906, 24, 22, 55)
 script = ExtResource("1_flycam")
 speed = 8.0
 
-;; ============================================================================
-;; AXIS — line cluster markers (4 subtypes × variants)
-;; ============================================================================
+[node name="Axis" type="Node3D" parent="." unique_id=1406002023]
 
-[node name="Axis" type="Node3D" parent="."]
-
-[node name="01_AxisCross_Basic" type="SuperMarker3D" parent="Axis"]
+[node name="01_AxisCross_Basic" type="SuperMarker3D" parent="Axis" unique_id=2051629087]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 
-[node name="02_AxisCross_Arrows" type="SuperMarker3D" parent="Axis"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 0)
+[node name="02_AxisCross_Arrows" type="SuperMarker3D" parent="Axis" unique_id=1632856895]
 axis_arrows = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 0)
 
-[node name="03_AxisCross_Thick" type="SuperMarker3D" parent="Axis"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 0)
-outline_thickness = 0.06
+[node name="03_AxisCross_Thick" type="SuperMarker3D" parent="Axis" unique_id=384128889]
 outline_color = Color(0.95, 0.4, 0.2, 1)
+outline_thickness = 0.06
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 0)
 
-[node name="04_AxisCross_AsymMirror" type="SuperMarker3D" parent="Axis"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 0)
+[node name="04_AxisCross_AsymMirror" type="SuperMarker3D" parent="Axis" unique_id=1102062148]
 axis_link_mode = 1
 axis_length_x_pos = 0.9
+axis_length_x_neg = 0.9
 axis_length_y_pos = 0.4
+axis_length_y_neg = 0.4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 0)
 
-[node name="05_AxisCross_Free" type="SuperMarker3D" parent="Axis"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 0)
+[node name="05_AxisCross_Free" type="SuperMarker3D" parent="Axis" unique_id=1948323579]
 axis_link_mode = 2
 axis_length_x_pos = 0.9
 axis_length_x_neg = 0.3
 axis_length_y_pos = 0.7
-axis_length_y_neg = 0.5
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 0)
 
-[node name="06_AxisPlain_Basic" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="06_AxisPlain_Basic" type="SuperMarker3D" parent="Axis" unique_id=1370919217]
 subtype = 3
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 0)
 
-[node name="07_AxisPlain_Arrows" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="07_AxisPlain_Arrows" type="SuperMarker3D" parent="Axis" unique_id=1347388433]
 subtype = 3
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 0)
 axis_arrows = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 0)
 
-[node name="08_AxisPlain_Thick" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="08_AxisPlain_Thick" type="SuperMarker3D" parent="Axis" unique_id=1646030809]
 subtype = 3
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 0)
 outline_thickness = 0.06
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 0)
 
-[node name="09_AxisPlain_ThickArrows" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="09_AxisPlain_ThickArrows" type="SuperMarker3D" parent="Axis" unique_id=1371098685]
 subtype = 3
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 0)
 outline_thickness = 0.05
 axis_arrows = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 0)
 
-[node name="10_AxisPlain_Asym" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="10_AxisPlain_Asym" type="SuperMarker3D" parent="Axis" unique_id=2023977999]
 subtype = 3
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 0)
 axis_link_mode = 2
 axis_length_x_pos = 0.9
 axis_length_x_neg = 0.3
 axis_length_z_pos = 0.7
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 0)
 
-[node name="11_AxisBurr_Basic" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="11_AxisBurr_Basic" type="SuperMarker3D" parent="Axis" unique_id=348014281]
 subtype = 11
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 0)
 
-[node name="12_AxisBurr_Thick" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="12_AxisBurr_Thick" type="SuperMarker3D" parent="Axis" unique_id=1384237654]
 subtype = 11
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38.5, 1, 0)
-outline_thickness = 0.04
 outline_color = Color(0.4, 0.85, 0.4, 1)
+outline_thickness = 0.04
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38.5, 1, 0)
 
-[node name="13_AxisBurr_Lit" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="13_AxisBurr_Lit" type="SuperMarker3D" parent="Axis" unique_id=75966084]
 subtype = 11
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, 1, 0)
 outline_thickness = 0.05
 lights_and_shadows = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, 1, 0)
 
-[node name="14_AxisXYZ_Basic" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="14_AxisXYZ_Basic" type="SuperMarker3D" parent="Axis" unique_id=347328242]
 subtype = 8
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 3)
 
-[node name="15_AxisXYZ_Arrows" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="15_AxisXYZ_Arrows" type="SuperMarker3D" parent="Axis" unique_id=867033885]
 subtype = 8
+axis_arrows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 3)
-axis_arrows = true
 
-[node name="16_AxisXYZ_Thick" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="16_AxisXYZ_Thick" type="SuperMarker3D" parent="Axis" unique_id=1423537747]
 subtype = 8
+outline_thickness = 0.05
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 3)
-outline_thickness = 0.05
 
-[node name="17_AxisXYZ_ThickArrows" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="17_AxisXYZ_ThickArrows" type="SuperMarker3D" parent="Axis" unique_id=831242420]
 subtype = 8
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 3)
 outline_thickness = 0.05
 axis_arrows = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 3)
 
-[node name="18_AxisXYZ_CustomColors" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="18_AxisXYZ_CustomColors" type="SuperMarker3D" parent="Axis" unique_id=124091487]
 subtype = 8
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 3)
 outline_thickness = 0.05
 axis_color_x_pos = Color(1, 0.6, 0, 1)
 axis_color_x_neg = Color(0.4, 0.2, 0, 1)
@@ -166,55 +148,50 @@ axis_color_y_pos = Color(0, 0.9, 1, 1)
 axis_color_y_neg = Color(0, 0.3, 0.4, 1)
 axis_color_z_pos = Color(1, 0, 0.7, 1)
 axis_color_z_neg = Color(0.4, 0, 0.25, 1)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 3)
 
-[node name="19_AxisXYZ_Asym" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="19_AxisXYZ_Asym" type="SuperMarker3D" parent="Axis" unique_id=799294558]
 subtype = 8
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 3)
 axis_link_mode = 2
 axis_length_x_pos = 1.0
 axis_length_y_pos = 0.4
 axis_length_z_pos = 0.7
 axis_arrows = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 3)
 
-[node name="20_AxisXYZ_Lit" type="SuperMarker3D" parent="Axis"]
-type = 0
+[node name="20_AxisXYZ_Lit" type="SuperMarker3D" parent="Axis" unique_id=1062606717]
 subtype = 8
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 3)
 outline_thickness = 0.06
 axis_arrows = true
 lights_and_shadows = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 3)
 
-;; ============================================================================
-;; MESH — closed 3D primitives
-;; ============================================================================
+[node name="Mesh" type="Node3D" parent="." unique_id=22613171]
 
-[node name="Mesh" type="Node3D" parent="."]
-
-[node name="21_MeshSphere_Wireframe" type="SuperMarker3D" parent="Mesh"]
+[node name="21_MeshSphere_Wireframe" type="SuperMarker3D" parent="Mesh" unique_id=1431679015]
 type = 1
 subtype = 2
 marker_size = 0.6
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 8)
 
-[node name="22_MeshSphere_Filled" type="SuperMarker3D" parent="Mesh"]
+[node name="22_MeshSphere_Filled" type="SuperMarker3D" parent="Mesh" unique_id=1276397098]
 type = 1
 subtype = 2
 marker_size = 0.6
 fill_enabled = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 8)
 
-[node name="23_MeshSphere_FilledThick" type="SuperMarker3D" parent="Mesh"]
+[node name="23_MeshSphere_FilledThick" type="SuperMarker3D" parent="Mesh" unique_id=663347236]
 type = 1
 subtype = 2
+outline_color = Color(0.1, 0.1, 0.1, 1)
+outline_thickness = 0.05
 marker_size = 0.6
 fill_enabled = true
-outline_thickness = 0.05
-outline_color = Color(0.1, 0.1, 0.1, 1)
 fill_color = Color(0.95, 0.45, 0.3, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 8)
 
-[node name="24_MeshSphere_Lit" type="SuperMarker3D" parent="Mesh"]
+[node name="24_MeshSphere_Lit" type="SuperMarker3D" parent="Mesh" unique_id=1686303673]
 type = 1
 subtype = 2
 marker_size = 0.6
@@ -223,7 +200,7 @@ fill_color = Color(0.4, 0.7, 0.95, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 8)
 
-[node name="25_MeshSphere_Silhouette" type="SuperMarker3D" parent="Mesh"]
+[node name="25_MeshSphere_Silhouette" type="SuperMarker3D" parent="Mesh" unique_id=978697870]
 type = 1
 subtype = 2
 marker_size = 0.6
@@ -232,13 +209,13 @@ fill_enabled = true
 fill_color = Color(0.2, 0.2, 0.4, 0.6)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 8)
 
-[node name="26_MeshBox_Wireframe" type="SuperMarker3D" parent="Mesh"]
+[node name="26_MeshBox_Wireframe" type="SuperMarker3D" parent="Mesh" unique_id=1140433448]
 type = 1
 subtype = 4
 marker_size = 0.7
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 8)
 
-[node name="27_MeshBox_Filled" type="SuperMarker3D" parent="Mesh"]
+[node name="27_MeshBox_Filled" type="SuperMarker3D" parent="Mesh" unique_id=1030888625]
 type = 1
 subtype = 4
 marker_size = 0.7
@@ -246,17 +223,17 @@ fill_enabled = true
 fill_color = Color(0.85, 0.65, 0.2, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 8)
 
-[node name="28_MeshBox_FilledThick" type="SuperMarker3D" parent="Mesh"]
+[node name="28_MeshBox_FilledThick" type="SuperMarker3D" parent="Mesh" unique_id=858512320]
 type = 1
 subtype = 4
+outline_color = Color(0.1, 0.1, 0.1, 1)
+outline_thickness = 0.04
 marker_size = 0.7
 fill_enabled = true
-outline_thickness = 0.04
 fill_color = Color(0.9, 0.9, 0.95, 1)
-outline_color = Color(0.1, 0.1, 0.1, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 8)
 
-[node name="29_MeshBox_Lit" type="SuperMarker3D" parent="Mesh"]
+[node name="29_MeshBox_Lit" type="SuperMarker3D" parent="Mesh" unique_id=1683252168]
 type = 1
 subtype = 4
 marker_size = 0.7
@@ -265,16 +242,15 @@ fill_color = Color(0.45, 0.85, 0.4, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 8)
 
-[node name="30_MeshBox_TwoSidedAlpha" type="SuperMarker3D" parent="Mesh"]
+[node name="30_MeshBox_TwoSidedAlpha" type="SuperMarker3D" parent="Mesh" unique_id=1230195478]
 type = 1
 subtype = 4
 marker_size = 0.7
 fill_enabled = true
 fill_color = Color(0.3, 0.9, 0.95, 0.35)
-two_sided = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 8)
 
-[node name="31_MeshBox_Silhouette" type="SuperMarker3D" parent="Mesh"]
+[node name="31_MeshBox_Silhouette" type="SuperMarker3D" parent="Mesh" unique_id=1621015356]
 type = 1
 subtype = 4
 marker_size = 0.7
@@ -283,13 +259,13 @@ fill_enabled = true
 fill_color = Color(0.4, 0.1, 0.4, 0.6)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 8)
 
-[node name="32_MeshDiamond_Wireframe" type="SuperMarker3D" parent="Mesh"]
+[node name="32_MeshDiamond_Wireframe" type="SuperMarker3D" parent="Mesh" unique_id=1944039422]
 type = 1
 subtype = 1
 marker_size = 0.7
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38.5, 1, 8)
 
-[node name="33_MeshDiamond_Filled" type="SuperMarker3D" parent="Mesh"]
+[node name="33_MeshDiamond_Filled" type="SuperMarker3D" parent="Mesh" unique_id=610966659]
 type = 1
 subtype = 1
 marker_size = 0.7
@@ -297,16 +273,18 @@ fill_enabled = true
 fill_color = Color(0.95, 0.3, 0.6, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, 1, 8)
 
-[node name="34_MeshDiamond_Lit" type="SuperMarker3D" parent="Mesh"]
+[node name="34_MeshDiamond_Lit" type="SuperMarker3D" parent="Mesh" unique_id=789237021]
 type = 1
 subtype = 1
+outline_thickness = 0.019
 marker_size = 0.7
 fill_enabled = true
 fill_color = Color(0.85, 0.7, 0.3, 1)
+mesh_sides = 3
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 11)
 
-[node name="35_MeshDiamond_Silhouette" type="SuperMarker3D" parent="Mesh"]
+[node name="35_MeshDiamond_Silhouette" type="SuperMarker3D" parent="Mesh" unique_id=1321571411]
 type = 1
 subtype = 1
 marker_size = 0.7
@@ -315,13 +293,13 @@ fill_enabled = true
 fill_color = Color(0.5, 0.2, 0.7, 0.6)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 11)
 
-[node name="36_MeshPyramid_Wireframe" type="SuperMarker3D" parent="Mesh"]
+[node name="36_MeshPyramid_Wireframe" type="SuperMarker3D" parent="Mesh" unique_id=1167923583]
 type = 1
 subtype = 13
 marker_size = 0.7
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 11)
 
-[node name="37_MeshPyramid_Filled" type="SuperMarker3D" parent="Mesh"]
+[node name="37_MeshPyramid_Filled" type="SuperMarker3D" parent="Mesh" unique_id=2036782912]
 type = 1
 subtype = 13
 marker_size = 0.7
@@ -329,7 +307,7 @@ fill_enabled = true
 fill_color = Color(0.95, 0.85, 0.4, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 11)
 
-[node name="38_MeshPyramid_Lit" type="SuperMarker3D" parent="Mesh"]
+[node name="38_MeshPyramid_Lit" type="SuperMarker3D" parent="Mesh" unique_id=1633013678]
 type = 1
 subtype = 13
 marker_size = 0.7
@@ -338,74 +316,68 @@ fill_color = Color(0.9, 0.5, 0.4, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 11)
 
-[node name="39_MeshCylinder_6sides" type="SuperMarker3D" parent="Mesh"]
+[node name="39_MeshCylinder_6sides" type="SuperMarker3D" parent="Mesh" unique_id=645625596]
 type = 1
 subtype = 14
-marker_size = 0.5
-mesh_sides = 6
 fill_enabled = true
 fill_color = Color(0.4, 0.55, 0.85, 1)
+mesh_sides = 6
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 11)
 
-[node name="40_MeshCylinder_12sides" type="SuperMarker3D" parent="Mesh"]
+[node name="40_MeshCylinder_12sides" type="SuperMarker3D" parent="Mesh" unique_id=1268137020]
 type = 1
 subtype = 14
-marker_size = 0.5
-mesh_sides = 12
 fill_enabled = true
 fill_color = Color(0.4, 0.55, 0.85, 1)
+mesh_sides = 12
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 11)
 
-[node name="41_MeshCylinder_24sides_Lit" type="SuperMarker3D" parent="Mesh"]
+[node name="41_MeshCylinder_24sides_Lit" type="SuperMarker3D" parent="Mesh" unique_id=122787320]
 type = 1
 subtype = 14
-marker_size = 0.5
-mesh_sides = 24
 fill_enabled = true
 fill_color = Color(0.7, 0.7, 0.75, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 11)
 
-[node name="42_MeshCylinder_Thick" type="SuperMarker3D" parent="Mesh"]
+[node name="42_MeshCylinder_Thick" type="SuperMarker3D" parent="Mesh" unique_id=1457190912]
 type = 1
 subtype = 14
-marker_size = 0.5
-mesh_sides = 12
+outline_color = Color(0.1, 0.15, 0.4, 1)
 outline_thickness = 0.05
 fill_enabled = true
 fill_color = Color(0.95, 0.95, 0.95, 1)
-outline_color = Color(0.1, 0.15, 0.4, 1)
+mesh_sides = 12
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 11)
 
-[node name="43_MeshCone_6sides" type="SuperMarker3D" parent="Mesh"]
+[node name="43_MeshCone_6sides" type="SuperMarker3D" parent="Mesh" unique_id=1098860446]
 type = 1
 subtype = 15
 marker_size = 0.6
-mesh_sides = 6
 fill_enabled = true
 fill_color = Color(0.95, 0.5, 0.2, 1)
+mesh_sides = 6
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 11)
 
-[node name="44_MeshCone_12sides" type="SuperMarker3D" parent="Mesh"]
+[node name="44_MeshCone_12sides" type="SuperMarker3D" parent="Mesh" unique_id=1205082735]
 type = 1
 subtype = 15
 marker_size = 0.6
-mesh_sides = 12
 fill_enabled = true
 fill_color = Color(0.95, 0.5, 0.2, 1)
+mesh_sides = 12
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 11)
 
-[node name="45_MeshCone_24sides_Lit" type="SuperMarker3D" parent="Mesh"]
+[node name="45_MeshCone_24sides_Lit" type="SuperMarker3D" parent="Mesh" unique_id=1219820971]
 type = 1
 subtype = 15
 marker_size = 0.6
-mesh_sides = 24
 fill_enabled = true
 fill_color = Color(0.5, 0.85, 0.5, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38.5, 1, 11)
 
-[node name="46_MeshCapsule_Default" type="SuperMarker3D" parent="Mesh"]
+[node name="46_MeshCapsule_Default" type="SuperMarker3D" parent="Mesh" unique_id=2045608596]
 type = 1
 subtype = 16
 marker_size = 0.4
@@ -413,7 +385,7 @@ fill_enabled = true
 fill_color = Color(0.6, 0.6, 0.95, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, 1, 11)
 
-[node name="47_MeshCapsule_Tall" type="SuperMarker3D" parent="Mesh"]
+[node name="47_MeshCapsule_Tall" type="SuperMarker3D" parent="Mesh" unique_id=352182530]
 type = 1
 subtype = 16
 marker_size = 0.35
@@ -422,168 +394,147 @@ fill_enabled = true
 fill_color = Color(0.95, 0.8, 0.4, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, 14)
 
-[node name="48_MeshCapsule_Short" type="SuperMarker3D" parent="Mesh"]
+[node name="48_MeshCapsule_Short" type="SuperMarker3D" parent="Mesh" unique_id=1350266566]
 type = 1
 subtype = 16
-marker_size = 0.5
 capsule_height = 0.5
 fill_enabled = true
 fill_color = Color(0.85, 0.4, 0.85, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 14)
 
-[node name="49_MeshCapsule_Lit" type="SuperMarker3D" parent="Mesh"]
+[node name="49_MeshCapsule_Lit" type="SuperMarker3D" parent="Mesh" unique_id=867184814]
 type = 1
 subtype = 16
 marker_size = 0.4
-capsule_height = 2.0
 fill_enabled = true
 fill_color = Color(0.4, 0.85, 0.7, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 14)
 
-[node name="50_MeshCapsule_LitTwoSided" type="SuperMarker3D" parent="Mesh"]
+[node name="50_MeshCapsule_LitTwoSided" type="SuperMarker3D" parent="Mesh" unique_id=225781470]
 type = 1
 subtype = 16
 marker_size = 0.4
-capsule_height = 2.0
 fill_enabled = true
 fill_color = Color(0.95, 0.95, 0.4, 0.45)
-two_sided = true
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 14)
 
-[node name="51_MeshSphere_LitFilled" type="SuperMarker3D" parent="Mesh"]
+[node name="51_MeshSphere_LitFilled" type="SuperMarker3D" parent="Mesh" unique_id=2074094248]
 type = 1
 subtype = 2
+outline_color = Color(0.15, 0.05, 0.05, 1)
+outline_thickness = 0.04
 marker_size = 0.6
 fill_enabled = true
-outline_thickness = 0.04
 fill_color = Color(0.9, 0.5, 0.5, 1)
-outline_color = Color(0.15, 0.05, 0.05, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 14)
 
-[node name="52_MeshBox_FlippedFaces" type="SuperMarker3D" parent="Mesh"]
+[node name="52_MeshBox_FlippedFaces" type="SuperMarker3D" parent="Mesh" unique_id=1460988171]
 type = 1
 subtype = 4
 marker_size = 0.7
 fill_enabled = true
 fill_color = Color(0.4, 0.4, 0.5, 1)
 flip_faces = true
-two_sided = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 14)
 
-[node name="53_MeshCone_AsHat" type="SuperMarker3D" parent="Mesh"]
+[node name="53_MeshCone_AsHat" type="SuperMarker3D" parent="Mesh" unique_id=938801835]
 type = 1
 subtype = 15
+outline_thickness = 0.03
 marker_size = 0.45
-mesh_sides = 24
 fill_enabled = true
 fill_color = Color(0.7, 0.2, 0.3, 1)
-outline_thickness = 0.03
 lights_and_shadows = true
 transform = Transform3D(1.4, 0, 0, 0, 1.4, 0, 0, 0, 1.4, 21, 1, 14)
 
-[node name="54_MeshCylinder_Tall" type="SuperMarker3D" parent="Mesh"]
+[node name="54_MeshCylinder_Tall" type="SuperMarker3D" parent="Mesh" unique_id=1200039722]
 type = 1
 subtype = 14
+outline_thickness = 0.02
 marker_size = 0.3
-mesh_sides = 12
 fill_enabled = true
 fill_color = Color(0.55, 0.45, 0.35, 1)
-outline_thickness = 0.02
+mesh_sides = 12
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 2.5, 0, 0, 0, 1, 24.5, 1.5, 14)
 
-;; ============================================================================
-;; FLAT — 2D polygon icons (TYPE_SHAPE)
-;; ============================================================================
+[node name="Flat" type="Node3D" parent="." unique_id=512570601]
 
-[node name="Flat" type="Node3D" parent="."]
-
-[node name="55_FlatCircle_6sides" type="SuperMarker3D" parent="Flat"]
+[node name="55_FlatCircle_6sides" type="SuperMarker3D" parent="Flat" unique_id=812954651]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 6
 fill_enabled = true
+shape_sides = 6
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 1, 18)
 
-[node name="56_FlatCircle_12sides" type="SuperMarker3D" parent="Flat"]
+[node name="56_FlatCircle_12sides" type="SuperMarker3D" parent="Flat" unique_id=623437139]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 12
 fill_enabled = true
 fill_color = Color(0.5, 0.85, 0.95, 1)
+shape_sides = 12
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 3.5, 1, 18)
 
-[node name="57_FlatCircle_24sides" type="SuperMarker3D" parent="Flat"]
+[node name="57_FlatCircle_24sides" type="SuperMarker3D" parent="Flat" unique_id=1244097740]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 24
 fill_enabled = true
 fill_color = Color(0.95, 0.7, 0.3, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 7, 1, 18)
 
-[node name="58_FlatCircle_48sides" type="SuperMarker3D" parent="Flat"]
+[node name="58_FlatCircle_48sides" type="SuperMarker3D" parent="Flat" unique_id=1686075247]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 48
 fill_enabled = true
 fill_color = Color(0.85, 0.4, 0.85, 1)
+shape_sides = 48
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 10.5, 1, 18)
 
-[node name="59_FlatCircle_Thick" type="SuperMarker3D" parent="Flat"]
+[node name="59_FlatCircle_Thick" type="SuperMarker3D" parent="Flat" unique_id=1524582663]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 24
+outline_color = Color(0.1, 0.1, 0.1, 1)
 outline_thickness = 0.06
 fill_enabled = true
 fill_color = Color(0.95, 0.95, 0.95, 1)
-outline_color = Color(0.1, 0.1, 0.1, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 14, 1, 18)
 
-[node name="60_FlatSquare_Basic" type="SuperMarker3D" parent="Flat"]
+[node name="60_FlatSquare_Basic" type="SuperMarker3D" parent="Flat" unique_id=1268597520]
 type = 2
 subtype = 18
-marker_size = 0.5
 fill_enabled = true
 fill_color = Color(0.5, 0.85, 0.4, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 17.5, 1, 18)
 
-[node name="61_FlatSquare_Thick" type="SuperMarker3D" parent="Flat"]
+[node name="61_FlatSquare_Thick" type="SuperMarker3D" parent="Flat" unique_id=844592362]
 type = 2
 subtype = 18
-marker_size = 0.5
+outline_color = Color(0.2, 0.05, 0.05, 1)
 outline_thickness = 0.06
 fill_enabled = true
 fill_color = Color(0.95, 0.4, 0.4, 1)
-outline_color = Color(0.2, 0.05, 0.05, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 21, 1, 18)
 
-[node name="62_FlatDiamond_Basic" type="SuperMarker3D" parent="Flat"]
+[node name="62_FlatDiamond_Basic" type="SuperMarker3D" parent="Flat" unique_id=193980816]
 type = 2
 subtype = 19
-marker_size = 0.5
 fill_enabled = true
 fill_color = Color(0.4, 0.5, 0.95, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 24.5, 1, 18)
 
-[node name="63_FlatDiamond_Thick" type="SuperMarker3D" parent="Flat"]
+[node name="63_FlatDiamond_Thick" type="SuperMarker3D" parent="Flat" unique_id=1044367130]
 type = 2
 subtype = 19
-marker_size = 0.5
+outline_color = Color(0.2, 0.15, 0, 1)
 outline_thickness = 0.06
 fill_enabled = true
 fill_color = Color(0.95, 0.95, 0.4, 1)
-outline_color = Color(0.2, 0.15, 0, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 28, 1, 18)
 
-[node name="64_FlatTriangle_Basic" type="SuperMarker3D" parent="Flat"]
+[node name="64_FlatTriangle_Basic" type="SuperMarker3D" parent="Flat" unique_id=1459898233]
 type = 2
 subtype = 20
 marker_size = 0.55
@@ -591,26 +542,25 @@ fill_enabled = true
 fill_color = Color(0.95, 0.6, 0.3, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 31.5, 1, 18)
 
-[node name="65_FlatTriangle_RoundedOff" type="SuperMarker3D" parent="Flat"]
+[node name="65_FlatTriangle_RoundedOff" type="SuperMarker3D" parent="Flat" unique_id=1110274890]
 type = 2
 subtype = 20
+outline_thickness = 0.05
 marker_size = 0.55
 fill_enabled = true
 fill_color = Color(0.4, 0.95, 0.85, 1)
 rounded_corners = false
-outline_thickness = 0.05
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 35, 1, 18)
 
-[node name="66_FlatCapsule_Default" type="SuperMarker3D" parent="Flat"]
+[node name="66_FlatCapsule_Default" type="SuperMarker3D" parent="Flat" unique_id=460272762]
 type = 2
 subtype = 21
 marker_size = 0.3
-capsule_height = 2.0
 fill_enabled = true
 fill_color = Color(0.85, 0.55, 0.95, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 38.5, 1, 18)
 
-[node name="67_FlatCapsule_Long" type="SuperMarker3D" parent="Flat"]
+[node name="67_FlatCapsule_Long" type="SuperMarker3D" parent="Flat" unique_id=501927403]
 type = 2
 subtype = 21
 marker_size = 0.25
@@ -619,49 +569,43 @@ fill_enabled = true
 fill_color = Color(0.4, 0.85, 0.4, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 42, 1, 18)
 
-[node name="68_FlatX_Thin" type="SuperMarker3D" parent="Flat"]
+[node name="68_FlatX_Thin" type="SuperMarker3D" parent="Flat" unique_id=1350578395]
 type = 2
 subtype = 22
-marker_size = 0.5
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 1, 21)
 
-[node name="69_FlatX_Thick" type="SuperMarker3D" parent="Flat"]
+[node name="69_FlatX_Thick" type="SuperMarker3D" parent="Flat" unique_id=1722225630]
 type = 2
 subtype = 22
-marker_size = 0.5
-outline_thickness = 0.08
 outline_color = Color(0.95, 0.2, 0.2, 1)
+outline_thickness = 0.08
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 3.5, 1, 21)
 
-[node name="70_FlatX_RoundedOff" type="SuperMarker3D" parent="Flat"]
+[node name="70_FlatX_RoundedOff" type="SuperMarker3D" parent="Flat" unique_id=716658003]
 type = 2
 subtype = 22
-marker_size = 0.5
+outline_color = Color(0.2, 0.2, 0.2, 1)
 outline_thickness = 0.08
 rounded_corners = false
-outline_color = Color(0.2, 0.2, 0.2, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 7, 1, 21)
 
-[node name="71_FlatCircle_BillboardY" type="SuperMarker3D" parent="Flat"]
+[node name="71_FlatCircle_BillboardY" type="SuperMarker3D" parent="Flat" unique_id=755449044]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 24
 fill_enabled = true
 fill_color = Color(0.95, 0.95, 0.4, 1)
 billboard_y = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 21)
 
-[node name="72_FlatSquare_BillboardY" type="SuperMarker3D" parent="Flat"]
+[node name="72_FlatSquare_BillboardY" type="SuperMarker3D" parent="Flat" unique_id=2474416]
 type = 2
 subtype = 18
-marker_size = 0.5
 fill_enabled = true
 fill_color = Color(0.4, 0.95, 0.5, 1)
 billboard_y = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 21)
 
-[node name="73_FlatTriangle_BillboardY" type="SuperMarker3D" parent="Flat"]
+[node name="73_FlatTriangle_BillboardY" type="SuperMarker3D" parent="Flat" unique_id=234086075]
 type = 2
 subtype = 20
 marker_size = 0.55
@@ -670,34 +614,30 @@ fill_color = Color(0.95, 0.4, 0.7, 1)
 billboard_y = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 21)
 
-[node name="74_FlatX_BillboardY" type="SuperMarker3D" parent="Flat"]
+[node name="74_FlatX_BillboardY" type="SuperMarker3D" parent="Flat" unique_id=1963167972]
 type = 2
 subtype = 22
-marker_size = 0.5
 outline_thickness = 0.06
 billboard_y = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 21)
 
-[node name="75_FlatCircle_BillboardXZ" type="SuperMarker3D" parent="Flat"]
+[node name="75_FlatCircle_BillboardXZ" type="SuperMarker3D" parent="Flat" unique_id=871028596]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 24
 fill_enabled = true
 fill_color = Color(0.5, 0.7, 0.95, 1)
 billboard_xz = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 21)
 
-[node name="76_FlatSquare_BillboardXZ" type="SuperMarker3D" parent="Flat"]
+[node name="76_FlatSquare_BillboardXZ" type="SuperMarker3D" parent="Flat" unique_id=2007969853]
 type = 2
 subtype = 18
-marker_size = 0.5
 fill_enabled = true
 fill_color = Color(0.85, 0.7, 0.4, 1)
 billboard_xz = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 21)
 
-[node name="77_FlatCapsule_BillboardY" type="SuperMarker3D" parent="Flat"]
+[node name="77_FlatCapsule_BillboardY" type="SuperMarker3D" parent="Flat" unique_id=969164745]
 type = 2
 subtype = 21
 marker_size = 0.25
@@ -707,16 +647,15 @@ fill_color = Color(0.95, 0.55, 0.45, 1)
 billboard_y = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 21)
 
-[node name="78_FlatDiamond_BillboardXZ" type="SuperMarker3D" parent="Flat"]
+[node name="78_FlatDiamond_BillboardXZ" type="SuperMarker3D" parent="Flat" unique_id=174597058]
 type = 2
 subtype = 19
-marker_size = 0.5
 fill_enabled = true
 fill_color = Color(0.4, 0.95, 0.95, 1)
 billboard_xz = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 21)
 
-[node name="79_FlatTriangle_BillboardXZ" type="SuperMarker3D" parent="Flat"]
+[node name="79_FlatTriangle_BillboardXZ" type="SuperMarker3D" parent="Flat" unique_id=1577240028]
 type = 2
 subtype = 20
 marker_size = 0.55
@@ -725,87 +664,81 @@ fill_color = Color(0.7, 0.4, 0.95, 1)
 billboard_xz = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38.5, 1, 21)
 
-[node name="80_FlatCircle_Lit" type="SuperMarker3D" parent="Flat"]
+[node name="80_FlatCircle_Lit" type="SuperMarker3D" parent="Flat" unique_id=491337936]
 type = 2
 subtype = 17
-marker_size = 0.5
-shape_sides = 24
 fill_enabled = true
 fill_color = Color(0.95, 0.85, 0.55, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 42, 1, 21)
 
-;; ============================================================================
-;; CURVE — Curve3D-driven path geometry
-;; ============================================================================
+[node name="Curve" type="Node3D" parent="." unique_id=92149944]
 
-[node name="Curve" type="Node3D" parent="."]
-
-[node name="81_CurveLine_FlatRibbon" type="SuperMarker3D" parent="Curve"]
+[node name="81_CurveLine_FlatRibbon" type="SuperMarker3D" parent="Curve" unique_id=529991730]
 type = 3
 subtype = 23
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 26)
 
-[node name="82_CurveRightAngle_Flat" type="SuperMarker3D" parent="Curve"]
+[node name="82_CurveRightAngle_Flat" type="SuperMarker3D" parent="Curve" unique_id=1721325143]
 type = 3
 subtype = 24
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 26)
 
-[node name="83_CurveArc_Flat" type="SuperMarker3D" parent="Curve"]
+[node name="83_CurveArc_Flat" type="SuperMarker3D" parent="Curve" unique_id=282005660]
 type = 3
 subtype = 25
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 26)
 
-[node name="84_CurveSine_Flat" type="SuperMarker3D" parent="Curve"]
+[node name="84_CurveSine_Flat" type="SuperMarker3D" parent="Curve" unique_id=1796443708]
 type = 3
 subtype = 26
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 26)
 
-[node name="85_CurveHelix_Flat" type="SuperMarker3D" parent="Curve"]
+[node name="85_CurveHelix_Flat" type="SuperMarker3D" parent="Curve" unique_id=882965796]
 type = 3
 subtype = 27
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 26)
 
-[node name="86_CurveBezier_Flat" type="SuperMarker3D" parent="Curve"]
+[node name="86_CurveBezier_Flat" type="SuperMarker3D" parent="Curve" unique_id=1421864677]
 type = 3
 subtype = 28
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 26)
 
-[node name="87_CurveLine_ArrowEnd" type="SuperMarker3D" parent="Curve"]
+[node name="87_CurveLine_ArrowEnd" type="SuperMarker3D" parent="Curve" unique_id=398304060]
 type = 3
 subtype = 23
 curve_end_cap = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 26)
 
-[node name="88_CurveLine_ArrowsBoth" type="SuperMarker3D" parent="Curve"]
+[node name="88_CurveLine_ArrowsBoth" type="SuperMarker3D" parent="Curve" unique_id=867395260]
 type = 3
 subtype = 23
 curve_start_cap = 1
 curve_end_cap = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 26)
 
-[node name="89_CurveLine_DotCaps" type="SuperMarker3D" parent="Curve"]
+[node name="89_CurveLine_DotCaps" type="SuperMarker3D" parent="Curve" unique_id=1058475552]
 type = 3
 subtype = 23
 curve_start_cap = 2
 curve_end_cap = 2
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 26)
 
-[node name="90_CurveLine_LineCaps" type="SuperMarker3D" parent="Curve"]
+[node name="90_CurveLine_LineCaps" type="SuperMarker3D" parent="Curve" unique_id=178321687]
 type = 3
 subtype = 23
 curve_start_cap = 3
 curve_end_cap = 3
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 26)
 
-[node name="91_CurveSine_HalfLength" type="SuperMarker3D" parent="Curve"]
+[node name="91_CurveSine_HalfLength" type="SuperMarker3D" parent="Curve" unique_id=646310517]
 type = 3
 subtype = 26
-length_fraction = 0.5
 curve_end_cap = 1
+length_fraction = 0.5
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 26)
 
-[node name="92_CurveBezier_DashedFlat" type="SuperMarker3D" parent="Curve"]
+[node name="92_CurveBezier_DashedFlat" type="SuperMarker3D" parent="Curve" unique_id=426442881]
 type = 3
 subtype = 28
 curve_pattern = 1
@@ -813,57 +746,57 @@ dash_length = 0.3
 dash_gap = 0.15
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38.5, 1, 26)
 
-[node name="93_CurveLine_TubeBasic" type="SuperMarker3D" parent="Curve"]
+[node name="93_CurveLine_TubeBasic" type="SuperMarker3D" parent="Curve" unique_id=500069228]
 type = 3
 subtype = 23
 curve_flat = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 29)
 
-[node name="94_CurveRightAngle_Tube" type="SuperMarker3D" parent="Curve"]
+[node name="94_CurveRightAngle_Tube" type="SuperMarker3D" parent="Curve" unique_id=2136606088]
 type = 3
 subtype = 24
 curve_flat = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 29)
 
-[node name="95_CurveArc_Tube" type="SuperMarker3D" parent="Curve"]
+[node name="95_CurveArc_Tube" type="SuperMarker3D" parent="Curve" unique_id=1642718995]
 type = 3
 subtype = 25
 curve_flat = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 29)
 
-[node name="96_CurveSine_Tube" type="SuperMarker3D" parent="Curve"]
+[node name="96_CurveSine_Tube" type="SuperMarker3D" parent="Curve" unique_id=1173023370]
 type = 3
 subtype = 26
 curve_flat = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 29)
 
-[node name="97_CurveHelix_Tube" type="SuperMarker3D" parent="Curve"]
+[node name="97_CurveHelix_Tube" type="SuperMarker3D" parent="Curve" unique_id=1369528121]
 type = 3
 subtype = 27
 curve_flat = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 29)
 
-[node name="98_CurveBezier_Tube" type="SuperMarker3D" parent="Curve"]
+[node name="98_CurveBezier_Tube" type="SuperMarker3D" parent="Curve" unique_id=1300008325]
 type = 3
 subtype = 28
 curve_flat = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 29)
 
-[node name="99_CurveArc_TubeArrowEnd" type="SuperMarker3D" parent="Curve"]
+[node name="99_CurveArc_TubeArrowEnd" type="SuperMarker3D" parent="Curve" unique_id=2019302147]
 type = 3
 subtype = 25
 curve_flat = false
 curve_end_cap = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 29)
 
-[node name="100_CurveHelix_TubeArrowEnd" type="SuperMarker3D" parent="Curve"]
+[node name="100_CurveHelix_TubeArrowEnd" type="SuperMarker3D" parent="Curve" unique_id=678409255]
 type = 3
 subtype = 27
 curve_flat = false
 curve_end_cap = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 29)
 
-[node name="101_CurveBezier_TubeArrowsBoth" type="SuperMarker3D" parent="Curve"]
+[node name="101_CurveBezier_TubeArrowsBoth" type="SuperMarker3D" parent="Curve" unique_id=1979870854]
 type = 3
 subtype = 28
 curve_flat = false
@@ -871,7 +804,7 @@ curve_start_cap = 1
 curve_end_cap = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 29)
 
-[node name="102_CurveSine_TubeDotted" type="SuperMarker3D" parent="Curve"]
+[node name="102_CurveSine_TubeDotted" type="SuperMarker3D" parent="Curve" unique_id=987210780]
 type = 3
 subtype = 26
 curve_flat = false
@@ -879,7 +812,7 @@ curve_pattern = 2
 dash_length = 0.18
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 29)
 
-[node name="103_CurveHelix_TubeDashed" type="SuperMarker3D" parent="Curve"]
+[node name="103_CurveHelix_TubeDashed" type="SuperMarker3D" parent="Curve" unique_id=699895669]
 type = 3
 subtype = 27
 curve_flat = false
@@ -888,115 +821,111 @@ dash_length = 0.3
 dash_gap = 0.2
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 29)
 
-[node name="104_CurveLine_TubeThick" type="SuperMarker3D" parent="Curve"]
+[node name="104_CurveLine_TubeThick" type="SuperMarker3D" parent="Curve" unique_id=152497715]
 type = 3
 subtype = 23
+fill_color = Color(0.95, 0.5, 0.3, 1)
 curve_flat = false
 curve_width = 0.3
-fill_color = Color(0.95, 0.5, 0.3, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38.5, 1, 29)
 
-[node name="105_CurveArc_FlatBanked" type="SuperMarker3D" parent="Curve"]
+[node name="105_CurveArc_FlatBanked" type="SuperMarker3D" parent="Curve" unique_id=1923944993]
 type = 3
 subtype = 25
-curve_bank = 0.6
-curve_width = 0.25
 fill_color = Color(0.4, 0.7, 0.95, 1)
+curve_width = 0.25
+curve_bank = 0.6
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 32)
 
-[node name="106_CurveHelix_TubeBanked" type="SuperMarker3D" parent="Curve"]
+[node name="106_CurveHelix_TubeBanked" type="SuperMarker3D" parent="Curve" unique_id=838102564]
 type = 3
 subtype = 27
 curve_flat = false
-curve_bank = 0.4
 curve_amplitude = 0.6
+curve_bank = 0.4
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 32)
 
-[node name="107_CurveSine_BigAmp" type="SuperMarker3D" parent="Curve"]
+[node name="107_CurveSine_BigAmp" type="SuperMarker3D" parent="Curve" unique_id=779266032]
 type = 3
 subtype = 26
+fill_color = Color(0.95, 0.85, 0.4, 1)
 curve_amplitude = 1.0
 curve_turns = 3.0
-fill_color = Color(0.95, 0.85, 0.4, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 32)
 
-[node name="108_CurveHelix_LongTurns" type="SuperMarker3D" parent="Curve"]
+[node name="108_CurveHelix_LongTurns" type="SuperMarker3D" parent="Curve" unique_id=1372210171]
 type = 3
 subtype = 27
 curve_flat = false
-curve_turns = 5.0
 curve_length = 3.0
 curve_amplitude = 0.4
+curve_turns = 5.0
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 32)
 
-[node name="109_CurveBezier_DottedFlat" type="SuperMarker3D" parent="Curve"]
+[node name="109_CurveBezier_DottedFlat" type="SuperMarker3D" parent="Curve" unique_id=258564329]
 type = 3
 subtype = 28
+fill_color = Color(0.95, 0.4, 0.7, 1)
 curve_pattern = 2
 dash_length = 0.15
-fill_color = Color(0.95, 0.4, 0.7, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 32)
 
-[node name="110_CurveCustom_FlatA" type="SuperMarker3D" parent="Curve"]
+[node name="110_CurveCustom_FlatA" type="SuperMarker3D" parent="Curve" unique_id=1288485579]
 type = 3
 subtype = 29
-curve = ExtResource("2_curveA")
 fill_color = Color(0.4, 0.95, 0.5, 1)
+curve = ExtResource("2_curveA")
 curve_end_cap = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 32)
 
-[node name="111_CurveCustom_TubeB" type="SuperMarker3D" parent="Curve"]
+[node name="111_CurveCustom_TubeB" type="SuperMarker3D" parent="Curve" unique_id=1552299681]
 type = 3
 subtype = 29
-curve = ExtResource("3_curveB")
-curve_flat = false
-curve_width = 0.18
 fill_color = Color(0.85, 0.5, 0.95, 1)
+curve_flat = false
+curve = ExtResource("3_curveB")
+curve_width = 0.18
 curve_end_cap = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 32)
 
-[node name="112_CurveCustom_TubeLit" type="SuperMarker3D" parent="Curve"]
+[node name="112_CurveCustom_TubeLit" type="SuperMarker3D" parent="Curve" unique_id=968161214]
 type = 3
 subtype = 29
-curve = ExtResource("2_curveA")
-curve_flat = false
-curve_width = 0.18
 fill_color = Color(0.85, 0.85, 0.4, 1)
+curve_flat = false
+curve = ExtResource("2_curveA")
+curve_width = 0.18
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 32)
 
-;; ============================================================================
-;; ARROW — directional pointers
-;; ============================================================================
+[node name="Arrow" type="Node3D" parent="." unique_id=245490668]
 
-[node name="Arrow" type="Node3D" parent="."]
-
-[node name="113_ArrowExtruded_Triangle" type="SuperMarker3D" parent="Arrow"]
+[node name="113_ArrowExtruded_Triangle" type="SuperMarker3D" parent="Arrow" unique_id=829220798]
 type = 4
 subtype = 5
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 38)
 
-[node name="114_ArrowExtruded_Diamond" type="SuperMarker3D" parent="Arrow"]
+[node name="114_ArrowExtruded_Diamond" type="SuperMarker3D" parent="Arrow" unique_id=1910771259]
 type = 4
 subtype = 5
 arrowhead_style = 1
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 38)
 
-[node name="115_ArrowExtruded_Chevron" type="SuperMarker3D" parent="Arrow"]
+[node name="115_ArrowExtruded_Chevron" type="SuperMarker3D" parent="Arrow" unique_id=1356776374]
 type = 4
 subtype = 5
 arrowhead_style = 2
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 38)
 
-[node name="116_ArrowExtruded_Flared" type="SuperMarker3D" parent="Arrow"]
+[node name="116_ArrowExtruded_Flared" type="SuperMarker3D" parent="Arrow" unique_id=38929560]
 type = 4
 subtype = 5
 tail_style = 1
 tail_length = 0.5
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 38)
 
-[node name="117_ArrowExtruded_LitFilled" type="SuperMarker3D" parent="Arrow"]
+[node name="117_ArrowExtruded_LitFilled" type="SuperMarker3D" parent="Arrow" unique_id=738360630]
 type = 4
 subtype = 5
 fill_enabled = true
@@ -1004,49 +933,49 @@ fill_color = Color(0.95, 0.55, 0.3, 1)
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 38)
 
-[node name="118_ArrowFlat_Basic" type="SuperMarker3D" parent="Arrow"]
-type = 4
+[node name="118_ArrowFlat_Basic" type="SuperMarker3D" parent="Arrow" unique_id=936853536]
+type = 2
 subtype = 6
 fill_enabled = true
 fill_color = Color(0.4, 0.85, 0.95, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 17.5, 1, 38)
 
-[node name="119_ArrowFlat_Thick" type="SuperMarker3D" parent="Arrow"]
-type = 4
+[node name="119_ArrowFlat_Thick" type="SuperMarker3D" parent="Arrow" unique_id=8324879]
+type = 2
 subtype = 6
+outline_color = Color(0.2, 0.15, 0, 1)
+outline_thickness = 0.05
 fill_enabled = true
 fill_color = Color(0.95, 0.95, 0.4, 1)
-outline_thickness = 0.05
-outline_color = Color(0.2, 0.15, 0, 1)
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 21, 1, 38)
 
-[node name="120_ArrowFlat_Diamond" type="SuperMarker3D" parent="Arrow"]
-type = 4
+[node name="120_ArrowFlat_Diamond" type="SuperMarker3D" parent="Arrow" unique_id=1830280501]
+type = 2
 subtype = 6
-arrowhead_style = 1
 fill_enabled = true
 fill_color = Color(0.85, 0.4, 0.95, 1)
+arrowhead_style = 1
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 24.5, 1, 38)
 
-[node name="121_ArrowFlat_Chevron" type="SuperMarker3D" parent="Arrow"]
-type = 4
+[node name="121_ArrowFlat_Chevron" type="SuperMarker3D" parent="Arrow" unique_id=255093807]
+type = 2
 subtype = 6
-arrowhead_style = 2
 fill_enabled = true
 fill_color = Color(0.4, 0.95, 0.5, 1)
+arrowhead_style = 2
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 28, 1, 38)
 
-[node name="122_ArrowFlat_Flared" type="SuperMarker3D" parent="Arrow"]
-type = 4
+[node name="122_ArrowFlat_Flared" type="SuperMarker3D" parent="Arrow" unique_id=287560903]
+type = 2
 subtype = 6
-tail_style = 1
-tail_length = 0.5
 fill_enabled = true
 fill_color = Color(0.95, 0.55, 0.55, 1)
+tail_style = 1
+tail_length = 0.5
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 31.5, 1, 38)
 
-[node name="123_ArrowFlat_BillboardY" type="SuperMarker3D" parent="Arrow"]
-type = 4
+[node name="123_ArrowFlat_BillboardY" type="SuperMarker3D" parent="Arrow" unique_id=601264413]
+type = 2
 subtype = 6
 fill_enabled = true
 fill_color = Color(0.7, 0.95, 0.4, 1)
