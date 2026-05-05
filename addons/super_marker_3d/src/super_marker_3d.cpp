@@ -3534,7 +3534,7 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 // perimeter segments):
 //
 //   shaft1 (bl, br, sr)          → bl→br (bottom),    br→sr (right)
-//   shaft2 (bl, sr, sl)          → sl→bl (left)
+//   shaft2 (bl, sr, sl)          → sl→bl (left),      br→sr (right)
 //   right wing (sr, br2, tip)    → sr→br2 (R shoulder), br2→tip (R slant)
 //   right head (sr, tip, mid)    → sr→br2,             br2→tip
 //   left  head (mid, tip, sl)    → tip→bl2 (L slant),  bl2→sl (L shoulder)
@@ -3543,6 +3543,14 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 // `mid` is the midpoint of the (internal) shaft top sl→sr, splitting the
 // head fill so each half can encode its concave shoulder's adjacent
 // perimeter segments and paint the corresponding fillet.
+//
+// shaft2 tracks br→sr in slot 2 even though that edge isn't one of its
+// own sides — without it, fragments in shaft2's interior near the right
+// shaft edge (above the bl→sr diagonal) had no slot encoding for br→sr
+// and the right-side strip terminated at the diagonal, leaving a visible
+// step across the stem. The encoded segment doesn't have to be a side
+// of the triangle; (perp, axial_excess) is well-defined for any segment
+// the fragment might be near.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
@@ -3567,7 +3575,7 @@ void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
 
 	// Shaft.
 	_add_outline_face(geo, bl, br, sr, E(bl, br), E(br, sr));
-	_add_outline_face(geo, bl, sr, sl, E(sl, bl), NONE);
+	_add_outline_face(geo, bl, sr, sl, E(sl, bl), E(br, sr));
 
 	// Right side: wing + head sub-tri share the (right shoulder, right slant)
 	// pair. Both segments meet at the convex br2 corner and the concave sr
