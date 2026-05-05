@@ -5,9 +5,11 @@
 [sub_resource type="BoxMesh" id="BoxMesh_4j8hf"]
 
 [node name="SuperMarker3D" type="SuperMarker3D" unique_id=29451092]
-subtype = 8
+type = 2
+subtype = 6
 outline_color = Color(0.12941177, 1, 0, 1)
-outline_thickness = 0.127
+outline_thickness = 0.302
+marker_size = 5.72
 fill_enabled = true
 axis_length_x_pos = 0.911
 axis_length_x_neg = 0.911
@@ -24,8 +26,8 @@ axis_color_y_pos = Color(0.039215688, 1, 0.039215688, 1)
 axis_color_y_neg = Color(0.039215688, 0.15686275, 0.039215688, 1)
 axis_color_z_pos = Color(0.039215688, 0.039215688, 1, 1)
 axis_color_z_neg = Color(0.039215688, 0.039215688, 0.15686275, 1)
-head_length = 3.5
-head_width = 1.94
+head_length = 5.05
+head_width = 2.7
 curve_length = 3.31
 curve_amplitude = 1.0
 curve_turns = 4.61
@@ -35,8 +37,6 @@ curve_width = 0.596
 start_cap_size = Vector2(0.595, 0.595)
 start_cap_linked = false
 curve_end_cap = 3
-billboard_xz = true
-billboard_y = true
 lights_and_shadows = true
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=49429962]

@@ -197,7 +197,6 @@ func _try_shoot() -> void:
 	a.marker_size = 0.7
 	a.head_length = 0.28
 	a.head_width = 0.14
-	a.fill_enabled = true
 	a.fill_color = Color(1.0, 0.5, 0.2, 0.5)
 	a.outline_color = Color(1.0, 0.85, 0.4, 1.0)
 	a.position = _player.position + Vector3(0.0, 0.9, 0.0) + _facing * 0.5

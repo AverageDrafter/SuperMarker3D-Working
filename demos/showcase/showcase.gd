@@ -80,7 +80,6 @@ func _build_entries() -> Array:
 				var m: SuperMarker3D = SuperMarker3D.new()
 				m.subtype = SuperMarker3D.MESH_DIAMOND
 				m.marker_size = 0.6
-				m.fill_enabled = true
 				m.fill_color = Color(0.0, 1.0, 0.8, 0.25)
 				return m,
 			"animate": func(m: SuperMarker3D, t: float) -> void:
@@ -92,7 +91,6 @@ func _build_entries() -> Array:
 				var m: SuperMarker3D = SuperMarker3D.new()
 				m.subtype = SuperMarker3D.MESH_SPHERE
 				m.marker_size = 0.5
-				m.fill_enabled = true
 				m.fill_color = Color(1.0, 0.4, 0.6, 0.2)
 				return m,
 			"animate": func(m: SuperMarker3D, t: float) -> void:
@@ -104,7 +102,6 @@ func _build_entries() -> Array:
 				var m: SuperMarker3D = SuperMarker3D.new()
 				m.subtype = SuperMarker3D.MESH_BOX
 				m.marker_size = 0.5
-				m.fill_enabled = true
 				m.fill_color = Color(0.4, 0.6, 1.0, 0.2)
 				return m,
 			"animate": func(m: SuperMarker3D, t: float) -> void:
@@ -155,20 +152,6 @@ func _build_entries() -> Array:
 				m.axis_length_z_pos = 0.5 + sin(t * 1.0 + 4.188) * 0.3,
 		},
 		{
-			"label": "ARROW_EXTRUDED",
-			"build": func() -> SuperMarker3D:
-				var m: SuperMarker3D = SuperMarker3D.new()
-				m.subtype = SuperMarker3D.ARROW_EXTRUDED
-				m.marker_size = 0.9
-				m.head_length = 0.32
-				m.head_width = 0.18
-				m.fill_enabled = true
-				m.fill_color = Color(1.0, 0.5, 0.2, 0.4)
-				return m,
-			"animate": func(m: SuperMarker3D, t: float) -> void:
-				m.rotation.y = t * 0.5,
-		},
-		{
 			"label": "ARROW_FLAT",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
@@ -176,7 +159,6 @@ func _build_entries() -> Array:
 				m.marker_size = 0.9
 				m.head_length = 0.32
 				m.head_width = 0.18
-				m.fill_enabled = true
 				m.fill_color = Color(0.2, 1.0, 0.5, 0.4)
 				return m,
 			"animate": func(m: SuperMarker3D, t: float) -> void:

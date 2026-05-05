@@ -36,7 +36,6 @@ type = 3
 subtype = 27
 outline_color = Color(1, 1, 0.21176471, 1)
 outline_thickness = 0.131
-fill_enabled = true
 fill_color = Color(0.11764706, 0.039215688, 0.11764706, 1)
 background_color = Color(1, 1, 0, 1)
 axis_link_mode = 2

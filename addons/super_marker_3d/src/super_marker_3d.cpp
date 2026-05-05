@@ -36,8 +36,6 @@ static const int SPHERE_FILL_LON = 12;
 // Silhouette circle segments
 static const int SIL_SEGS = 32;
 
-// Arrow/axis cone segments
-static const int CONE_SEGS = 16;
 
 // ---------------------------------------------------------------------------
 // Mesh-category rendering uses TWO chained passes for non-sphere subtypes
@@ -381,17 +379,8 @@ void SuperMarker3D::_bind_methods() {
 					 "Wireframe,Silhouette"),
 			"set_detail_mode", "get_detail_mode");
 
-	// Fill — Mesh / Arrow / Curve Flat.
+	// Fill — Mesh / Curve Flat / Shape.
 	ADD_GROUP("Fill", "fill_");
-	// `fill_enabled` is deprecated — fill is always on now (use
-	// fill_color's alpha to hide). Setter/getter remain so existing
-	// scenes that store `fill_enabled = ...` keep loading; the property
-	// is hidden from the inspector via `_validate_property`.
-	ClassDB::bind_method(D_METHOD("set_fill_enabled", "enabled"), &SuperMarker3D::set_fill_enabled);
-	ClassDB::bind_method(D_METHOD("get_fill_enabled"), &SuperMarker3D::get_fill_enabled);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fill_enabled",
-			PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_STORAGE),
-			"set_fill_enabled", "get_fill_enabled");
 	ClassDB::bind_method(D_METHOD("set_fill_color", "color"), &SuperMarker3D::set_fill_color);
 	ClassDB::bind_method(D_METHOD("get_fill_color"), &SuperMarker3D::get_fill_color);
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "fill_color"), "set_fill_color", "get_fill_color");
@@ -497,20 +486,6 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_head_width"), &SuperMarker3D::get_head_width);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "head_width", PROPERTY_HINT_RANGE, "0.0,10.0,0.01,or_greater,suffix:m"),
 			"set_head_width", "get_head_width");
-	ClassDB::bind_method(D_METHOD("set_arrowhead_style", "style"), &SuperMarker3D::set_arrowhead_style);
-	ClassDB::bind_method(D_METHOD("get_arrowhead_style"), &SuperMarker3D::get_arrowhead_style);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "arrowhead_style", PROPERTY_HINT_ENUM, "Triangle,Diamond,Chevron"),
-			"set_arrowhead_style", "get_arrowhead_style");
-
-	ADD_GROUP("Tail", "tail_");
-	ClassDB::bind_method(D_METHOD("set_tail_style", "style"), &SuperMarker3D::set_tail_style);
-	ClassDB::bind_method(D_METHOD("get_tail_style"), &SuperMarker3D::get_tail_style);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "tail_style", PROPERTY_HINT_ENUM, "None,Flared"),
-			"set_tail_style", "get_tail_style");
-	ClassDB::bind_method(D_METHOD("set_tail_length", "length"), &SuperMarker3D::set_tail_length);
-	ClassDB::bind_method(D_METHOD("get_tail_length"), &SuperMarker3D::get_tail_length);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tail_length", PROPERTY_HINT_RANGE, "0.0,10.0,0.01,or_greater,suffix:m"),
-			"set_tail_length", "get_tail_length");
 
 	ADD_GROUP("Curve", "");
 	ClassDB::bind_method(D_METHOD("get_active_curve"), &SuperMarker3D::get_active_curve);
@@ -655,7 +630,6 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(TYPE_MESH);
 	BIND_ENUM_CONSTANT(TYPE_SHAPE);
 	BIND_ENUM_CONSTANT(TYPE_CURVE);
-	BIND_ENUM_CONSTANT(TYPE_ARROW);
 	BIND_ENUM_CONSTANT(TYPE_FIGURE);
 
 	BIND_ENUM_CONSTANT(AXIS_CROSS);
@@ -674,7 +648,6 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FLAT_TRIANGLE);
 	BIND_ENUM_CONSTANT(FLAT_CAPSULE);
 	BIND_ENUM_CONSTANT(FLAT_X);
-	BIND_ENUM_CONSTANT(ARROW_EXTRUDED);
 	BIND_ENUM_CONSTANT(ARROW_FLAT);
 	BIND_ENUM_CONSTANT(FIGURE);
 
@@ -691,9 +664,6 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(LINK_MIRRORED);
 	BIND_ENUM_CONSTANT(LINK_FREE);
 	BIND_ENUM_CONSTANT(DETAIL_WIREFRAME); BIND_ENUM_CONSTANT(DETAIL_SILHOUETTE);
-	BIND_ENUM_CONSTANT(ARROWHEAD_TRIANGLE); BIND_ENUM_CONSTANT(ARROWHEAD_DIAMOND);
-	BIND_ENUM_CONSTANT(ARROWHEAD_CHEVRON);
-	BIND_ENUM_CONSTANT(TAIL_NONE); BIND_ENUM_CONSTANT(TAIL_FLARED);
 	BIND_ENUM_CONSTANT(CURVE_PATTERN_SOLID); BIND_ENUM_CONSTANT(CURVE_PATTERN_DASH);
 	BIND_ENUM_CONSTANT(CURVE_PATTERN_DOT);
 	BIND_ENUM_CONSTANT(CURVE_CAP_NONE); BIND_ENUM_CONSTANT(CURVE_CAP_ARROW);
@@ -709,7 +679,6 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	const bool is_axis  = (t == TYPE_AXIS);
 	const bool is_mesh  = (t == TYPE_MESH);
 	const bool is_curve = (t == TYPE_CURVE);
-	const bool is_arrow = (t == TYPE_ARROW);
 	const bool is_shape = (t == TYPE_SHAPE);
 	const bool is_axis_xyz = (_shape == AXIS_XYZ);
 	const bool is_axis_2d  = (_shape == AXIS_CROSS); // 4 arms, no Z
@@ -736,12 +705,6 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 			case TYPE_CURVE:
 				p_property.hint_string = "Line:23,Right Angle:24,Arc:25,Sine:26,Helix:27,Bezier:28,Custom:29";
 				break;
-			case TYPE_ARROW:
-				// Flat moved to TYPE_SHAPE. ARROW stays a top-level type
-				// for the 3D extruded arrow until the universal extrude
-				// feature lands (which will fold this back into Shape).
-				p_property.hint_string = "Extruded:5";
-				break;
 			case TYPE_FIGURE:
 				p_property.hint_string = "Figure:10";
 				break;
@@ -753,12 +716,9 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Hide it everywhere; kept in the binding only for back-compat with
 	// serialized scenes.
 	if (name == "detail_mode") hide();
-	// Fill Enabled is also gone for Mesh (fill is always on now). Keep
-	// it visible only on Arrow / Curve Flat where the user still
-	// chooses whether to fill.
 	const bool curve_flat_style = is_curve && _is_curve_flat_style();
 	// fill_color shows on every category that has a fillable interior.
-	if (name == "fill_color" && !(is_mesh || is_arrow || curve_flat_style || is_shape)) hide();
+	if (name == "fill_color" && !(is_mesh || curve_flat_style || is_shape)) hide();
 	if (name == "background_color" && !is_curve) hide();
 	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
@@ -826,17 +786,8 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "marker_size" && is_axis) hide();
 	if (name == "outline_color" && is_axis_xyz) hide();
 
-	// Arrow proportions: head_length / head_width apply to BOTH the 3D
-	// extruded arrow AND the flat-arrow shape (now under TYPE_SHAPE).
-	// arrowhead_style and tail_* are extruded-only (the flat-arrow
-	// generator doesn't read them).
-	const bool is_arrow_subtype = (_shape == ARROW_EXTRUDED || _shape == ARROW_FLAT);
-	if ((name == "head_length" || name == "head_width") && !is_arrow_subtype) hide();
-	if (name == "arrowhead_style" && _shape != ARROW_EXTRUDED) hide();
-	if ((name == "tail_style" || name == "tail_length") && _shape != ARROW_EXTRUDED) hide();
-	// rounded_corners on ARROW_FLAT isn't wired yet — its outline disc
-	// blobs are unconditional. Hide the toggle so the user doesn't see a
-	// dead control until the polish pass implements it.
+	// Arrow proportions — only meaningful on the flat-arrow Shape subtype.
+	if ((name == "head_length" || name == "head_width") && _shape != ARROW_FLAT) hide();
 	if (name == "rounded_corners" && _shape == ARROW_FLAT) hide();
 
 	// Curve shape uses its own width; generic marker_size / outline_thickness don't apply.
@@ -1041,14 +992,12 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 			return TYPE_MESH;
 		case FLAT_CIRCLE: case FLAT_SQUARE: case FLAT_DIAMOND:
 		case FLAT_TRIANGLE: case FLAT_CAPSULE: case FLAT_X:
-		case ARROW_FLAT: // 2D arrow lives in the Shape category alongside the other flat polys
+		case ARROW_FLAT:
 			return TYPE_SHAPE;
 		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
 		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
 		case CURVE_CUSTOM:
 			return TYPE_CURVE;
-		case ARROW_EXTRUDED:
-			return TYPE_ARROW;
 		case FIGURE:
 			return TYPE_FIGURE;
 		default:
@@ -1062,7 +1011,6 @@ int SuperMarker3D::_type_first_subtype(int p_type) {
 		case TYPE_MESH:   return MESH_SPHERE;
 		case TYPE_SHAPE:  return FLAT_CIRCLE;
 		case TYPE_CURVE:  return CURVE_LINE;
-		case TYPE_ARROW:  return ARROW_EXTRUDED;
 		case TYPE_FIGURE: return FIGURE;
 		default:          return AXIS_CROSS;
 	}
@@ -1105,13 +1053,6 @@ Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
 float SuperMarker3D::get_outline_thickness() const { return _outline_thickness; }
 
-void SuperMarker3D::set_fill_enabled(bool p) {
-	// Deprecated — kept so old scenes loading `fill_enabled = ...` don't
-	// emit unknown-property warnings. Fill is always on; alpha out
-	// fill_color to hide it instead.
-	_fill_enabled = p;
-}
-bool SuperMarker3D::get_fill_enabled() const { return _fill_enabled; }
 void SuperMarker3D::set_fill_color(const Color &p) {
 	_fill_color = p;
 	if (_fill_material.is_valid()) {
@@ -1306,13 +1247,6 @@ void SuperMarker3D::set_head_length(float p) { _head_length = MAX(0.0f, p); SM_R
 float SuperMarker3D::get_head_length() const { return _head_length; }
 void SuperMarker3D::set_head_width(float p) { _head_width = MAX(0.0f, p); SM_REBUILD(); }
 float SuperMarker3D::get_head_width() const { return _head_width; }
-void SuperMarker3D::set_arrowhead_style(int p) { _arrowhead_style = p; SM_REBUILD(); }
-int  SuperMarker3D::get_arrowhead_style() const { return _arrowhead_style; }
-
-void SuperMarker3D::set_tail_style(int p) { _tail_style = p; SM_REBUILD(); }
-int  SuperMarker3D::get_tail_style() const { return _tail_style; }
-void SuperMarker3D::set_tail_length(float p) { _tail_length = MAX(0.0f, p); SM_REBUILD(); }
-float SuperMarker3D::get_tail_length() const { return _tail_length; }
 
 // Curve ribbon — Curve3D-driven flat strip with pattern + endcaps.
 // Reconnects to the new resource's `changed` signal so in-editor edits of
@@ -1996,8 +1930,7 @@ void SuperMarker3D::_build_materials() {
 	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
 	_fill_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
 	// Fill albedo is the user's fill_color across every type; alpha it out
-	// to hide the interior. (Pre-1.0 had a `fill_enabled` toggle that
-	// substituted outline_color when off — removed; alpha replaces it.)
+	// to hide the interior.
 	const Color &fill_albedo = _fill_color;
 	_fill_material->set_albedo(fill_albedo);
 	// All fills use CULL_BACK so only the front face renders, with its
@@ -2234,10 +2167,6 @@ void SuperMarker3D::_build_materials() {
 		} else {
 			for (int i = 0; i < sc; i++) {
 				_mesh->surface_set_material(i, _outline_material);
-			}
-			const bool any_fill_capable = (_shape == ARROW_EXTRUDED || _shape == ARROW_FLAT);
-			if (any_fill_capable && sc > 0) {
-				_mesh->surface_set_material(sc - 1, _fill_material);
 			}
 		}
 	}
@@ -3367,58 +3296,6 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
-// 3D Arrow — points +Z, origin is back of the arrow.
-// Outline: PRIMITIVE_LINES (directional, not a closed volume — no cull needed).
-// ---------------------------------------------------------------------------
-
-void SuperMarker3D::_gen_arrow(GeoBuf &geo) const {
-	const float total = _marker_size;
-	const float hl   = MIN(_head_length, total * 0.9f);
-	const float shaft = total - hl;
-	const float tl   = (_tail_style == TAIL_FLARED) ? MIN(_tail_length, shaft) : 0.0f;
-	const float hw   = _head_width * (_arrowhead_style == ARROWHEAD_DIAMOND ? 1.4f
-	                            : _arrowhead_style == ARROWHEAD_CHEVRON ? 1.7f : 1.0f);
-
-	const Vector3 origin(0, 0, 0), shaft_end(0, 0, shaft), tip(0, 0, total);
-
-	// Shaft
-	geo.add_line(tl > 0 ? Vector3(0,0,tl) : origin, shaft_end);
-
-	// Arrowhead ring + spokes
-	const int N = 12;
-	for (int i = 0; i < N; i++) {
-		float a0 = SM_TAU * i / N, a1 = SM_TAU * (i+1) / N;
-		Vector3 p0 = shaft_end + Vector3(std::cos(a0), std::sin(a0), 0) * hw;
-		Vector3 p1 = shaft_end + Vector3(std::cos(a1), std::sin(a1), 0) * hw;
-		geo.add_line(p0, p1);
-		if (i % 3 == 0) geo.add_line(p0, tip);
-	}
-	if (_arrowhead_style == ARROWHEAD_DIAMOND) {
-		Vector3 back_bump(0, 0, shaft - hl * 0.3f);
-		for (int i = 0; i < N; i += 3) {
-			float a = SM_TAU * i / N;
-			geo.add_line(shaft_end + Vector3(std::cos(a), std::sin(a), 0) * hw, back_bump);
-		}
-	}
-
-	// Flair tail
-	if (tl > 0.0f) {
-		const float fr = hw * 1.2f;
-		for (int i = 0; i < N; i++) {
-			float a0 = SM_TAU * i / N, a1 = SM_TAU * (i+1) / N;
-			Vector3 p0 = origin + Vector3(std::cos(a0), std::sin(a0), 0) * fr;
-			Vector3 p1 = origin + Vector3(std::cos(a1), std::sin(a1), 0) * fr;
-			geo.add_line(p0, p1);
-			if (i % 3 == 0) geo.add_line(p0, Vector3(0, 0, tl));
-		}
-	}
-
-	// Fill — always emitted; alpha out fill_color to hide.
-	_cone_fill(geo, tip, shaft_end, Vector3(0,0,-1), hw, CONE_SEGS, true);
-	if (tl > 0.0f) _cone_fill(geo, Vector3(0,0,tl), origin, Vector3(0,0,1), hw*1.2f, CONE_SEGS, true);
-}
-
-// ---------------------------------------------------------------------------
 // Shape-category generators — flat 2D polygon icons.
 //
 // Shared orientation logic: ORIENT_BILLBOARD generates geometry in the XY
@@ -3533,34 +3410,52 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 // Flat Arrow — 2D in the XY plane (Z = 0) like the other Shape subtypes,
 // pointing +Y. Centered on the origin: tip at (0, +marker_size), base at
-// y=-marker_size (so total length = 2*marker_size). Decomposed into a
-// fan-from-tip of 5 triangles via `_add_mesh_face` so the BARY shader
-// paints outlines on the 7 perimeter edges (sides + shoulders + slants)
-// while skipping the internal "spoke" diagonals from the tip.
+// y=-marker_size (total length = 2*marker_size). Decomposed into 4 NON-
+// OVERLAPPING pieces — a shaft quad + 3 head triangles — so the BARY
+// surface renders each fragment exactly once (no z-fight, no normal
+// flicker). Perimeter edges (sides, shoulders, slants) are flagged
+// boundary on the piece they bound; the head-fill triangle's three
+// edges are all internal, so it just paints fill_color.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
-	const float total = _marker_size * 2.0f;        // full base→tip length
+	const float total = _marker_size * 2.0f;
 	const float hl    = MIN(_head_length, total * 0.9f);
 	const float hw    = _head_width;
 	const float sw    = hw * 0.4f;
 	const float y_tip = total * 0.5f;
 	const float y_base = -y_tip;
-	const float y_sh   = y_tip - hl;                  // shoulder Y (head/shaft junction)
+	const float y_sh   = y_tip - hl;
 
-	const Vector3 bl(-sw, y_base, 0),  br(sw, y_base, 0);     // shaft base
-	const Vector3 sl(-sw, y_sh,   0),  sr(sw, y_sh,   0);     // shaft top (inner shoulder)
-	const Vector3 bl2(-hw, y_sh,  0),  br2(hw, y_sh,  0);     // head wing tips
+	const Vector3 bl(-sw, y_base, 0),  br(sw, y_base, 0);
+	const Vector3 sl(-sw, y_sh,   0),  sr(sw, y_sh,   0);
+	const Vector3 bl2(-hw, y_sh,  0),  br2(hw, y_sh,  0);
 	const Vector3 tip(0,   y_tip, 0);
 
-	// Fan-from-tip. Internal diagonals (tip→bl, tip→br, tip→sr, tip→sl)
-	// are flagged non-boundary; the 7 real perimeter edges are flagged
-	// boundary. Each tri's edge slot e_i is the edge OPPOSITE vertex i.
-	_add_mesh_face(geo, bl,  br,  tip, /*opp bl=br→tip*/ false, /*opp br=tip→bl*/ false, /*opp tip=bl→br*/ true);
-	_add_mesh_face(geo, br,  sr,  tip, false, false, true);                 // br→sr right-shaft
-	_add_mesh_face(geo, sr,  br2, tip, /*opp sr=br2→tip*/ true, false, /*opp tip=sr→br2*/ true); // right slant + right shoulder
-	_add_mesh_face(geo, tip, bl2, sl, /*opp tip=bl2→sl*/ true, false, /*opp sl=tip→bl2*/ true); // left shoulder + left slant
-	_add_mesh_face(geo, tip, sl,  bl,  /*opp tip=sl→bl*/ true, false, false); // left-shaft
+	// Shaft quad (bl, br, sr, sl) CCW from +Z. Edges:
+	//   e01 bl→br : bottom (perimeter)
+	//   e12 br→sr : right side (perimeter)
+	//   e23 sr→sl : top (internal — meets the head-fill triangle)
+	//   e30 sl→bl : left side (perimeter)
+	_add_mesh_quad_face(geo, bl, br, sr, sl, true, true, false, true);
+
+	// Right wing triangle (sr, br2, tip) CCW from +Z. Edges:
+	//   e0 (opp sr) br2→tip : right slant (perimeter)
+	//   e1 (opp br2) tip→sr : internal
+	//   e2 (opp tip) sr→br2 : right shoulder (perimeter)
+	_add_mesh_face(geo, sr, br2, tip, true, false, true);
+
+	// Head fill triangle (sr, tip, sl) CCW from +Z — central head body.
+	// All three edges are internal: sr→tip and tip→sl meet the wings,
+	// sl→sr meets the shaft. Outline contributions come from the
+	// neighbour triangles.
+	_add_mesh_face(geo, sr, tip, sl, false, false, false);
+
+	// Left wing triangle (tip, bl2, sl) CCW from +Z. Edges:
+	//   e0 (opp tip) bl2→sl : left shoulder (perimeter)
+	//   e1 (opp bl2) sl→tip : internal
+	//   e2 (opp sl)  tip→bl2: left slant (perimeter)
+	_add_mesh_face(geo, tip, bl2, sl, true, false, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -4018,29 +3913,6 @@ void SuperMarker3D::_add_sil_disc(GeoBuf &geo,
 }
 
 // ---------------------------------------------------------------------------
-// Cone fill helper
-// ---------------------------------------------------------------------------
-
-void SuperMarker3D::_cone_fill(GeoBuf &geo, const Vector3 &apex, const Vector3 &base_center,
-		const Vector3 &forward, float base_radius, int segs, bool cap_base) {
-	Vector3 up  = Math::abs(forward.dot(Vector3(0,1,0))) < 0.9f ? Vector3(0,1,0) : Vector3(1,0,0);
-	Vector3 right = forward.cross(up).normalized();
-	Vector3 up_p  = right.cross(forward).normalized();
-
-	PackedVector3Array ring;
-	ring.resize(segs);
-	for (int i = 0; i < segs; i++) {
-		float a = SM_TAU * (float)i / segs;
-		ring.set(i, base_center + (std::cos(a)*right + std::sin(a)*up_p) * base_radius);
-	}
-	for (int i = 0; i < segs; i++) {
-		Vector3 p0 = ring[i], p1 = ring[(i+1)%segs];
-		geo.add_triangle(apex, p0, p1);
-		if (cap_base) geo.add_triangle(base_center, p1, p0);
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Mesh assembly
 // ---------------------------------------------------------------------------
 
@@ -4133,7 +4005,6 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_CYLINDER:   _gen_cylinder(geo);    break;
 		case MESH_CONE:       _gen_cone(geo);        break;
 		case MESH_CAPSULE:    _gen_capsule(geo);     break;
-		case ARROW_EXTRUDED:  _gen_arrow(geo);       break;
 		case FLAT_CIRCLE:     _gen_flat_circle(geo);   break;
 		case FLAT_SQUARE:     _gen_flat_square(geo);   break;
 		case FLAT_DIAMOND:    _gen_flat_diamond(geo);  break;

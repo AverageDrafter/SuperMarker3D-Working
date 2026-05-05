@@ -39,7 +39,6 @@ public:
 		TYPE_MESH = 1,
 		TYPE_SHAPE = 2,
 		TYPE_CURVE = 3,
-		TYPE_ARROW = 4,
 		TYPE_FIGURE = 5,
 	};
 
@@ -87,9 +86,8 @@ public:
 		CURVE_BEZIER      = 28,  // smooth S-curve
 		CURVE_CUSTOM      = 29,  // user-supplied Curve3D
 
-		// Arrow category — directional pointer.
-		ARROW_EXTRUDED = 5,     // 3D shaft + head
-		ARROW_FLAT = 6,         // 2D arrow, billboarded
+		// 2D arrow, lives in the Shape category alongside the other flat polys.
+		ARROW_FLAT = 6,
 
 		// Figure category — humanoid mock-up.
 		FIGURE = 10,
@@ -108,17 +106,6 @@ public:
 	enum DetailMode {
 		DETAIL_WIREFRAME = 0,  // Camera-front-facing edge lines via face-normal quads
 		DETAIL_SILHOUETTE = 1, // Billboarded 2D silhouette
-	};
-
-	enum ArrowheadStyle {
-		ARROWHEAD_TRIANGLE = 0,
-		ARROWHEAD_DIAMOND = 1,
-		ARROWHEAD_CHEVRON = 2,
-	};
-
-	enum TailStyle {
-		TAIL_NONE = 0,
-		TAIL_FLARED = 1,
 	};
 
 	enum CurvePattern {
@@ -163,7 +150,6 @@ public:
 	void set_outline_color(const Color &p);   Color get_outline_color() const;
 	void set_outline_thickness(float p);      float get_outline_thickness() const;
 
-	void set_fill_enabled(bool p);  bool get_fill_enabled() const;
 	void set_fill_color(const Color &p); Color get_fill_color() const;
 	void set_background_color(const Color &p); Color get_background_color() const;
 
@@ -253,10 +239,6 @@ public:
 
 	void set_head_length(float p);  float get_head_length() const;
 	void set_head_width(float p);   float get_head_width() const;
-	void set_arrowhead_style(int p); int get_arrowhead_style() const;
-
-	void set_tail_style(int p);    int get_tail_style() const;
-	void set_tail_length(float p); float get_tail_length() const;
 
 	void set_curve(const Ref<Curve3D> &p);  Ref<Curve3D> get_curve() const;
 	/// Returns a duplicate of the curve currently driving the geometry —
@@ -354,7 +336,6 @@ private:
 	Color _outline_color = Color(1.0f, 1.0f, 0.0f, 1.0f);   // pure yellow
 	float _outline_thickness = 0.0f;
 
-	bool  _fill_enabled = false;
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);     // teal/cyan
 	Color _background_color = Color(0.0f, 0.0f, 0.0f, 0.0f); // curve gap fill
 
@@ -420,10 +401,6 @@ private:
 
 	float _head_length = 0.3f;
 	float _head_width  = 0.15f;
-	int   _arrowhead_style = ARROWHEAD_TRIANGLE;
-
-	int   _tail_style = TAIL_NONE;
-	float _tail_length = 0.0f;
 
 	// Curve category — path geometry stamped along a Curve3D. The
 	// subtype picks the SHAPE (Line, Right Angle, Arc, Sine, Helix,
@@ -653,7 +630,6 @@ private:
 	void _gen_flat_triangle(GeoBuf &geo) const;
 	void _gen_flat_capsule(GeoBuf &geo) const;
 	void _gen_flat_x(GeoBuf &geo) const;
-	void _gen_arrow(GeoBuf &geo) const;
 	void _gen_flat_arrow(GeoBuf &geo) const;
 	void _gen_curve(GeoBuf &geo) const;
 	void _gen_curve_line_3d(GeoBuf &geo) const;
@@ -734,9 +710,6 @@ private:
 	static void _add_sil_edge_quad(GeoBuf &geo, const Vector3 &a, const Vector3 &b, float w);
 	static void _add_sil_disc(GeoBuf &geo, const Vector3 &center, float radius, int segs);
 
-	// Cone fill.
-	static void _cone_fill(GeoBuf &geo, const Vector3 &apex, const Vector3 &base_center,
-			const Vector3 &forward, float base_radius, int segments, bool cap_base);
 };
 
 } // namespace godot
@@ -745,8 +718,6 @@ VARIANT_ENUM_CAST(SuperMarker3D::MarkerType);
 VARIANT_ENUM_CAST(SuperMarker3D::Subtype);
 VARIANT_ENUM_CAST(SuperMarker3D::AxisLinkMode);
 VARIANT_ENUM_CAST(SuperMarker3D::DetailMode);
-VARIANT_ENUM_CAST(SuperMarker3D::ArrowheadStyle);
-VARIANT_ENUM_CAST(SuperMarker3D::TailStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::CurvePattern);
 VARIANT_ENUM_CAST(SuperMarker3D::CurveCapStyle);
 VARIANT_ENUM_CAST(SuperMarker3D::FigureLegPose);

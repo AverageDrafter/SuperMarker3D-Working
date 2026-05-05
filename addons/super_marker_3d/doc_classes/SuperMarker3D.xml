@@ -32,11 +32,8 @@
 		<member name="outline_thickness" type="float" setter="set_outline_thickness" getter="get_outline_thickness" default="0.0">
 			Thickness of edge quads (wireframe) or outline lines (silhouette). 0 = thin lines.
 		</member>
-		<member name="fill_enabled" type="bool" setter="set_fill_enabled" getter="get_fill_enabled" default="false">
-			Draw solid fill in addition to the outline.
-		</member>
 		<member name="fill_color" type="Color" setter="set_fill_color" getter="get_fill_color" default="Color(0, 1, 0.8, 1)">
-			Fill color when [member fill_enabled] is true.
+			Fill color. Alpha out to hide the interior.
 		</member>
 		<member name="background_color" type="Color" setter="set_background_color" getter="get_background_color" default="Color(0, 0, 0, 0)">
 			Curve only: color of dash/dot gap panels. Transparent by default (gaps are invisible).
@@ -57,19 +54,10 @@
 			Axis shape only: color of the Z axis line.
 		</member>
 		<member name="head_length" type="float" setter="set_head_length" getter="get_head_length" default="0.3">
-			Arrow shapes: length of the arrowhead as a fraction of total size.
+			Arrow Shape only: length of the arrowhead in marker-local units.
 		</member>
 		<member name="head_width" type="float" setter="set_head_width" getter="get_head_width" default="0.15">
-			Arrow shapes: width of the arrowhead.
-		</member>
-		<member name="arrowhead_style" type="int" setter="set_arrowhead_style" getter="get_arrowhead_style" enum="SuperMarker3D.ArrowheadStyle" default="0">
-			Triangle, Diamond, or Chevron.
-		</member>
-		<member name="tail_style" type="int" setter="set_tail_style" getter="get_tail_style" enum="SuperMarker3D.TailStyle" default="0">
-			[code]TAIL_NONE[/code] (0) or [code]TAIL_FLARED[/code] (1).
-		</member>
-		<member name="tail_length" type="float" setter="set_tail_length" getter="get_tail_length" default="0.0">
-			Flared tail length (when [member tail_style] = [code]TAIL_FLARED[/code]).
+			Arrow Shape only: full width of the arrowhead at the shoulders.
 		</member>
 		<member name="editor_only" type="bool" setter="set_editor_only" getter="get_editor_only" default="true">
 			If true, the marker only renders in the editor.
@@ -81,10 +69,5 @@
 	<constants>
 		<constant name="DETAIL_WIREFRAME" value="0" enum="DetailMode" />
 		<constant name="DETAIL_SILHOUETTE" value="1" enum="DetailMode" />
-		<constant name="ARROWHEAD_TRIANGLE" value="0" enum="ArrowheadStyle" />
-		<constant name="ARROWHEAD_DIAMOND" value="1" enum="ArrowheadStyle" />
-		<constant name="ARROWHEAD_CHEVRON" value="2" enum="ArrowheadStyle" />
-		<constant name="TAIL_NONE" value="0" enum="TailStyle" />
-		<constant name="TAIL_FLARED" value="1" enum="TailStyle" />
 	</constants>
 </class>
