@@ -1633,9 +1633,19 @@ void SuperMarker3D::set_always_on_top(bool p) {
 	if (is_inside_tree()) {
 		_build_materials();
 		RenderingServer *rs = RenderingServer::get_singleton();
+		// Flat single-surface (Shape / flat Curve) markers use cull_disabled,
+		// so DOUBLE_SIDED forces both faces into the shadow map and prevents
+		// the back face from sampling its own shadow. Mesh subtypes with
+		// _two_sided emit TWO surfaces (cull_back front + cull_front back)
+		// already covering both directions, so plain ON is correct there —
+		// DOUBLE_SIDED on those would double-write and reintroduce
+		// self-shadow artefacts.
+		const bool flat_single_surface = (get_type() == TYPE_SHAPE)
+				|| (get_type() == TYPE_CURVE && _is_curve_flat_style());
 		const RenderingServer::ShadowCastingSetting cast = (_lights_and_shadows && !_always_on_top)
-				? (_two_sided ? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
-				              : RenderingServer::SHADOW_CASTING_SETTING_ON)
+				? ((flat_single_surface && _two_sided)
+						? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
+						: RenderingServer::SHADOW_CASTING_SETTING_ON)
 				: RenderingServer::SHADOW_CASTING_SETTING_OFF;
 		if (_instance.is_valid()) rs->instance_geometry_set_cast_shadows_setting(_instance, cast);
 		for (int i = 0; i < _arm_instances.size(); i++) {
@@ -1655,8 +1665,11 @@ void SuperMarker3D::set_lights_and_shadows(bool p) {
 			RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(
 					_instance,
 					(_lights_and_shadows && !_always_on_top)
-							? (_two_sided ? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
-							              : RenderingServer::SHADOW_CASTING_SETTING_ON)
+							? (((get_type() == TYPE_SHAPE
+									|| (get_type() == TYPE_CURVE && _is_curve_flat_style()))
+									&& _two_sided)
+									? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
+									: RenderingServer::SHADOW_CASTING_SETTING_ON)
 							: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 		}
 	}
@@ -1692,8 +1705,11 @@ void SuperMarker3D::_ensure_instance() {
 	// so this is the single place that has to keep the RS state in sync.
 	rs->instance_geometry_set_cast_shadows_setting(_instance,
 			(_lights_and_shadows && !_always_on_top)
-					? (_two_sided ? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
-					              : RenderingServer::SHADOW_CASTING_SETTING_ON)
+					? (((get_type() == TYPE_SHAPE
+							|| (get_type() == TYPE_CURVE && _is_curve_flat_style()))
+							&& _two_sided)
+							? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
+							: RenderingServer::SHADOW_CASTING_SETTING_ON)
 					: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 }
 
