@@ -878,17 +878,17 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 38)
 type = 2
 subtype = 6
 marker_size = 0.6
+fill_color = Color(0.85, 0.4, 0.95, 1)
 head_length = 0.4
 head_width = 0.2
-fill_color = Color(0.85, 0.4, 0.95, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 38)
 
 [node name="116_ArrowFlat_Stubby" type="SuperMarker3D" parent="Arrow" unique_id=38929560]
 type = 2
 subtype = 6
+fill_color = Color(0.4, 0.95, 0.5, 1)
 head_length = 0.6
 head_width = 0.4
-fill_color = Color(0.4, 0.95, 0.5, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 38)
 
 [node name="117_ArrowFlat_LitFilled" type="SuperMarker3D" parent="Arrow" unique_id=738360630]
@@ -908,7 +908,7 @@ transform = Transform3D(0, -1, 0, 1, 0, 0, 0, 0, 1, 17.5, 1, 38)
 type = 2
 subtype = 6
 outline_color = Color(0.95, 0.95, 0.4, 1)
-outline_thickness = 0.08
+outline_thickness = 0.031
 fill_color = Color(0.05, 0.05, 0.05, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 38)
 
@@ -922,15 +922,19 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24.5, 1, 38)
 [node name="121_ArrowFlat_BillboardXZ" type="SuperMarker3D" parent="Arrow" unique_id=255093807]
 type = 2
 subtype = 6
+outline_thickness = 0.034
+marker_size = 0.69
 fill_color = Color(0.4, 0.95, 0.5, 1)
+head_length = 0.58
+head_width = 1.38
 billboard_xz = true
+lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1, 38)
 
 [node name="122_ArrowFlat_TwoSided" type="SuperMarker3D" parent="Arrow" unique_id=287560903]
 type = 2
 subtype = 6
 fill_color = Color(0.95, 0.55, 0.55, 1)
-two_sided = true
 transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 31.5, 1, 38)
 
 [node name="123_ArrowFlat_Translucent" type="SuperMarker3D" parent="Arrow" unique_id=601264413]

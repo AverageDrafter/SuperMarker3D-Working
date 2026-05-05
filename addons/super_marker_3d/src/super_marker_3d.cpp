@@ -1634,7 +1634,8 @@ void SuperMarker3D::set_always_on_top(bool p) {
 		_build_materials();
 		RenderingServer *rs = RenderingServer::get_singleton();
 		const RenderingServer::ShadowCastingSetting cast = (_lights_and_shadows && !_always_on_top)
-				? RenderingServer::SHADOW_CASTING_SETTING_ON
+				? (_two_sided ? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
+				              : RenderingServer::SHADOW_CASTING_SETTING_ON)
 				: RenderingServer::SHADOW_CASTING_SETTING_OFF;
 		if (_instance.is_valid()) rs->instance_geometry_set_cast_shadows_setting(_instance, cast);
 		for (int i = 0; i < _arm_instances.size(); i++) {
@@ -1654,7 +1655,8 @@ void SuperMarker3D::set_lights_and_shadows(bool p) {
 			RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(
 					_instance,
 					(_lights_and_shadows && !_always_on_top)
-							? RenderingServer::SHADOW_CASTING_SETTING_ON
+							? (_two_sided ? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
+							              : RenderingServer::SHADOW_CASTING_SETTING_ON)
 							: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 		}
 	}
@@ -1690,7 +1692,8 @@ void SuperMarker3D::_ensure_instance() {
 	// so this is the single place that has to keep the RS state in sync.
 	rs->instance_geometry_set_cast_shadows_setting(_instance,
 			(_lights_and_shadows && !_always_on_top)
-					? RenderingServer::SHADOW_CASTING_SETTING_ON
+					? (_two_sided ? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
+					              : RenderingServer::SHADOW_CASTING_SETTING_ON)
 					: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 }
 
@@ -3411,11 +3414,13 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 // Flat Arrow — 2D in the XY plane (Z = 0) like the other Shape subtypes,
 // pointing +Y. Centered on the origin: tip at (0, +marker_size), base at
 // y=-marker_size (total length = 2*marker_size). Decomposed into 4 NON-
-// OVERLAPPING pieces — a shaft quad + 3 head triangles — so the BARY
-// surface renders each fragment exactly once (no z-fight, no normal
-// flicker). Perimeter edges (sides, shoulders, slants) are flagged
-// boundary on the piece they bound; the head-fill triangle's three
-// edges are all internal, so it just paints fill_color.
+// OVERLAPPING pieces — a shaft quad + 3 head triangles. The head-fill
+// triangle uses a custom per-vertex segment-distance encoding to all 4
+// surrounding perimeter edges (right shoulder, right slant, left slant,
+// left shoulder) so the BARY shader paints outline strips at the inner
+// concave shoulder corners — without that, the head-fill's all-internal
+// edges left a fill-coloured wedge exactly where the shaft meets the
+// wing, making the outline appear to taper to zero at each corner.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
@@ -3432,30 +3437,43 @@ void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
 	const Vector3 bl2(-hw, y_sh,  0),  br2(hw, y_sh,  0);
 	const Vector3 tip(0,   y_tip, 0);
 
-	// Shaft quad (bl, br, sr, sl) CCW from +Z. Edges:
-	//   e01 bl→br : bottom (perimeter)
-	//   e12 br→sr : right side (perimeter)
-	//   e23 sr→sl : top (internal — meets the head-fill triangle)
-	//   e30 sl→bl : left side (perimeter)
+	// Shaft quad: bottom + sides perimeter, top internal (meets head fill).
 	_add_mesh_quad_face(geo, bl, br, sr, sl, true, true, false, true);
 
-	// Right wing triangle (sr, br2, tip) CCW from +Z. Edges:
-	//   e0 (opp sr) br2→tip : right slant (perimeter)
-	//   e1 (opp br2) tip→sr : internal
-	//   e2 (opp tip) sr→br2 : right shoulder (perimeter)
+	// Right wing: right slant + right shoulder perimeter, diagonal internal.
 	_add_mesh_face(geo, sr, br2, tip, true, false, true);
 
-	// Head fill triangle (sr, tip, sl) CCW from +Z — central head body.
-	// All three edges are internal: sr→tip and tip→sl meet the wings,
-	// sl→sr meets the shaft. Outline contributions come from the
-	// neighbour triangles.
-	_add_mesh_face(geo, sr, tip, sl, false, false, false);
-
-	// Left wing triangle (tip, bl2, sl) CCW from +Z. Edges:
-	//   e0 (opp tip) bl2→sl : left shoulder (perimeter)
-	//   e1 (opp bl2) sl→tip : internal
-	//   e2 (opp sl)  tip→bl2: left slant (perimeter)
+	// Left wing: left shoulder + left slant perimeter, diagonal internal.
 	_add_mesh_face(geo, tip, bl2, sl, true, false, true);
+
+	// Head fill (sr, tip, sl) with 4-edge segment-distance encoding.
+	// Each vertex carries the perpendicular distance to its closest point
+	// on each of the 4 surrounding perimeter SEGMENTS (clamping to segment
+	// endpoints when the perpendicular foot is outside the segment). The
+	// shader's `min(UV.x, UV.y, UV2.x, UV2.y)` then picks the nearest
+	// segment per fragment, painting outline strips that connect cleanly
+	// with the wing/shaft strips at the shoulder corners.
+	auto seg_dist = [](const Vector3 &P, const Vector3 &A, const Vector3 &B) -> float {
+		const Vector3 AB = B - A;
+		const float ab2 = AB.length_squared();
+		if (ab2 < 1e-12f) return (P - A).length();
+		const float t = CLAMP((P - A).dot(AB) / ab2, 0.0f, 1.0f);
+		return (P - (A + AB * t)).length();
+	};
+	const Vector3 face_n(0, 0, 1);
+	auto push_hf = [&](const Vector3 &v) {
+		const float d_rsh   = seg_dist(v, sr,  br2);  // right shoulder
+		const float d_rsl   = seg_dist(v, br2, tip);  // right slant
+		const float d_lsl   = seg_dist(v, tip, bl2);  // left slant
+		const float d_lsh   = seg_dist(v, bl2, sl);   // left shoulder
+		geo.tri_bary_verts.push_back(v);
+		geo.tri_bary_normals.push_back(face_n);
+		geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+		geo.tri_bary_uvs.push_back(Vector2(d_rsh, d_rsl));
+		geo.tri_bary_uv2s.push_back(Vector2(d_lsl, d_lsh));
+	};
+	// CW emission to match `_add_mesh_face`'s front-face winding.
+	push_hf(sr); push_hf(sl); push_hf(tip);
 }
 
 // ---------------------------------------------------------------------------
