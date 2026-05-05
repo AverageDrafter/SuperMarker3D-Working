@@ -624,6 +624,24 @@ private:
 			bool e23_boundary, bool e30_boundary) const;
 	void _add_flat_polygon_fan(GeoBuf &geo, const Vector3 &center,
 			const Vector3 *ring, int count) const;
+
+	/// Box-SDF outline triangle. Used by flat-Shape generators that opt into
+	/// the box-SDF outline mode (rectangular strip with axial extension by
+	/// `outline_thickness` past each segment endpoint — gives sharp inside-
+	/// corner mitres). Vertices `v0/v1/v2` are CCW from +Z. `e1` and `e2`
+	/// reference up to two perimeter segments tracked by this triangle;
+	/// `active=false` slots write SKIP. Per-vertex (perp, axial_excess) is
+	/// computed for each tracked segment and packed into UV / UV2 — the
+	/// shader (under `outline_mode == 1`) reads them as
+	/// `(perp1, axial_excess1)` / `(perp2, axial_excess2)`.
+	struct OutlineEdge {
+		Vector3 a;
+		Vector3 b;
+		bool active = false;
+	};
+	void _add_outline_face(GeoBuf &geo,
+			const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
+			const OutlineEdge &e1, const OutlineEdge &e2) const;
 	void _gen_flat_circle(GeoBuf &geo) const;
 	void _gen_flat_square(GeoBuf &geo) const;
 	void _gen_flat_diamond(GeoBuf &geo) const;

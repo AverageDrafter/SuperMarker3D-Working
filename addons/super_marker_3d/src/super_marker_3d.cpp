@@ -94,6 +94,19 @@ uniform vec4  outline_color    : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  background_color : source_color = vec4(0.0, 0.0, 0.0, 0.0);
 uniform float outline_thickness               = 0.05;
 uniform int billboard_mode = 0;
+// outline_mode 0 (legacy): UV/UV2 hold up to 4 perpendicular distances to
+// face-boundary edges, painted via min(...) — produces rounded inside-corner
+// fillets (Euclidean falloff at concave corners). Used by Mesh subtypes and
+// flat shapes whose generators emit `_add_mesh_face` / `_add_flat_polygon_fan`.
+//
+// outline_mode 1 (box-SDF): UV.xy holds (perp, axial_excess) for one perimeter
+// segment; UV2.xy holds the same for a second segment. Strip = max(perp,
+// axial_excess) — sharp rectangular ends with axial extension by t past each
+// segment endpoint. Concave (inside) corners thereby paint a sharp L-fillet
+// instead of a quarter-circle, since both adjacent segments' axial
+// extensions overlap into the inside-corner square. Generators feeding this
+// mode encode (perp, axial_excess) per vertex via `_add_outline_face`.
+uniform int outline_mode = 0;
 
 void vertex() {
 	if (billboard_mode == 1) {
@@ -130,7 +143,17 @@ void vertex() {
 static const char *BARY_FRAG_OPAQUE = R"(
 void fragment() {
 	if (!FRONT_FACING) NORMAL = -NORMAL;
-	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+	float min_dist;
+	if (outline_mode == 1) {
+		// Box-SDF: pair (UV.x, UV.y) = (perp, axial_excess) for edge 1,
+		// pair (UV2.x, UV2.y) = same for edge 2. Strip per segment is
+		// rectangular with sharp axial caps (perp < t AND axial_excess < t).
+		float d1 = max(UV.x, UV.y);
+		float d2 = max(UV2.x, UV2.y);
+		min_dist = min(d1, d2);
+	} else {
+		min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+	}
 	float aa = max(fwidth(min_dist), 1.0e-5);
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	if (outline_thickness <= 0.0) edge = 0.0;
@@ -145,7 +168,14 @@ void fragment() {
 static const char *BARY_FRAG_ALPHA = R"(
 void fragment() {
 	if (!FRONT_FACING) NORMAL = -NORMAL;
-	float min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+	float min_dist;
+	if (outline_mode == 1) {
+		float d1 = max(UV.x, UV.y);
+		float d2 = max(UV2.x, UV2.y);
+		min_dist = min(d1, d2);
+	} else {
+		min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+	}
 	float aa = max(fwidth(min_dist), 1.0e-5);
 	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	if (outline_thickness <= 0.0) edge = 0.0;
@@ -2045,6 +2075,11 @@ void SuperMarker3D::_build_materials() {
 			if (_billboard_y) bb = 1;
 			else if (_billboard_xz) bb = 2;
 			_bary_material->set_shader_parameter("billboard_mode", bb);
+			// outline_mode: 1 = box-SDF (sharp inside-corner mitres) for shapes
+			// whose generators encode (perp, axial_excess) per vertex. ARROW_FLAT
+			// uses this; the rest of the BARY-path subtypes stay on legacy mode 0.
+			const int om = (_shape == ARROW_FLAT) ? 1 : 0;
+			_bary_material->set_shader_parameter("outline_mode", om);
 			_bary_material->set_render_priority(0);
 		}
 
@@ -2073,6 +2108,8 @@ void SuperMarker3D::_build_materials() {
 				if (_billboard_y) bb = 1;
 				else if (_billboard_xz) bb = 2;
 				_bary_material_back->set_shader_parameter("billboard_mode", bb);
+				const int om = (_shape == ARROW_FLAT) ? 1 : 0;
+				_bary_material_back->set_shader_parameter("outline_mode", om);
 				_bary_material_back->set_render_priority(-1);
 			}
 		}
@@ -2379,6 +2416,63 @@ void SuperMarker3D::_add_flat_polygon_fan(GeoBuf &geo, const Vector3 &center,
 		push_v(vj,     face_n, uv_j, uv2_j);
 		push_v(vi,     face_n, uv_i, uv2_i);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Box-SDF outline face. See header doc on `_add_outline_face`. Each tracked
+// edge yields a per-vertex (perp, axial_excess) pair: perp = perpendicular
+// distance from the vertex to the segment line, axial_excess = how far past
+// either endpoint the projection falls (0 inside the segment). Linear
+// interpolation reproduces both values inside the triangle, and the shader
+// computes `max(perp, axial_excess)` as the box-SDF distance per segment,
+// then `min` across the two segments.
+//
+// `axial_excess` is piecewise-linear (zero inside [0, L], rising linearly
+// outside) — linear interp is exact within the triangle as long as all three
+// vertices fall in the same piece (all inside the segment range, or all
+// past one endpoint). Triangulation in the generators is structured so that
+// each tracked edge satisfies this for the triangles that reference it; if
+// not, the strip shape is approximate near the segment-end "kink".
+// ---------------------------------------------------------------------------
+void SuperMarker3D::_add_outline_face(GeoBuf &geo,
+		const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
+		const OutlineEdge &e1, const OutlineEdge &e2) const {
+	const float SKIP = 1.0e8f;
+	const Vector3 face_n = ((v1 - v0).cross(v2 - v0)).normalized();
+
+	auto encode = [&](const OutlineEdge &e, const Vector3 &P, float &out_perp, float &out_axial) {
+		if (!e.active) {
+			out_perp = SKIP;
+			out_axial = SKIP;
+			return;
+		}
+		const Vector3 AB = e.b - e.a;
+		const float L2 = AB.length_squared();
+		if (L2 < 1e-12f) {
+			out_perp = (P - e.a).length();
+			out_axial = 0.0f;
+			return;
+		}
+		const float L = std::sqrt(L2);
+		const Vector3 AP = P - e.a;
+		const float along = AP.dot(AB) / L;
+		const Vector3 foot_offset = AB * (along / L);
+		out_perp = (AP - foot_offset).length();
+		out_axial = MAX(0.0f, MAX(-along, along - L));
+	};
+
+	auto push = [&](const Vector3 &v) {
+		float p1, a1, p2, a2;
+		encode(e1, v, p1, a1);
+		encode(e2, v, p2, a2);
+		geo.tri_bary_verts.push_back(v);
+		geo.tri_bary_normals.push_back(face_n);
+		geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+		geo.tri_bary_uvs.push_back(Vector2(p1, a1));
+		geo.tri_bary_uv2s.push_back(Vector2(p2, a2));
+	};
+	// CW emission to match `_add_mesh_face`'s front-face winding convention.
+	push(v0); push(v2); push(v1);
 }
 
 // ---------------------------------------------------------------------------
@@ -3427,16 +3521,28 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
-// Flat Arrow — 2D in the XY plane (Z = 0) like the other Shape subtypes,
-// pointing +Y. Centered on the origin: tip at (0, +marker_size), base at
-// y=-marker_size (total length = 2*marker_size). Decomposed into 4 NON-
-// OVERLAPPING pieces — a shaft quad + 3 head triangles. The head-fill
-// triangle uses a custom per-vertex segment-distance encoding to all 4
-// surrounding perimeter edges (right shoulder, right slant, left slant,
-// left shoulder) so the BARY shader paints outline strips at the inner
-// concave shoulder corners — without that, the head-fill's all-internal
-// edges left a fill-coloured wedge exactly where the shaft meets the
-// wing, making the outline appear to taper to zero at each corner.
+// Flat Arrow — 2D in the XY plane (Z = 0), pointing +Y. Centered on the
+// origin: tip at (0, +marker_size), base at y=-marker_size (total length
+// = 2*marker_size). Uses the box-SDF outline mode (`outline_mode == 1`)
+// so each tracked perimeter segment paints a rectangular strip with
+// axial extension by `outline_thickness` past either endpoint — concave
+// shoulder corners therefore get a sharp L-fillet from the overlap of
+// adjacent strips' axial extensions, instead of the rounded quarter-
+// circle the legacy segment-distance encoding produced.
+//
+// Triangulation (6 tris, no overlaps, every triangle tracks at most 2
+// perimeter segments):
+//
+//   shaft1 (bl, br, sr)          → bl→br (bottom),    br→sr (right)
+//   shaft2 (bl, sr, sl)          → sl→bl (left)
+//   right wing (sr, br2, tip)    → sr→br2 (R shoulder), br2→tip (R slant)
+//   right head (sr, tip, mid)    → sr→br2,             br2→tip
+//   left  head (mid, tip, sl)    → tip→bl2 (L slant),  bl2→sl (L shoulder)
+//   left  wing (tip, bl2, sl)    → tip→bl2,            bl2→sl
+//
+// `mid` is the midpoint of the (internal) shaft top sl→sr, splitting the
+// head fill so each half can encode its concave shoulder's adjacent
+// perimeter segments and paint the corresponding fillet.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
@@ -3452,44 +3558,27 @@ void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
 	const Vector3 sl(-sw, y_sh,   0),  sr(sw, y_sh,   0);
 	const Vector3 bl2(-hw, y_sh,  0),  br2(hw, y_sh,  0);
 	const Vector3 tip(0,   y_tip, 0);
+	const Vector3 mid(0,   y_sh,  0);
 
-	// Shaft quad: bottom + sides perimeter, top internal (meets head fill).
-	_add_mesh_quad_face(geo, bl, br, sr, sl, true, true, false, true);
-
-	// Right wing: right slant + right shoulder perimeter, diagonal internal.
-	_add_mesh_face(geo, sr, br2, tip, true, false, true);
-
-	// Left wing: left shoulder + left slant perimeter, diagonal internal.
-	_add_mesh_face(geo, tip, bl2, sl, true, false, true);
-
-	// Head fill (sr, tip, sl) with 4-edge segment-distance encoding.
-	// Each vertex carries the perpendicular distance to its closest point
-	// on each of the 4 surrounding perimeter SEGMENTS (clamping to segment
-	// endpoints when the perpendicular foot is outside the segment). The
-	// shader's `min(UV.x, UV.y, UV2.x, UV2.y)` then picks the nearest
-	// segment per fragment, painting outline strips that connect cleanly
-	// with the wing/shaft strips at the shoulder corners.
-	auto seg_dist = [](const Vector3 &P, const Vector3 &A, const Vector3 &B) -> float {
-		const Vector3 AB = B - A;
-		const float ab2 = AB.length_squared();
-		if (ab2 < 1e-12f) return (P - A).length();
-		const float t = CLAMP((P - A).dot(AB) / ab2, 0.0f, 1.0f);
-		return (P - (A + AB * t)).length();
+	auto E = [](const Vector3 &a, const Vector3 &b) {
+		OutlineEdge e; e.a = a; e.b = b; e.active = true; return e;
 	};
-	const Vector3 face_n(0, 0, 1);
-	auto push_hf = [&](const Vector3 &v) {
-		const float d_rsh   = seg_dist(v, sr,  br2);  // right shoulder
-		const float d_rsl   = seg_dist(v, br2, tip);  // right slant
-		const float d_lsl   = seg_dist(v, tip, bl2);  // left slant
-		const float d_lsh   = seg_dist(v, bl2, sl);   // left shoulder
-		geo.tri_bary_verts.push_back(v);
-		geo.tri_bary_normals.push_back(face_n);
-		geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
-		geo.tri_bary_uvs.push_back(Vector2(d_rsh, d_rsl));
-		geo.tri_bary_uv2s.push_back(Vector2(d_lsl, d_lsh));
-	};
-	// CW emission to match `_add_mesh_face`'s front-face winding.
-	push_hf(sr); push_hf(sl); push_hf(tip);
+	OutlineEdge NONE; // active=false → SKIP.
+
+	// Shaft.
+	_add_outline_face(geo, bl, br, sr, E(bl, br), E(br, sr));
+	_add_outline_face(geo, bl, sr, sl, E(sl, bl), NONE);
+
+	// Right side: wing + head sub-tri share the (right shoulder, right slant)
+	// pair. Both segments meet at the convex br2 corner and the concave sr
+	// corner; tracking them in both tris hands every fragment in the right
+	// half of the head a clean strip painting plus axial-extended fillet at sr.
+	_add_outline_face(geo, sr, br2, tip, E(sr, br2), E(br2, tip));
+	_add_outline_face(geo, sr, tip, mid, E(sr, br2), E(br2, tip));
+
+	// Left side: mirror.
+	_add_outline_face(geo, mid, tip, sl, E(tip, bl2), E(bl2, sl));
+	_add_outline_face(geo, tip, bl2, sl, E(tip, bl2), E(bl2, sl));
 }
 
 // ---------------------------------------------------------------------------
