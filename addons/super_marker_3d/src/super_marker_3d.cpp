@@ -658,9 +658,6 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(TYPE_ARROW);
 	BIND_ENUM_CONSTANT(TYPE_FIGURE);
 
-	// Subtypes — only the new prefixed names are exposed to script.
-	// C++ aliases (SHAPE_CROSS, SHAPE_AXIS, etc.) keep old references
-	// working but don't appear in the GDScript namespace.
 	BIND_ENUM_CONSTANT(AXIS_CROSS);
 	BIND_ENUM_CONSTANT(AXIS_PLAIN);
 	BIND_ENUM_CONSTANT(AXIS_BURR);
@@ -668,7 +665,6 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(MESH_SPHERE);
 	BIND_ENUM_CONSTANT(MESH_BOX);
 	BIND_ENUM_CONSTANT(MESH_DIAMOND);
-	BIND_ENUM_CONSTANT(MESH_PYRAMID);
 	BIND_ENUM_CONSTANT(MESH_CYLINDER);
 	BIND_ENUM_CONSTANT(MESH_CONE);
 	BIND_ENUM_CONSTANT(MESH_CAPSULE);
@@ -678,8 +674,6 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FLAT_TRIANGLE);
 	BIND_ENUM_CONSTANT(FLAT_CAPSULE);
 	BIND_ENUM_CONSTANT(FLAT_X);
-	BIND_ENUM_CONSTANT(CURVE_FLAT);
-	BIND_ENUM_CONSTANT(CURVE_LINE_3D);
 	BIND_ENUM_CONSTANT(ARROW_EXTRUDED);
 	BIND_ENUM_CONSTANT(ARROW_FLAT);
 	BIND_ENUM_CONSTANT(FIGURE);
@@ -734,18 +728,12 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Cross:0,Axis:3,Burr:11,XYZ:8";
 				break;
 			case TYPE_MESH:
-				// Pyramid (subtype 13) is a deprecated alias — it now
-				// renders as a 4-sided Cone. Hidden from new selections;
-				// existing scenes still load and render correctly.
 				p_property.hint_string = "Sphere:2,Cube:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16";
 				break;
 			case TYPE_SHAPE:
 				p_property.hint_string = "Circle:17,Square:18,Diamond:19,Triangle:20,Capsule:21,X:22,Arrow:6";
 				break;
 			case TYPE_CURVE:
-				// Legacy CURVE_FLAT(7) and CURVE_LINE_3D(9) are hidden from
-				// new picks but still load from existing scenes — they
-				// behave as Custom with curve_flat=true / =false respectively.
 				p_property.hint_string = "Line:23,Right Angle:24,Arc:25,Sine:26,Helix:27,Bezier:28,Custom:29";
 				break;
 			case TYPE_ARROW:
@@ -896,8 +884,6 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "0.01,20.0,0.01,or_greater";
 			}
 		}
-		// Legacy aliases hard-code their style — no `curve_flat` toggle for them.
-		if (name == "curve_flat" && (_shape == CURVE_FLAT || _shape == CURVE_LINE_3D)) hide();
 	}
 	// Caps + patterns now apply to BOTH ribbon and 3D-tube. Just gate on
 	// the cap kind / pattern selector.
@@ -1050,7 +1036,7 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 	switch (p_subtype) {
 		case AXIS_CROSS: case AXIS_PLAIN: case AXIS_BURR: case AXIS_XYZ:
 			return TYPE_AXIS;
-		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND: case MESH_PYRAMID:
+		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND:
 		case MESH_CYLINDER: case MESH_CONE: case MESH_CAPSULE:
 			return TYPE_MESH;
 		case FLAT_CIRCLE: case FLAT_SQUARE: case FLAT_DIAMOND:
@@ -1060,7 +1046,6 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
 		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
 		case CURVE_CUSTOM:
-		case CURVE_FLAT: case CURVE_LINE_3D: // legacy aliases
 			return TYPE_CURVE;
 		case ARROW_EXTRUDED:
 			return TYPE_ARROW;
@@ -1372,7 +1357,6 @@ bool SuperMarker3D::_is_curve_subtype(int s) {
 		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
 		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
 		case CURVE_CUSTOM:
-		case CURVE_FLAT: case CURVE_LINE_3D:
 			return true;
 		default:
 			return false;
@@ -1380,13 +1364,11 @@ bool SuperMarker3D::_is_curve_subtype(int s) {
 }
 
 bool SuperMarker3D::_is_curve_flat_style() const {
-	if (_shape == CURVE_FLAT)    return true;   // legacy: flat ribbon
-	if (_shape == CURVE_LINE_3D) return false;  // legacy: 3D tube
 	return _curve_flat;
 }
 
 bool SuperMarker3D::_curve_is_custom() const {
-	return _shape == CURVE_CUSTOM || _shape == CURVE_FLAT || _shape == CURVE_LINE_3D;
+	return _shape == CURVE_CUSTOM;
 }
 
 // ---------------------------------------------------------------------------
@@ -2182,9 +2164,7 @@ void SuperMarker3D::_build_materials() {
 		// cyl_half > 0 (meridian + rim); cone uses cyl_half = 0 (lat/lon).
 		// Faceted cylinder/cone fold the band/lateral into the BARY primary,
 		// so this block is skipped when smooth shading is off.
-		// Pyramid is always faceted regardless of the flag.
-		if (_smooth_shading && _shape != MESH_PYRAMID
-				&& (_shape == MESH_CYLINDER || _shape == MESH_CONE)) {
+		if (_smooth_shading && (_shape == MESH_CYLINDER || _shape == MESH_CONE)) {
 			const float cap_cyl_half = (_shape == MESH_CYLINDER) ? _marker_size : 0.0f;
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			_cap_top_material->set_shader(sphere_s);
@@ -2787,7 +2767,7 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 
 void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 	const float s = _marker_size;
-	const int CONE_LON = (_shape == MESH_PYRAMID) ? 4 : MAX(3, _mesh_sides);
+	const int CONE_LON = MAX(3, _mesh_sides);
 	PackedVector3Array base;
 	base.resize(CONE_LON);
 	for (int i = 0; i < CONE_LON; i++) {
@@ -2795,9 +2775,7 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 		base.set(i, Vector3(std::cos(a) * s, -s, std::sin(a) * s));
 	}
 	const Vector3 apex(0, s, 0), bc(0, -s, 0);
-	// Pyramid is always faceted; cone follows the smooth flag.
-	const bool smooth_lateral = _smooth_shading && _shape != MESH_PYRAMID;
-	if (smooth_lateral) {
+	if (_smooth_shading) {
 		// Smooth-shaded lateral — sphere shader draws analytical lines.
 		// Cone normal at angle θ: (2cosθ, 1, 2sinθ)/√5.
 		const float inv_sqrt5 = 1.0f / std::sqrt(5.0f);
@@ -4163,7 +4141,6 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_DIAMOND:    _gen_diamond(geo);     break;
 		case MESH_SPHERE:     _gen_sphere(geo);      break;
 		case MESH_BOX:        _gen_cube(geo);        break;
-		case MESH_PYRAMID:    _gen_cone(geo);        break; // 4-sided cone fallback
 		case MESH_CYLINDER:   _gen_cylinder(geo);    break;
 		case MESH_CONE:       _gen_cone(geo);        break;
 		case MESH_CAPSULE:    _gen_capsule(geo);     break;
@@ -4178,7 +4155,6 @@ void SuperMarker3D::_rebuild_mesh() {
 		case CURVE_LINE: case CURVE_RIGHT_ANGLE: case CURVE_ARC:
 		case CURVE_SINE: case CURVE_HELIX: case CURVE_BEZIER:
 		case CURVE_CUSTOM:
-		case CURVE_FLAT: case CURVE_LINE_3D: // legacy aliases
 			if (_is_curve_flat_style()) _gen_curve(geo);
 			else                        _gen_curve_line_3d(geo);
 			break;

@@ -79,13 +79,6 @@
 		</member>
 	</members>
 	<constants>
-		<constant name="SHAPE_CROSS" value="0" enum="MarkerShape" />
-		<constant name="SHAPE_DIAMOND" value="1" enum="MarkerShape" />
-		<constant name="SHAPE_SPHERE" value="2" enum="MarkerShape" />
-		<constant name="SHAPE_AXIS" value="3" enum="MarkerShape" />
-		<constant name="SHAPE_CUBE" value="4" enum="MarkerShape" />
-		<constant name="SHAPE_ARROW" value="5" enum="MarkerShape" />
-		<constant name="SHAPE_FLAT_ARROW" value="6" enum="MarkerShape" />
 		<constant name="DETAIL_WIREFRAME" value="0" enum="DetailMode" />
 		<constant name="DETAIL_SILHOUETTE" value="1" enum="DetailMode" />
 		<constant name="ARROWHEAD_TRIANGLE" value="0" enum="ArrowheadStyle" />

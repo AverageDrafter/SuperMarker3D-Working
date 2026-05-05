@@ -61,17 +61,13 @@ public:
 
 		// Mesh category — closed 3D primitives.
 		MESH_SPHERE = 2,
-		MESH_BOX = 4,           // value 4 retained from old SHAPE_CUBE
+		MESH_BOX = 4,
 		MESH_DIAMOND = 1,
-		MESH_PYRAMID = 13,      // 4-sided pyramid (square base + apex)
 		MESH_CYLINDER = 14,     // capped cylinder
-		MESH_CONE = 15,         // round-base cone
+		MESH_CONE = 15,         // round-base cone (use mesh_sides=4 for a pyramid)
 		MESH_CAPSULE = 16,      // cylinder body + hemisphere caps
 
-		// Shape category — flat 2D polygon icons. Values frozen for
-		// scene-file compatibility. (Cross used to live here pre-1.0;
-		// it migrated to Axis. The SHAPE_* deprecated aliases below
-		// keep using their old numeric values unchanged.)
+		// Shape category — flat 2D polygon icons.
 		FLAT_CIRCLE   = 17,   // regular N-gon, N = shape_sides
 		FLAT_SQUARE   = 18,   // axis-aligned square
 		FLAT_DIAMOND  = 19,   // rhombus (square rotated 45°)
@@ -90,13 +86,6 @@ public:
 		CURVE_HELIX       = 27,  // 3D coil
 		CURVE_BEZIER      = 28,  // smooth S-curve
 		CURVE_CUSTOM      = 29,  // user-supplied Curve3D
-		// Deprecated legacy aliases — pre-preset scenes stored these
-		// directly. CURVE_FLAT=7 means "Custom path + flat ribbon",
-		// CURVE_LINE_3D=9 means "Custom path + 3D tube". Both still load
-		// and render correctly; new scenes should pick a CURVE_* subtype
-		// and toggle `curve_flat` instead.
-		CURVE_FLAT = 7,
-		CURVE_LINE_3D = 9,
 
 		// Arrow category — directional pointer.
 		ARROW_EXTRUDED = 5,     // 3D shaft + head
@@ -104,20 +93,6 @@ public:
 
 		// Figure category — humanoid mock-up.
 		FIGURE = 10,
-
-		// --- Deprecated aliases (1.x), removed in 2.0 ---
-		// Old flat-enum names from pre-1.0 development. Existing scripts
-		// referencing these by name keep compiling; existing scenes
-		// stored integer values load unchanged because the integers
-		// haven't moved.
-		SHAPE_CROSS = AXIS_CROSS,
-		SHAPE_DIAMOND = MESH_DIAMOND,
-		SHAPE_SPHERE = MESH_SPHERE,
-		SHAPE_AXIS = AXIS_PLAIN,
-		SHAPE_CUBE = MESH_BOX,
-		SHAPE_ARROW = ARROW_EXTRUDED,
-		SHAPE_FLAT_ARROW = ARROW_FLAT,
-		SHAPE_CURVE = CURVE_FLAT,
 	};
 
 	/// Per-direction-length linkage for the Axis category. Picks how
@@ -372,7 +347,7 @@ private:
 	Transform3D _xf_prev;
 	Transform3D _xf_target;
 
-	int   _shape = SHAPE_CROSS;
+	int   _shape = AXIS_CROSS;
 	float _marker_size = 0.5f;
 	int   _detail_mode = DETAIL_WIREFRAME;
 
@@ -712,20 +687,16 @@ private:
 
 	void _on_curve_changed();
 	/// Returns the curve actually used to drive geometry — `_curve` for
-	/// CUSTOM (and the legacy CURVE_FLAT/CURVE_LINE_3D aliases),
-	/// otherwise the generated `_preset_curve` (rebuilt on first call
-	/// after any preset parameter changes).
+	/// CUSTOM, otherwise the generated `_preset_curve` (rebuilt on first
+	/// call after any preset parameter changes).
 	Ref<Curve3D> _get_active_curve() const;
 	/// Build a fresh Curve3D for the active curve subtype + parameters.
 	Ref<Curve3D> _make_preset_curve() const;
-	/// True for any curve-category subtype (preset or legacy/custom).
+	/// True for any curve-category subtype.
 	static bool _is_curve_subtype(int p_subtype);
-	/// True when the curve renders as a flat ribbon. Reads `_curve_flat`
-	/// for new subtypes; legacy CURVE_FLAT(=7) and CURVE_LINE_3D(=9)
-	/// hard-code their style.
+	/// True when the curve renders as a flat ribbon (else 3D tube).
 	bool _is_curve_flat_style() const;
-	/// True when the active curve subtype uses the user-supplied `_curve`
-	/// resource (CUSTOM or legacy aliases).
+	/// True when the active curve subtype uses the user-supplied `_curve` resource.
 	bool _curve_is_custom() const;
 
 	// Silhouette helpers (2D, billboarded via material).

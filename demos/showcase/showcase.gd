@@ -183,10 +183,11 @@ func _build_entries() -> Array:
 				m.head_width = 0.12 + sin(t * 1.6) * 0.08,
 		},
 		{
-			"label": "CURVE_FLAT",
+			"label": "CURVE_CUSTOM (flat)",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.subtype = SuperMarker3D.CURVE_FLAT
+				m.subtype = SuperMarker3D.CURVE_CUSTOM
+				m.curve_flat = true
 				m.curve = _make_demo_curve()
 				m.curve_width = 0.18
 				m.curve_start_cap = SuperMarker3D.CURVE_CAP_DOT
@@ -196,10 +197,11 @@ func _build_entries() -> Array:
 				m.length_fraction = 0.25 + (sin(t * 0.8) * 0.5 + 0.5) * 0.75,
 		},
 		{
-			"label": "CURVE_LINE_3D",
+			"label": "CURVE_CUSTOM (3D tube)",
 			"build": func() -> SuperMarker3D:
 				var m: SuperMarker3D = SuperMarker3D.new()
-				m.subtype = SuperMarker3D.CURVE_LINE_3D
+				m.subtype = SuperMarker3D.CURVE_CUSTOM
+				m.curve_flat = false
 				m.curve = _make_demo_curve()
 				m.curve_width = 0.12
 				m.outline_color = Color(0.5, 0.85, 1.0, 1.0)

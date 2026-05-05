@@ -34,11 +34,9 @@ SuperMarker3D-Working/
 
 `MarkerType` is the top-level dropdown (Axis / Mesh / Shape / Curve / Arrow / Figure). `Subtype` enumerates every variant; each value belongs to exactly one type. The canonical list — with frozen integer values for scene-file compatibility — is the `Subtype` enum in `addons/super_marker_3d/src/super_marker_3d.h`. Keep that header as the single source of truth and don't duplicate it here.
 
-Old names (CROSS, DIAMOND, SPHERE, AXIS, CUBE, ARROW, FLAT_ARROW, CURVE) remain as deprecated enum aliases through 1.x and v2.0 removes them. They share integer values with their replacements (e.g. `SHAPE_CROSS == AXIS_CROSS == 0`), so a runtime use-site warning is not feasible — `set_subtype(int)` cannot tell them apart. Aliases are documented as deprecated in `super_marker_3d.h` and the F1 class XML; that is the only signal users see.
-
 ### API stability
 
-After 1.0 release: enum value reordering is forbidden, name changes are forbidden, removals require one minor-version deprecation cycle.
+Pre-1.0: anything goes — break enum values, rename, delete. Once 1.0 ships: enum value reordering is forbidden, name changes are forbidden, removals require one minor-version deprecation cycle.
 
 ## Building
 
