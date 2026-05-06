@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://dge8248a2xra3"]
 
-[ext_resource type="Script" uid="uid://dory58x5yberl" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
+[ext_resource type="Script" uid="uid://cpuj0l0ud3goa" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
 [ext_resource type="Curve3D" uid="uid://w62ydmkmmgss" path="res://demos/render_test/custom_curve_a.tres" id="2_curveA"]
 [ext_resource type="Curve3D" uid="uid://w62yemkmmgst" path="res://demos/render_test/custom_curve_b.tres" id="3_curveB"]
 
@@ -400,7 +400,6 @@ subtype = 16
 outline_thickness = 0.026
 marker_size = 0.4
 fill_color = Color(0.95, 0.95, 0.4, 0.45)
-smooth_shading = false
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.5, 1, 14)
 

@@ -107,6 +107,7 @@ uniform int billboard_mode = 0;
 // extensions overlap into the inside-corner square. Generators feeding this
 // mode encode (perp, axial_excess) per vertex via `_add_outline_face`.
 uniform int outline_mode = 0;
+uniform int flat_two_sided = 0;
 
 void vertex() {
 	if (billboard_mode == 1) {
@@ -142,7 +143,7 @@ void vertex() {
 // Discards fully-transparent fragments (background_color.a=0 gaps).
 static const char *BARY_FRAG_OPAQUE = R"(
 void fragment() {
-	if (!FRONT_FACING) NORMAL = -NORMAL;
+	if (flat_two_sided == 0 && !FRONT_FACING) NORMAL = -NORMAL;
 	float min_dist;
 	if (outline_mode == 1) {
 		// Box-SDF: pair (UV.x, UV.y) = (perp, axial_excess) for edge 1,
@@ -167,7 +168,7 @@ void fragment() {
 // Requires blend_mix in the render_mode.
 static const char *BARY_FRAG_ALPHA = R"(
 void fragment() {
-	if (!FRONT_FACING) NORMAL = -NORMAL;
+	if (flat_two_sided == 0 && !FRONT_FACING) NORMAL = -NORMAL;
 	float min_dist;
 	if (outline_mode == 1) {
 		float d1 = max(UV.x, UV.y);
@@ -2080,6 +2081,7 @@ void SuperMarker3D::_build_materials() {
 			// uses this; the rest of the BARY-path subtypes stay on legacy mode 0.
 			const int om = (_shape == ARROW_FLAT) ? 1 : 0;
 			_bary_material->set_shader_parameter("outline_mode", om);
+			_bary_material->set_shader_parameter("flat_two_sided", (flat_bary && _two_sided) ? 1 : 0);
 			_bary_material->set_render_priority(0);
 		}
 
@@ -2110,6 +2112,7 @@ void SuperMarker3D::_build_materials() {
 				_bary_material_back->set_shader_parameter("billboard_mode", bb);
 				const int om = (_shape == ARROW_FLAT) ? 1 : 0;
 				_bary_material_back->set_shader_parameter("outline_mode", om);
+				_bary_material_back->set_shader_parameter("flat_two_sided", 0);
 				_bary_material_back->set_render_priority(-1);
 			}
 		}
@@ -2631,25 +2634,47 @@ void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 		eq.set(i, Vector3(std::cos(a) * s, 0.0f, std::sin(a) * s));
 	}
 	if (_smooth_shading) {
-		auto push = [&](const Vector3 &v) {
+		// Diamond = double cone. Use analytical cone normals (not spherical)
+		// so shadow normal-bias matches the actual 45° surface.
+		// Upper half: n = (cos, 1, sin)/√2. Follows the cone generator's
+		// pattern — apex gets the average of adjacent face normals.
+		const float inv_sqrt2 = 1.0f / std::sqrt(2.0f);
+		auto push = [&](const Vector3 &v, const Vector3 &n) {
 			geo.tri_bary_verts.push_back(v);
-			geo.tri_bary_normals.push_back(v.normalized());
+			geo.tri_bary_normals.push_back(n);
 			geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
 			geo.tri_bary_uvs.push_back(Vector2(0, 0));
 			geo.tri_bary_uv2s.push_back(Vector2(0, 0));
 		};
 		for (int i = 0; i < N; i++) {
 			const int j = (i + 1) % N;
+			const float ai = SM_TAU * (float)i / N;
+			const float aj = SM_TAU * (float)j / N;
+			const Vector3 ni_up = Vector3(std::cos(ai), 1.0f, std::sin(ai)) * inv_sqrt2;
+			const Vector3 nj_up = Vector3(std::cos(aj), 1.0f, std::sin(aj)) * inv_sqrt2;
+			const Vector3 n_top = (ni_up + nj_up).normalized();
+			const Vector3 ni_dn = Vector3(std::cos(ai), -1.0f, std::sin(ai)) * inv_sqrt2;
+			const Vector3 nj_dn = Vector3(std::cos(aj), -1.0f, std::sin(aj)) * inv_sqrt2;
+			const Vector3 n_btm = (ni_dn + nj_dn).normalized();
 			// CW winding for front-facing from outside.
-			push(top); push(eq[i]); push(eq[j]);
-			push(btm); push(eq[j]); push(eq[i]);
+			push(top, n_top);           push(eq[i], eq[i].normalized()); push(eq[j], eq[j].normalized());
+			push(btm, n_btm);           push(eq[j], eq[j].normalized()); push(eq[i], eq[i].normalized());
 		}
 	} else {
 		// Faceted — each tri is a real face, all 3 edges as boundaries.
+		// Diamond winding is CW-from-outside (needed for the rasterizer's
+		// front-face convention), but _add_mesh_face computes the face
+		// normal assuming CCW-from-outside input → the normals come out
+		// inverted.  Negate them after emission so lighting and shadow
+		// bias use the correct outward direction.
+		const int n_start = geo.tri_bary_normals.size();
 		for (int i = 0; i < N; i++) {
 			const int j = (i + 1) % N;
 			_add_mesh_face(geo, top, eq[i], eq[j]);
 			_add_mesh_face(geo, btm, eq[j], eq[i]);
+		}
+		for (int k = n_start; k < geo.tri_bary_normals.size(); k++) {
+			geo.tri_bary_normals.set(k, -geo.tri_bary_normals[k]);
 		}
 	}
 }
@@ -3533,24 +3558,22 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 // Triangulation (6 tris, no overlaps, every triangle tracks at most 2
 // perimeter segments):
 //
-//   shaft1 (bl, br, sr)          → bl→br (bottom),    br→sr (right)
-//   shaft2 (bl, sr, sl)          → sl→bl (left),      br→sr (right)
-//   right wing (sr, br2, tip)    → sr→br2 (R shoulder), br2→tip (R slant)
-//   right head (sr, tip, mid)    → sr→br2,             br2→tip
-//   left  head (mid, tip, sl)    → tip→bl2 (L slant),  bl2→sl (L shoulder)
-//   left  wing (tip, bl2, sl)    → tip→bl2,            bl2→sl
+//   shaft A (bl, br, sl)          → bl→br (bottom),    sl→bl (left)
+//   shaft B (br, sr, sl)          → br→sr (right),     bl→br (bottom)
+//   right wing (sr, br2, tip)     → sr→br2 (R shoulder), br2→tip (R slant)
+//   right head (sr, tip, mid)     → sr→br2,             br2→tip
+//   left  head (mid, tip, sl)     → tip→bl2 (L slant),  bl2→sl (L shoulder)
+//   left  wing (tip, bl2, sl)     → tip→bl2,            bl2→sl
 //
 // `mid` is the midpoint of the (internal) shaft top sl→sr, splitting the
 // head fill so each half can encode its concave shoulder's adjacent
 // perimeter segments and paint the corresponding fillet.
 //
-// shaft2 tracks br→sr in slot 2 even though that edge isn't one of its
-// own sides — without it, fragments in shaft2's interior near the right
-// shaft edge (above the bl→sr diagonal) had no slot encoding for br→sr
-// and the right-side strip terminated at the diagonal, leaving a visible
-// step across the stem. The encoded segment doesn't have to be a side
-// of the triangle; (perp, axial_excess) is well-defined for any segment
-// the fragment might be near.
+// The shaft diagonal runs br→sl (not bl→sr) so all left-edge fragments
+// fall in tri A (which tracks E(sl,bl)) and all right-edge fragments
+// fall in tri B (which tracks E(br,sr)). Both bottom corners naturally
+// get their L-fillets: BL from tri A's (bottom, left) pair, BR from
+// tri B's (right, bottom) pair.
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
@@ -3573,9 +3596,13 @@ void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
 	};
 	OutlineEdge NONE; // active=false → SKIP.
 
-	// Shaft.
-	_add_outline_face(geo, bl, br, sr, E(bl, br), E(br, sr));
-	_add_outline_face(geo, bl, sr, sl, E(sl, bl), E(br, sr));
+	// Shaft.  Diagonal runs br→sl so left-edge fragments land in tri A
+	// (which tracks E(sl,bl)) and right-edge fragments land in tri B
+	// (which tracks E(br,sr)).  Both bottom corners get L-fillets:
+	//   tri A (bl,br,sl): E(bl,br) bottom + E(sl,bl) left  → BL fillet
+	//   tri B (br,sr,sl): E(br,sr) right  + E(bl,br) bottom → BR fillet
+	_add_outline_face(geo, bl, br, sl, E(bl, br), E(sl, bl));
+	_add_outline_face(geo, br, sr, sl, E(br, sr), E(bl, br));
 
 	// Right side: wing + head sub-tri share the (right shoulder, right slant)
 	// pair. Both segments meet at the convex br2 corner and the concave sr
