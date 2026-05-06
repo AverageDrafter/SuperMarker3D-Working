@@ -491,6 +491,11 @@ private:
 	Vector<Ref<ArrayMesh>> _arm_meshes;
 	Vector<RID>            _arm_instances;
 
+	// Cached perimeter for shapes using outline_mode == 2. Populated by
+	// `_rebuild_mesh` from `GeoBuf::perimeter_2d` and uploaded as a
+	// uniform array by `_build_materials`.
+	PackedVector4Array _outline_perimeter_2d;
+
 	// ---------------------------------------------------------------------------
 	// GeoBuf: geometry accumulator passed through shape generators.
 	//
@@ -552,10 +557,22 @@ private:
 		PackedVector2Array tri_bary_uvs;      // (h0, h1)
 		PackedVector2Array tri_bary_uv2s;     // (h2, 0)
 
+		// Per-fragment outline perimeter (outline_mode == 2). Each entry is
+		// (a.x, a.y, b.x, b.y) for one perimeter segment, in the shape's
+		// local 2D plane (XY for the flat arrow). The shader loops the
+		// active range and computes min(box_sdf) → uniform-width strip with
+		// sharp mitres at every corner, convex or concave, independent of
+		// fill triangulation.
+		PackedVector4Array perimeter_2d;
+
 		// --- Helpers ---
 		void add_line(const Vector3 &a, const Vector3 &b);
 		void add_line_colored(const Vector3 &a, const Vector3 &b, const Color &c);
 		void add_triangle(const Vector3 &a, const Vector3 &b, const Vector3 &c);
+		/// Push a closed XY-plane polygon as perimeter segments (mode-2 outline).
+		/// Segments are (ring[i], ring[i+1]); the ring wraps so seg N-1 is
+		/// (ring[N-1], ring[0]).
+		void push_perimeter_xy(const Vector3 *ring, int count);
 
 		/// Flat 2D edge quad in the XZ plane (Y=0) with normal ±Y.
 		/// Used for Flat Arrow thick outlines.
@@ -564,6 +581,11 @@ private:
 
 	void _rebuild_mesh();
 	void _build_materials();
+	/// Upload `_outline_perimeter_2d` to the shader's `perimeter[]` array
+	/// + `perimeter_count`. Pads to PERIM_MAX with zeros to satisfy
+	/// fixed-size uniform array. Caller guarantees the material's shader
+	/// declares both uniforms.
+	void _set_perimeter_uniform(const Ref<ShaderMaterial> &mat) const;
 	void _ensure_instance();
 	void _cleanup_instance();
 	void _update_visibility();
@@ -625,23 +647,6 @@ private:
 	void _add_flat_polygon_fan(GeoBuf &geo, const Vector3 &center,
 			const Vector3 *ring, int count) const;
 
-	/// Box-SDF outline triangle. Used by flat-Shape generators that opt into
-	/// the box-SDF outline mode (rectangular strip with axial extension by
-	/// `outline_thickness` past each segment endpoint — gives sharp inside-
-	/// corner mitres). Vertices `v0/v1/v2` are CCW from +Z. `e1` and `e2`
-	/// reference up to two perimeter segments tracked by this triangle;
-	/// `active=false` slots write SKIP. Per-vertex (perp, axial_excess) is
-	/// computed for each tracked segment and packed into UV / UV2 — the
-	/// shader (under `outline_mode == 1`) reads them as
-	/// `(perp1, axial_excess1)` / `(perp2, axial_excess2)`.
-	struct OutlineEdge {
-		Vector3 a;
-		Vector3 b;
-		bool active = false;
-	};
-	void _add_outline_face(GeoBuf &geo,
-			const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
-			const OutlineEdge &e1, const OutlineEdge &e2) const;
 	void _gen_flat_circle(GeoBuf &geo) const;
 	void _gen_flat_square(GeoBuf &geo) const;
 	void _gen_flat_diamond(GeoBuf &geo) const;

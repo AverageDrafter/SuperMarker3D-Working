@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://dge8248a2xra3"]
 
-[ext_resource type="Script" uid="uid://cpuj0l0ud3goa" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
+[ext_resource type="Script" uid="uid://dory58x5yberl" path="res://demos/showcase/flying_camera.gd" id="1_flycam"]
 [ext_resource type="Curve3D" uid="uid://w62ydmkmmgss" path="res://demos/render_test/custom_curve_a.tres" id="2_curveA"]
 [ext_resource type="Curve3D" uid="uid://w62yemkmmgst" path="res://demos/render_test/custom_curve_b.tres" id="3_curveB"]
 
@@ -37,7 +37,7 @@ transform = Transform3D(0.866, 0.354, -0.354, 0, 0.707, 0.707, 0.5, -0.612, 0.61
 shadow_enabled = true
 
 [node name="Ground" type="MeshInstance3D" parent="." unique_id=2082667771]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 18)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23.975166, 0, 18.006374)
 mesh = SubResource("ground_mesh")
 surface_material_override/0 = SubResource("ground_mat")
 
@@ -446,6 +446,7 @@ transform = Transform3D(1, 0, 0, 0, 2.5, 0, 0, 0, 1, 24.5, 1.5, 14)
 [node name="55_FlatCircle_6sides" type="SuperMarker3D" parent="Flat" unique_id=812954651]
 type = 2
 subtype = 17
+outline_thickness = 0.116
 shape_sides = 6
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 1, 18)
 
@@ -524,8 +525,10 @@ transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 35, 1, 18)
 [node name="66_FlatCapsule_Default" type="SuperMarker3D" parent="Flat" unique_id=460272762]
 type = 2
 subtype = 21
+outline_thickness = 0.112
 marker_size = 0.3
 fill_color = Color(0.85, 0.55, 0.95, 1)
+flip_faces = true
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 38.5, 1, 18)
 
 [node name="67_FlatCapsule_Long" type="SuperMarker3D" parent="Flat" unique_id=501927403]
@@ -629,7 +632,7 @@ subtype = 17
 outline_thickness = 0.056
 fill_color = Color(0.95, 0.85, 0.55, 1)
 lights_and_shadows = true
-transform = Transform3D(1, 0, 0, 0, 1, 1.7484555e-07, 0, -1.7484555e-07, 1, 42, 1, 21)
+transform = Transform3D(1, 0, 0, 0, 0.9659258, -0.25881904, 0, 0.25881904, 0.9659258, 42, 1, 21)
 
 [node name="Curve" type="Node3D" parent="." unique_id=92149944]
 
@@ -714,7 +717,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 29)
 [node name="94_CurveRightAngle_Tube" type="SuperMarker3D" parent="Curve" unique_id=2136606088]
 type = 3
 subtype = 24
-curve_flat = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1, 29)
 
 [node name="95_CurveArc_Tube" type="SuperMarker3D" parent="Curve" unique_id=1642718995]
