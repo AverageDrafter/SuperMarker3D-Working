@@ -1,0 +1,9 @@
+[gd_scene format=3 uid="uid://c5t3l415kcaxx"]
+
+[node name="Node3D" type="Node3D" unique_id=990126257]
+
+[node name="SuperMarker3D" type="SuperMarker3D" parent="." unique_id=1867117878]
+type = 5
+subtype = 10
+outline_thickness = 0.005
+lights_and_shadows = true

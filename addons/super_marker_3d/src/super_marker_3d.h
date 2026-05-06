@@ -122,10 +122,26 @@ public:
 	};
 
 
-	enum FigureLegPose {
-		LEGS_TOGETHER = 0,    // both legs straight down (rest pose)
-		LEGS_LEFT_FWD = 1,    // left leg rotated forward at hip, right back
-		LEGS_RIGHT_FWD = 2,   // right leg rotated forward at hip, left back
+	// Minimal humanoid skeleton, 11 bones. HIPS is the root and uses the
+	// SuperMarker3D node's own transform (no separate rotation control).
+	// Each bone's "head" is its rest-position pivot in standing-mesh-local
+	// coordinates (Y-up, after the GLB's -90° X load-rotation). Its "tail"
+	// is implicit: child bones' heads, or — for the four limb-tip bones
+	// and the head bone — derived from their rest-position offset along
+	// the bone's local axis.
+	enum FigureBone {
+		BONE_HIPS = 0,
+		BONE_SPINE,
+		BONE_HEAD,
+		BONE_L_UPPER_ARM,
+		BONE_L_LOWER_ARM,
+		BONE_R_UPPER_ARM,
+		BONE_R_LOWER_ARM,
+		BONE_L_UPPER_LEG,
+		BONE_L_LOWER_LEG,
+		BONE_R_UPPER_LEG,
+		BONE_R_LOWER_LEG,
+		BONE_COUNT,
 	};
 
 protected:
@@ -232,10 +248,52 @@ public:
 	// markers later if a face is wanted). Leg pose toggles between the
 	// rest stance and one of two stepping silhouettes.
 	void set_figure_height(float p);          float get_figure_height() const;
-	void set_figure_head_yaw(float p);        float get_figure_head_yaw() const;
-	void set_figure_left_arm_dir(const Vector3 &p);  Vector3 get_figure_left_arm_dir() const;
-	void set_figure_right_arm_dir(const Vector3 &p); Vector3 get_figure_right_arm_dir() const;
-	void set_figure_leg_pose(int p);          int get_figure_leg_pose() const;
+	void set_figure_show_bones(bool p);       bool  get_figure_show_bones() const;
+	void set_figure_show_mesh(bool p);        bool  get_figure_show_mesh() const;
+	void set_figure_bone_color(const Color &p); Color get_figure_bone_color() const;
+	// Per-bone rest position (mesh-local, Y-up) and pose rotation (Euler radians).
+	// Indexed by FigureBone enum value (0..10). HIPS rotation is unused (root
+	// inherits node transform); kept in the array for index symmetry.
+	void    set_figure_bone_pos(int bone, const Vector3 &p);
+	Vector3 get_figure_bone_pos(int bone) const;
+	void    set_figure_bone_rot(int bone, const Vector3 &p);
+	Vector3 get_figure_bone_rot(int bone) const;
+	// Per-bone wrappers. Direct rest positions (HIPS, SPINE, the four lower
+	// limb bones) get a *_pos pair; derived bones (HEAD, upper limbs) get
+	// only rotation. HIPS gets only position — its rotation is the node's
+	// own transform.
+	#define SM_BONE_POS(NAME, IDX) \
+		void set_figure_bone_##NAME##_pos(const Vector3 &p) { set_figure_bone_pos(IDX, p); } \
+		Vector3 get_figure_bone_##NAME##_pos() const { return get_figure_bone_pos(IDX); }
+	#define SM_BONE_ROT(NAME, IDX) \
+		void set_figure_bone_##NAME##_rot(const Vector3 &p) { set_figure_bone_rot(IDX, p); } \
+		Vector3 get_figure_bone_##NAME##_rot() const { return get_figure_bone_rot(IDX); }
+	SM_BONE_POS(hips,        BONE_HIPS)
+	SM_BONE_POS(spine,       BONE_SPINE)        SM_BONE_ROT(spine,       BONE_SPINE)
+	                                            SM_BONE_ROT(head,        BONE_HEAD)
+	                                            SM_BONE_ROT(l_upper_arm, BONE_L_UPPER_ARM)
+	SM_BONE_POS(l_lower_arm, BONE_L_LOWER_ARM)  SM_BONE_ROT(l_lower_arm, BONE_L_LOWER_ARM)
+	                                            SM_BONE_ROT(r_upper_arm, BONE_R_UPPER_ARM)
+	SM_BONE_POS(r_lower_arm, BONE_R_LOWER_ARM)  SM_BONE_ROT(r_lower_arm, BONE_R_LOWER_ARM)
+	                                            SM_BONE_ROT(l_upper_leg, BONE_L_UPPER_LEG)
+	SM_BONE_POS(l_lower_leg, BONE_L_LOWER_LEG)  SM_BONE_ROT(l_lower_leg, BONE_L_LOWER_LEG)
+	                                            SM_BONE_ROT(r_upper_leg, BONE_R_UPPER_LEG)
+	SM_BONE_POS(r_lower_leg, BONE_R_LOWER_LEG)  SM_BONE_ROT(r_lower_leg, BONE_R_LOWER_LEG)
+	#undef SM_BONE_POS
+	#undef SM_BONE_ROT
+
+	// Baked rig offsets — fixed in their parent bone's REST local frame.
+	// SPINE_TOP, HEAD_BASE, L/R_SHOULDER all live in SPINE's local frame
+	// (so they rotate with SPINE). L/R_HIP live in HIPS's local frame.
+	// Set during rigging (figure_show_bones=true), then hidden in
+	// inspector once locked. Derived bone heads (HEAD, upper arms, upper
+	// legs) are computed from these every rebuild.
+	void set_figure_offset_spine_top(const Vector3 &p);  Vector3 get_figure_offset_spine_top() const;
+	void set_figure_offset_head_base(const Vector3 &p);  Vector3 get_figure_offset_head_base() const;
+	void set_figure_offset_l_shoulder(const Vector3 &p); Vector3 get_figure_offset_l_shoulder() const;
+	void set_figure_offset_r_shoulder(const Vector3 &p); Vector3 get_figure_offset_r_shoulder() const;
+	void set_figure_offset_l_hip(const Vector3 &p);      Vector3 get_figure_offset_l_hip() const;
+	void set_figure_offset_r_hip(const Vector3 &p);      Vector3 get_figure_offset_r_hip() const;
 
 	void set_head_length(float p);  float get_head_length() const;
 	void set_head_width(float p);   float get_head_width() const;
@@ -394,10 +452,17 @@ private:
 	// FIGURE shape. Total standing height in meters; body / limb /
 	// head sizes derive proportionally inside _gen_figure.
 	float _figure_height = 1.8f;
-	float _figure_head_yaw = 0.0f;
-	Vector3 _figure_left_arm_dir = Vector3(-1.0f, 0.0f, 0.0f);
-	Vector3 _figure_right_arm_dir = Vector3( 1.0f, 0.0f, 0.0f);
-	int _figure_leg_pose = LEGS_TOGETHER;
+	bool  _figure_show_bones = true;
+	bool  _figure_show_mesh  = true;
+	Color _figure_bone_color = Color(0.0f, 1.0f, 1.0f, 1.0f); // cyan, contrasts most fill colors
+	Vector3 _figure_bone_pos[BONE_COUNT];   // direct (HIPS, SPINE, *_LOWER_*); derived ones overwritten each rebuild
+	Vector3 _figure_bone_rot[BONE_COUNT];   // identity by default
+	Vector3 _figure_offset_spine_top;
+	Vector3 _figure_offset_head_base;
+	Vector3 _figure_offset_l_shoulder;
+	Vector3 _figure_offset_r_shoulder;
+	Vector3 _figure_offset_l_hip;
+	Vector3 _figure_offset_r_hip;
 
 	float _head_length = 0.3f;
 	float _head_width  = 0.15f;
@@ -657,6 +722,22 @@ private:
 	void _gen_curve(GeoBuf &geo) const;
 	void _gen_curve_line_3d(GeoBuf &geo) const;
 	void _gen_figure(GeoBuf &geo) const;
+	struct FigureMeshCache {
+		PackedVector3Array verts;     // Y-up, feet at y=0, ~1.65m tall
+		PackedVector3Array normals;
+		PackedInt32Array   indices;
+		// Per-triangle crease flags — 3 bytes per tri (e0, e1, e2 in
+		// _add_mesh_face's edge convention). 1 = boundary (paint outline),
+		// 0 = internal (suppress). Baked at load by walking shared-edge
+		// adjacency: edges between two near-coplanar tris become internal,
+		// so flat regions render seamless and only creases get outlined.
+		PackedByteArray edge_boundary;
+		bool loaded = false;
+	};
+	/// Lazy-loaded mesh cache for the bundled lowpoly human GLB. Loads
+	/// once per process (static-local), applies a -90°X rotation to
+	/// stand the figure upright, and translates so feet sit at y=0.
+	static const FigureMeshCache &_get_figure_mesh();
 
 	/// Resolve the 6 axis lengths through the active link mode. Output
 	/// order: X+, X-, Y+, Y-, Z+, Z-.
@@ -720,6 +801,7 @@ private:
 			float radius, int segs, const Color &c,
 			bool cap_a = true, bool cap_b = true);
 	static void _add_sphere_blob(GeoBuf &geo, const Vector3 &center, float radius, int lat, int lon);
+	static void _add_sphere_blob_colored(GeoBuf &geo, const Vector3 &center, float radius, int lat, int lon, const Color &c);
 	/// Hemisphere cap oriented along `axis_dir` (which must be unit
 	/// length). The equator (lat=0) sits perpendicular to `axis_dir`
 	/// at `center` with the same `segs` segment count as a tube of
@@ -743,6 +825,6 @@ VARIANT_ENUM_CAST(SuperMarker3D::AxisLinkMode);
 VARIANT_ENUM_CAST(SuperMarker3D::DetailMode);
 VARIANT_ENUM_CAST(SuperMarker3D::CurvePattern);
 VARIANT_ENUM_CAST(SuperMarker3D::CurveCapStyle);
-VARIANT_ENUM_CAST(SuperMarker3D::FigureLegPose);
+VARIANT_ENUM_CAST(SuperMarker3D::FigureBone);
 
 #endif // SUPER_MARKER_3D_H

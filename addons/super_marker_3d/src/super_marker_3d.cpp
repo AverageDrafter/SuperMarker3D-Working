@@ -7,6 +7,11 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/base_material3d.hpp>
 #include <godot_cpp/classes/mesh.hpp>
+#include <godot_cpp/classes/array_mesh.hpp>
+#include <godot_cpp/classes/mesh_instance3d.hpp>
+#include <godot_cpp/classes/packed_scene.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/curve3d.hpp>
 #include <godot_cpp/classes/convex_polygon_shape3d.hpp>
 #include <godot_cpp/classes/concave_polygon_shape3d.hpp>
@@ -510,23 +515,60 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_figure_height"), &SuperMarker3D::get_figure_height);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_height", PROPERTY_HINT_RANGE, "0.1,10.0,0.01,or_greater"),
 			"set_figure_height", "get_figure_height");
-	ClassDB::bind_method(D_METHOD("set_figure_head_yaw", "yaw"), &SuperMarker3D::set_figure_head_yaw);
-	ClassDB::bind_method(D_METHOD("get_figure_head_yaw"), &SuperMarker3D::get_figure_head_yaw);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_head_yaw", PROPERTY_HINT_RANGE, "-3.14159,3.14159,0.001"),
-			"set_figure_head_yaw", "get_figure_head_yaw");
-	ClassDB::bind_method(D_METHOD("set_figure_left_arm_dir", "dir"), &SuperMarker3D::set_figure_left_arm_dir);
-	ClassDB::bind_method(D_METHOD("get_figure_left_arm_dir"), &SuperMarker3D::get_figure_left_arm_dir);
-	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_left_arm_dir"),
-			"set_figure_left_arm_dir", "get_figure_left_arm_dir");
-	ClassDB::bind_method(D_METHOD("set_figure_right_arm_dir", "dir"), &SuperMarker3D::set_figure_right_arm_dir);
-	ClassDB::bind_method(D_METHOD("get_figure_right_arm_dir"), &SuperMarker3D::get_figure_right_arm_dir);
-	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_right_arm_dir"),
-			"set_figure_right_arm_dir", "get_figure_right_arm_dir");
-	ClassDB::bind_method(D_METHOD("set_figure_leg_pose", "pose"), &SuperMarker3D::set_figure_leg_pose);
-	ClassDB::bind_method(D_METHOD("get_figure_leg_pose"), &SuperMarker3D::get_figure_leg_pose);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "figure_leg_pose", PROPERTY_HINT_ENUM,
-			"Legs Together,Legs Left Forward,Legs Right Forward"),
-			"set_figure_leg_pose", "get_figure_leg_pose");
+	ClassDB::bind_method(D_METHOD("set_figure_show_bones", "v"), &SuperMarker3D::set_figure_show_bones);
+	ClassDB::bind_method(D_METHOD("get_figure_show_bones"), &SuperMarker3D::get_figure_show_bones);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "figure_show_bones"),
+			"set_figure_show_bones", "get_figure_show_bones");
+	ClassDB::bind_method(D_METHOD("set_figure_show_mesh", "v"), &SuperMarker3D::set_figure_show_mesh);
+	ClassDB::bind_method(D_METHOD("get_figure_show_mesh"), &SuperMarker3D::get_figure_show_mesh);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "figure_show_mesh"),
+			"set_figure_show_mesh", "get_figure_show_mesh");
+	ClassDB::bind_method(D_METHOD("set_figure_bone_color", "c"), &SuperMarker3D::set_figure_bone_color);
+	ClassDB::bind_method(D_METHOD("get_figure_bone_color"), &SuperMarker3D::get_figure_bone_color);
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "figure_bone_color"),
+			"set_figure_bone_color", "get_figure_bone_color");
+
+	// Direct rest positions (HIPS, SPINE, four lower-limb bones).
+	// Derived bones (HEAD, upper limbs) get only rotations — their
+	// positions are computed each rebuild from the figure_offset_*
+	// values. HIPS gets only position; its rotation is the node transform.
+	#define SM_BIND_POS(NAME) \
+		ClassDB::bind_method(D_METHOD("set_figure_bone_" #NAME "_pos", "p"), &SuperMarker3D::set_figure_bone_##NAME##_pos); \
+		ClassDB::bind_method(D_METHOD("get_figure_bone_" #NAME "_pos"), &SuperMarker3D::get_figure_bone_##NAME##_pos); \
+		ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_bone_" #NAME "_pos"), \
+				"set_figure_bone_" #NAME "_pos", "get_figure_bone_" #NAME "_pos");
+	#define SM_BIND_ROT(NAME) \
+		ClassDB::bind_method(D_METHOD("set_figure_bone_" #NAME "_rot", "p"), &SuperMarker3D::set_figure_bone_##NAME##_rot); \
+		ClassDB::bind_method(D_METHOD("get_figure_bone_" #NAME "_rot"), &SuperMarker3D::get_figure_bone_##NAME##_rot); \
+		ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_bone_" #NAME "_rot"), \
+				"set_figure_bone_" #NAME "_rot", "get_figure_bone_" #NAME "_rot");
+	SM_BIND_POS(hips)
+	SM_BIND_POS(spine)        SM_BIND_ROT(spine)
+	                          SM_BIND_ROT(head)
+	                          SM_BIND_ROT(l_upper_arm)
+	SM_BIND_POS(l_lower_arm)  SM_BIND_ROT(l_lower_arm)
+	                          SM_BIND_ROT(r_upper_arm)
+	SM_BIND_POS(r_lower_arm)  SM_BIND_ROT(r_lower_arm)
+	                          SM_BIND_ROT(l_upper_leg)
+	SM_BIND_POS(l_lower_leg)  SM_BIND_ROT(l_lower_leg)
+	                          SM_BIND_ROT(r_upper_leg)
+	SM_BIND_POS(r_lower_leg)  SM_BIND_ROT(r_lower_leg)
+	#undef SM_BIND_POS
+	#undef SM_BIND_ROT
+
+	// Baked rig offsets — visible during rigging (figure_show_bones=true).
+	#define SM_BIND_OFFSET(NAME) \
+		ClassDB::bind_method(D_METHOD("set_figure_offset_" #NAME, "p"), &SuperMarker3D::set_figure_offset_##NAME); \
+		ClassDB::bind_method(D_METHOD("get_figure_offset_" #NAME), &SuperMarker3D::get_figure_offset_##NAME); \
+		ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_offset_" #NAME), \
+				"set_figure_offset_" #NAME, "get_figure_offset_" #NAME);
+	SM_BIND_OFFSET(spine_top)
+	SM_BIND_OFFSET(head_base)
+	SM_BIND_OFFSET(l_shoulder)
+	SM_BIND_OFFSET(r_shoulder)
+	SM_BIND_OFFSET(l_hip)
+	SM_BIND_OFFSET(r_hip)
+	#undef SM_BIND_OFFSET
 
 	ADD_GROUP("Head", "head_");
 	ClassDB::bind_method(D_METHOD("set_head_length", "length"), &SuperMarker3D::set_head_length);
@@ -719,9 +761,12 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(CURVE_PATTERN_DOT);
 	BIND_ENUM_CONSTANT(CURVE_CAP_NONE); BIND_ENUM_CONSTANT(CURVE_CAP_ARROW);
 	BIND_ENUM_CONSTANT(CURVE_CAP_DOT); BIND_ENUM_CONSTANT(CURVE_CAP_LINE);
-	BIND_ENUM_CONSTANT(LEGS_TOGETHER);
-	BIND_ENUM_CONSTANT(LEGS_LEFT_FWD);
-	BIND_ENUM_CONSTANT(LEGS_RIGHT_FWD);
+	BIND_ENUM_CONSTANT(BONE_HIPS); BIND_ENUM_CONSTANT(BONE_SPINE); BIND_ENUM_CONSTANT(BONE_HEAD);
+	BIND_ENUM_CONSTANT(BONE_L_UPPER_ARM); BIND_ENUM_CONSTANT(BONE_L_LOWER_ARM);
+	BIND_ENUM_CONSTANT(BONE_R_UPPER_ARM); BIND_ENUM_CONSTANT(BONE_R_LOWER_ARM);
+	BIND_ENUM_CONSTANT(BONE_L_UPPER_LEG); BIND_ENUM_CONSTANT(BONE_L_LOWER_LEG);
+	BIND_ENUM_CONSTANT(BONE_R_UPPER_LEG); BIND_ENUM_CONSTANT(BONE_R_LOWER_LEG);
+	BIND_ENUM_CONSTANT(BONE_COUNT);
 }
 
 void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
@@ -907,9 +952,14 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	}
 
 	const bool is_figure = (_shape == FIGURE);
-	if ((name == "figure_height" || name == "figure_head_yaw"
-			|| name == "figure_left_arm_dir" || name == "figure_right_arm_dir"
-			|| name == "figure_leg_pose") && !is_figure) hide();
+	// Hide all figure_* on non-figure subtypes.
+	if (name.begins_with("figure_") && !is_figure) hide();
+	// Rigging fields (rest positions + baked offsets) only show when
+	// figure_show_bones is on; otherwise inspector shows just the pose
+	// rotations + height + toggles.
+	if (is_figure && !_figure_show_bones &&
+			(name.begins_with("figure_bone_") && name.ends_with("_pos"))) hide();
+	if (is_figure && !_figure_show_bones && name.begins_with("figure_offset_")) hide();
 	// Figure has its own scale knob (figure_height) — hide marker_size.
 	if (name == "marker_size" && is_figure) hide();
 }
@@ -918,7 +968,29 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 // Notification
 // ---------------------------------------------------------------------------
 
-SuperMarker3D::SuperMarker3D() {}
+SuperMarker3D::SuperMarker3D() {
+	// Default bone rest positions, mesh-local (Y-up, origin at feet, ~1.65m
+	// reference height matching the bundled GLB after the load-time -90°X
+	// rotation). Only HIPS, SPINE, and the four lower-limb bones are direct
+	// rest positions — the rest are derived each rebuild from the baked
+	// offset_* values. Final positions scale by figure_height/1.65 at draw.
+	_figure_bone_pos[BONE_HIPS]         = Vector3( 0.00f, 0.95f, 0.00f);
+	_figure_bone_pos[BONE_SPINE]        = Vector3( 0.00f, 0.95f, 0.00f); // pivots at hips
+	_figure_bone_pos[BONE_L_LOWER_ARM]  = Vector3(-0.40f, 1.18f, 0.00f);
+	_figure_bone_pos[BONE_R_LOWER_ARM]  = Vector3( 0.40f, 1.18f, 0.00f);
+	_figure_bone_pos[BONE_L_LOWER_LEG]  = Vector3(-0.10f, 0.45f, 0.00f);
+	_figure_bone_pos[BONE_R_LOWER_LEG]  = Vector3( 0.10f, 0.45f, 0.00f);
+	// Derived slots get filled by _gen_figure each rebuild.
+	for (int i = 0; i < BONE_COUNT; i++) _figure_bone_rot[i] = Vector3();
+
+	// Baked offsets — locked once rigged. All in their parent bone's local frame.
+	_figure_offset_spine_top  = Vector3( 0.00f, 0.45f, 0.00f); // spine extends ~45cm up from pivot
+	_figure_offset_head_base  = Vector3( 0.00f, 0.13f, 0.00f); // head pivot above spine_top
+	_figure_offset_l_shoulder = Vector3(-0.20f, 0.00f, 0.00f); // shoulder spread
+	_figure_offset_r_shoulder = Vector3( 0.20f, 0.00f, 0.00f);
+	_figure_offset_l_hip      = Vector3(-0.10f,-0.05f, 0.00f); // hip points from pelvis pivot
+	_figure_offset_r_hip      = Vector3( 0.10f,-0.05f, 0.00f);
+}
 SuperMarker3D::~SuperMarker3D() { _cleanup_instance(); }
 
 void SuperMarker3D::_notification(int p_what) {
@@ -1285,14 +1357,41 @@ void SuperMarker3D::_resolved_axis_lengths(float p_out[6]) const {
 
 void SuperMarker3D::set_figure_height(float p) { _figure_height = MAX(0.01f, p); if (_shape == FIGURE) SM_REBUILD(); }
 float SuperMarker3D::get_figure_height() const { return _figure_height; }
-void SuperMarker3D::set_figure_head_yaw(float p) { _figure_head_yaw = p; if (_shape == FIGURE) SM_REBUILD(); }
-float SuperMarker3D::get_figure_head_yaw() const { return _figure_head_yaw; }
-void SuperMarker3D::set_figure_left_arm_dir(const Vector3 &p) { _figure_left_arm_dir = p; if (_shape == FIGURE) SM_REBUILD(); }
-Vector3 SuperMarker3D::get_figure_left_arm_dir() const { return _figure_left_arm_dir; }
-void SuperMarker3D::set_figure_right_arm_dir(const Vector3 &p) { _figure_right_arm_dir = p; if (_shape == FIGURE) SM_REBUILD(); }
-Vector3 SuperMarker3D::get_figure_right_arm_dir() const { return _figure_right_arm_dir; }
-void SuperMarker3D::set_figure_leg_pose(int p) { _figure_leg_pose = p; if (_shape == FIGURE) SM_REBUILD(); }
-int SuperMarker3D::get_figure_leg_pose() const { return _figure_leg_pose; }
+void SuperMarker3D::set_figure_show_bones(bool p) {
+	_figure_show_bones = p;
+	if (_shape == FIGURE) { SM_REBUILD(); notify_property_list_changed(); }
+}
+bool SuperMarker3D::get_figure_show_bones() const { return _figure_show_bones; }
+void SuperMarker3D::set_figure_show_mesh(bool p) { _figure_show_mesh = p; if (_shape == FIGURE) SM_REBUILD(); }
+bool SuperMarker3D::get_figure_show_mesh() const { return _figure_show_mesh; }
+void SuperMarker3D::set_figure_bone_color(const Color &p) { _figure_bone_color = p; if (_shape == FIGURE) SM_REBUILD(); }
+Color SuperMarker3D::get_figure_bone_color() const { return _figure_bone_color; }
+void SuperMarker3D::set_figure_bone_pos(int bone, const Vector3 &p) {
+	if (bone < 0 || bone >= BONE_COUNT) return;
+	_figure_bone_pos[bone] = p; if (_shape == FIGURE) SM_REBUILD();
+}
+Vector3 SuperMarker3D::get_figure_bone_pos(int bone) const {
+	if (bone < 0 || bone >= BONE_COUNT) return Vector3();
+	return _figure_bone_pos[bone];
+}
+void SuperMarker3D::set_figure_bone_rot(int bone, const Vector3 &p) {
+	if (bone < 0 || bone >= BONE_COUNT) return;
+	_figure_bone_rot[bone] = p; if (_shape == FIGURE) SM_REBUILD();
+}
+Vector3 SuperMarker3D::get_figure_bone_rot(int bone) const {
+	if (bone < 0 || bone >= BONE_COUNT) return Vector3();
+	return _figure_bone_rot[bone];
+}
+#define SM_OFFSET_IMPL(NAME) \
+	void SuperMarker3D::set_figure_offset_##NAME(const Vector3 &p) { _figure_offset_##NAME = p; if (_shape == FIGURE) SM_REBUILD(); } \
+	Vector3 SuperMarker3D::get_figure_offset_##NAME() const { return _figure_offset_##NAME; }
+SM_OFFSET_IMPL(spine_top)
+SM_OFFSET_IMPL(head_base)
+SM_OFFSET_IMPL(l_shoulder)
+SM_OFFSET_IMPL(r_shoulder)
+SM_OFFSET_IMPL(l_hip)
+SM_OFFSET_IMPL(r_hip)
+#undef SM_OFFSET_IMPL
 
 void SuperMarker3D::set_head_length(float p) { _head_length = MAX(0.0f, p); SM_REBUILD(); }
 float SuperMarker3D::get_head_length() const { return _head_length; }
@@ -1985,8 +2084,11 @@ void SuperMarker3D::_build_materials() {
 	// caused the lighting to compute from the wrong side.)
 	_outline_material->set_cull_mode(BaseMaterial3D::CULL_BACK);
 
-	if (_shape == AXIS_XYZ) {
-		// Vertex colors drive the per-axis RGB.  Material albedo = white so nothing tints.
+	const bool is_figure_type = (_shape == FIGURE);
+	if (_shape == AXIS_XYZ || is_figure_type) {
+		// Vertex colors drive per-vertex tint (axis arms / figure bones).
+		// Material albedo = white so nothing tints; ALBEDO_FROM_VERTEX_COLOR
+		// reads the per-vertex outline_colors we packed in.
 		_outline_material->set_albedo(Color(1, 1, 1, 1));
 		_outline_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
 		_outline_material->set_transparency(BaseMaterial3D::TRANSPARENCY_DISABLED);
@@ -2044,7 +2146,7 @@ void SuperMarker3D::_build_materials() {
 	// pass). Everything else on the BARY path uses a combined fill+outline
 	// shader that paints both in one opaque pass — outline strip is
 	// computed from per-vertex perpendicular distances to face-boundary edges.
-	const bool use_bary_path = is_mesh_type || is_shape_type || is_curve_flat;
+	const bool use_bary_path = is_mesh_type || is_shape_type || is_curve_flat || is_figure_type;
 	if (use_bary_path) {
 		const bool use_sphere_shader = _smooth_shading
 				&& (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
@@ -2251,6 +2353,11 @@ void SuperMarker3D::_build_materials() {
 				}
 			} else {
 				if (sc > 0 && front_mat.is_valid()) _mesh->surface_set_material(0, front_mat);
+				// FIGURE: bone overlay sits at the last surface, painted by
+				// _outline_material with vertex colors enabled.
+				if (is_figure_type && sc > 1 && _outline_material.is_valid()) {
+					_mesh->surface_set_material(sc - 1, _outline_material);
+				}
 				if (_shape == MESH_CAPSULE && sphere_shader_caps) {
 					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
 					if (sc > 2 && _cap_bot_material.is_valid()) _mesh->surface_set_material(2, _cap_bot_material);
@@ -3330,86 +3437,255 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
-// Figure — minimal humanoid for blocking out gameplay scenes. Built from
-// cylinder limbs + a head sphere, all in outline_color (no per-part tint).
-// Anatomy is proportional to figure_height:
+// Figure — humanoid mesh skinned to a minimal 11-bone skeleton.
 //
-//   Head     top 1/8 of height — sphere blob
-//   Torso    next 3/8 — body cylinder from neck down to waist
-//   Legs     bottom 4/8 — two cylinders from waist to floor
-//   Arms     ~3/8 of height — straight rods from each shoulder, pointing
-//            wherever figure_*_arm_dir says (no bends, no segments)
+// The bundled GLB (`Assets/Lowpoly Human Reff.glb`) has no rig of its own,
+// so we synthesize one: 11 bone HEAD positions are exposed as inspector
+// properties (`figure_bone_*_pos`), 10 Euler rotations as pose controls
+// (`figure_bone_*_rot`, HIPS uses the node transform). Vertex-to-bone
+// assignment is hard nearest-head Voronoi, computed every rebuild — cheap
+// (956 verts × 11 bones), and lets bone positions move freely while
+// rigging.
 //
-// Origin is at the figure's feet (Y=0). Head_yaw rotates the head sphere
-// around its own Y axis — useful for look-tracking visualization.
-// Leg pose toggles between rest and stepping silhouettes.
+// Mesh load (`_get_figure_mesh`) caches once per process: applies a -90°X
+// rotation so Z-forward becomes Y-up, and translates so feet sit at y=0.
+// Bone positions are authored against this normalized 1.65m-tall reference
+// and scaled by figure_height/1.65 at draw.
+//
+// Bone overlay (`figure_show_bones`) draws spheres at each bone head and
+// tubes from each bone to its parent — visible/adjustable while we rig,
+// hidden once we lock the rest pose in code.
 // ---------------------------------------------------------------------------
 
+namespace {
+const int BONE_PARENT[SuperMarker3D::BONE_COUNT] = {
+	-1,                              // HIPS (root)
+	SuperMarker3D::BONE_HIPS,        // SPINE
+	SuperMarker3D::BONE_SPINE,       // HEAD
+	SuperMarker3D::BONE_SPINE,       // L_UPPER_ARM
+	SuperMarker3D::BONE_L_UPPER_ARM, // L_LOWER_ARM
+	SuperMarker3D::BONE_SPINE,       // R_UPPER_ARM
+	SuperMarker3D::BONE_R_UPPER_ARM, // R_LOWER_ARM
+	SuperMarker3D::BONE_HIPS,        // L_UPPER_LEG
+	SuperMarker3D::BONE_L_UPPER_LEG, // L_LOWER_LEG
+	SuperMarker3D::BONE_HIPS,        // R_UPPER_LEG
+	SuperMarker3D::BONE_R_UPPER_LEG, // R_LOWER_LEG
+};
+}
+
+const SuperMarker3D::FigureMeshCache &SuperMarker3D::_get_figure_mesh() {
+	static FigureMeshCache cache;
+	if (cache.loaded) return cache;
+	cache.loaded = true; // mark loaded even on failure so we don't retry every rebuild
+
+	Ref<Resource> r = ResourceLoader::get_singleton()->load(
+			"res://addons/super_marker_3d/Assets/Lowpoly Human Reff.glb");
+	Ref<PackedScene> ps = r;
+	if (ps.is_null()) return cache;
+	Node *root = ps->instantiate();
+	if (!root) return cache;
+
+	// Walk for first MeshInstance3D.
+	MeshInstance3D *mi = nullptr;
+	Vector<Node *> stack;
+	stack.push_back(root);
+	while (!stack.is_empty()) {
+		Node *n = stack[stack.size() - 1];
+		stack.remove_at(stack.size() - 1);
+		mi = Object::cast_to<MeshInstance3D>(n);
+		if (mi) break;
+		for (int i = 0; i < n->get_child_count(); i++) stack.push_back(n->get_child(i));
+	}
+	if (!mi) { memdelete(root); return cache; }
+	Ref<Mesh> mesh = mi->get_mesh();
+	if (mesh.is_null() || mesh->get_surface_count() == 0) { memdelete(root); return cache; }
+
+	Array arrays = mesh->surface_get_arrays(0);
+	PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
+	PackedVector3Array n = arrays[Mesh::ARRAY_NORMAL];
+	PackedInt32Array   idx = arrays[Mesh::ARRAY_INDEX];
+
+	// -90° X rotation: (x, y, z) → (x, -z, y). Equivalent to Basis::from_euler(Vector3(-PI/2, 0, 0))
+	// but spelled out to avoid any unit-confusion.
+	float ymin = 1.0e30f;
+	for (int k = 0; k < v.size(); k++) {
+		Vector3 vp(v[k].x, -v[k].z, v[k].y);
+		Vector3 np(n[k].x, -n[k].z, n[k].y);
+		v[k] = vp; n[k] = np;
+		if (vp.y < ymin) ymin = vp.y;
+	}
+	for (int k = 0; k < v.size(); k++) v[k].y -= ymin; // shift feet to y=0
+
+	cache.verts = v;
+	cache.normals = n;
+	cache.indices = idx;
+
+	// --- Bake crease-only outline flags ---
+	// For each triangle, default all three edges to boundary (1). Then walk
+	// every pair of triangles sharing an edge and clear the flag on both
+	// when their face normals are within ~20° (cos > 0.94). The result:
+	// flat regions read as smooth surfaces while ridges still get their
+	// outline strip. ~20° threshold tuned on the bundled lowpoly figure;
+	// raise toward 1.0 for a busier wireframe, lower toward 0.7 for an
+	// almost-silhouette-only look.
+	const int tcount = idx.size() / 3;
+	PackedByteArray flags;
+	flags.resize(tcount * 3);
+	for (int i = 0; i < flags.size(); i++) flags[i] = 1;
+
+	// Edge → list-of-(tri, slot) where slot ∈ {0,1,2} indexes the helper's
+	// e0/e1/e2 convention (e0 = edge opposite v0 = (v1,v2)).
+	struct EdgeRef { int tri; int slot; };
+	HashMap<int64_t, Vector<EdgeRef>> edge_map;
+	auto edge_key = [](int a, int b) -> int64_t {
+		int lo = MIN(a, b), hi = MAX(a, b);
+		return (int64_t)lo << 32 | (int64_t)(uint32_t)hi;
+	};
+	for (int t = 0; t < tcount; t++) {
+		int i0 = idx[t*3], i1 = idx[t*3+1], i2 = idx[t*3+2];
+		// Slot 0 = (i1, i2), slot 1 = (i0, i2), slot 2 = (i0, i1)
+		int64_t k0 = edge_key(i1, i2);
+		int64_t k1 = edge_key(i0, i2);
+		int64_t k2 = edge_key(i0, i1);
+		edge_map[k0].push_back({t, 0});
+		edge_map[k1].push_back({t, 1});
+		edge_map[k2].push_back({t, 2});
+	}
+	auto face_normal = [&](int t) -> Vector3 {
+		const Vector3 &a = v[idx[t*3]];
+		const Vector3 &b = v[idx[t*3+1]];
+		const Vector3 &c = v[idx[t*3+2]];
+		return (b - a).cross(c - a).normalized();
+	};
+	const float crease_cos = 0.94f; // ~20° threshold
+	for (KeyValue<int64_t, Vector<EdgeRef>> &kv : edge_map) {
+		const Vector<EdgeRef> &refs = kv.value;
+		if (refs.size() != 2) continue; // boundary or non-manifold — keep flag set
+		Vector3 n0 = face_normal(refs[0].tri);
+		Vector3 n1 = face_normal(refs[1].tri);
+		if (n0.dot(n1) > crease_cos) {
+			flags[refs[0].tri * 3 + refs[0].slot] = 0;
+			flags[refs[1].tri * 3 + refs[1].slot] = 0;
+		}
+	}
+	cache.edge_boundary = flags;
+
+	memdelete(root);
+	return cache;
+}
+
 void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
-	const float H = _figure_height;
-	const float head_r   = H * 0.0625f;       // radius (1/16 height)
-	const float neck_y   = H * 0.875f;        // neck base / shoulder line
-	const float waist_y  = H * 0.5f;          // hip joint
-	const float shoulder_offset = H * 0.10f;  // left/right shoulder spread
-	const float hip_offset      = H * 0.05f;  // left/right hip spread
-	const float limb_r   = H * 0.04f;         // limb cylinder radius
-	const float arm_len  = H * 0.40f;
-	const float leg_len  = waist_y;
+	const FigureMeshCache &cache = _get_figure_mesh();
 
-	// --- Head ---
-	const Vector3 head_center(0.0f, neck_y + head_r * 1.4f, 0.0f);
-	_add_sphere_blob(geo, head_center, head_r, 6, 8);
-	// Look-tracker — short stub pointing along +Z by default, rotated by
-	// figure_head_yaw around the head's Y axis. Visualizes facing.
-	{
-		const float yaw = _figure_head_yaw;
-		const Vector3 fwd(std::sin(yaw), 0.0f, std::cos(yaw));
-		_add_tube(geo, head_center, head_center + fwd * head_r * 1.6f,
-				limb_r * 0.4f, 5);
+	const float REF_HEIGHT = 1.65f;
+	const float scale = _figure_height / REF_HEIGHT;
+
+	// Build the full 11-bone rest table for this rebuild. Direct slots come
+	// from _figure_bone_pos; the 5 derived slots (HEAD, upper limbs) come
+	// from the baked offsets via SPINE_TOP and HIPS hubs.
+	Vector3 bone_pos[BONE_COUNT];
+	for (int b = 0; b < BONE_COUNT; b++) bone_pos[b] = _figure_bone_pos[b];
+	const Vector3 spine_top_rest = bone_pos[BONE_SPINE] + _figure_offset_spine_top;
+	const Vector3 hips_rest      = bone_pos[BONE_HIPS];
+	bone_pos[BONE_HEAD]        = spine_top_rest + _figure_offset_head_base;
+	bone_pos[BONE_L_UPPER_ARM] = spine_top_rest + _figure_offset_l_shoulder;
+	bone_pos[BONE_R_UPPER_ARM] = spine_top_rest + _figure_offset_r_shoulder;
+	bone_pos[BONE_L_UPPER_LEG] = hips_rest      + _figure_offset_l_hip;
+	bone_pos[BONE_R_UPPER_LEG] = hips_rest      + _figure_offset_r_hip;
+
+	// Compose per-bone world transforms by walking the hierarchy top-down.
+	// HIPS is the root: world_xf = Translation(rest_head). Children attach
+	// at (rest_head_child - rest_head_parent) in their parent's local frame.
+	Transform3D bone_world[BONE_COUNT];
+	Vector3 rest_head[BONE_COUNT];
+	for (int b = 0; b < BONE_COUNT; b++) {
+		rest_head[b] = bone_pos[b] * scale;
+		Basis rot = Basis::from_euler(_figure_bone_rot[b]);
+		const int parent = BONE_PARENT[b];
+		if (parent < 0) {
+			bone_world[b] = Transform3D(rot, rest_head[b]);
+		} else {
+			Vector3 offset = rest_head[b] - rest_head[parent];
+			Transform3D local(rot, offset);
+			bone_world[b] = bone_world[parent] * local;
+		}
 	}
 
-	// --- Torso ---
-	_add_tube(geo, Vector3(0.0f, neck_y, 0.0f),
-			Vector3(0.0f, waist_y, 0.0f), limb_r * 1.4f, 8);
-
-	// --- Arms — straight rods from shoulder along figure_*_arm_dir ---
-	auto add_arm = [&](float side_x, const Vector3 &dir) {
-		Vector3 d = dir;
-		if (d.length_squared() < 1e-6f) d = Vector3(0.0f, -1.0f, 0.0f);
-		d.normalize();
-		const Vector3 shoulder(side_x * shoulder_offset, neck_y, 0.0f);
-		_add_sphere_blob(geo, shoulder, limb_r * 1.1f, 3, 6);
-		const Vector3 hand = shoulder + d * arm_len;
-		_add_tube(geo, shoulder, hand, limb_r, 6);
-		_add_sphere_blob(geo, hand, limb_r * 1.1f, 3, 6);
-	};
-	add_arm(-1.0f, _figure_left_arm_dir);
-	add_arm( 1.0f, _figure_right_arm_dir);
-
-	// --- Legs — straight rods from hip; pose enum tilts them at the hip ---
-	// Step angle is small so the silhouette reads as "stepping" without
-	// looking acrobatic. Forward leg tilts ~+25°, back leg ~-15°.
-	auto add_leg = [&](float side_x, float tilt_z) {
-		const Vector3 hip(side_x * hip_offset, waist_y, 0.0f);
-		_add_sphere_blob(geo, hip, limb_r * 1.1f, 3, 6);
-		// Tilt is around the X axis (forward/back motion), so a positive
-		// tilt rotates -Y toward +Z.
-		const float c = std::cos(tilt_z), s = std::sin(tilt_z);
-		const Vector3 down(0.0f, -leg_len, 0.0f);
-		const Vector3 rotated(0.0f, c * down.y - s * 0.0f, s * down.y + c * 0.0f);
-		const Vector3 foot = hip + rotated;
-		_add_tube(geo, hip, foot, limb_r, 6);
-		_add_sphere_blob(geo, foot, limb_r * 1.1f, 3, 6);
-	};
-	float left_tilt = 0.0f, right_tilt = 0.0f;
-	switch (_figure_leg_pose) {
-		case LEGS_LEFT_FWD:  left_tilt =  0.43f; right_tilt = -0.26f; break; // ~+25° / -15°
-		case LEGS_RIGHT_FWD: left_tilt = -0.26f; right_tilt =  0.43f; break;
-		case LEGS_TOGETHER:
-		default: break;
+	// Mesh — skin each triangle into the BARY surface so it picks up
+	// fill_color + the standard outline shader. All edges marked boundary
+	// so each tri renders an outline strip — wireframe look on the body.
+	// Per-tri normals recomputed post-skin so lighting follows deformation.
+	if (_figure_show_mesh && !cache.verts.is_empty()) {
+		const PackedVector3Array &mv = cache.verts;
+		const PackedInt32Array   &mi = cache.indices;
+		auto skin = [&](int vidx) -> Vector3 {
+			Vector3 v_rest = mv[vidx] * scale;
+			int best = 0; float best_d = 1.0e30f;
+			for (int b = 0; b < BONE_COUNT; b++) {
+				float d = (v_rest - rest_head[b]).length_squared();
+				if (d < best_d) { best_d = d; best = b; }
+			}
+			return bone_world[best].xform(v_rest - rest_head[best]);
+		};
+		const PackedByteArray &eb = cache.edge_boundary;
+		for (int t = 0, ti = 0; t + 2 < mi.size(); t += 3, ti++) {
+			Vector3 a = skin(mi[t]);
+			Vector3 b = skin(mi[t + 1]);
+			Vector3 c = skin(mi[t + 2]);
+			const bool e0 = eb[ti * 3 + 0] != 0;
+			const bool e1 = eb[ti * 3 + 1] != 0;
+			const bool e2 = eb[ti * 3 + 2] != 0;
+			_add_mesh_face(geo, a, b, c, e0, e1, e2);
+		}
 	}
-	add_leg(-1.0f, left_tilt);
-	add_leg( 1.0f, right_tilt);
+
+	// Bone overlay — rotation bones drawn as thick cyan tubes between
+	// pivot spheres; locked offset segments (collar, pelvis, neck, spine
+	// shaft) drawn as thinner tubes so the user can tell which lines are
+	// adjustable. SPINE_TOP gets its own small marker since it's the hub
+	// where head + shoulders attach but isn't itself a bone pivot.
+	if (_figure_show_bones) {
+		const float bone_r    = _figure_height * 0.012f;
+		const float locked_r  = bone_r * 0.55f;
+		const float joint_r   = _figure_height * 0.020f;
+		const float hub_r     = joint_r * 0.7f;
+		const Color &c = _figure_bone_color;
+
+		// SPINE_TOP world position — derived hub, rotates with SPINE.
+		const Vector3 spine_top_w =
+				bone_world[BONE_SPINE].xform(_figure_offset_spine_top * scale);
+
+		// Pivot spheres at every bone head.
+		for (int b = 0; b < BONE_COUNT; b++) {
+			_add_sphere_blob_colored(geo, bone_world[b].origin, joint_r, 3, 6, c);
+		}
+		_add_sphere_blob_colored(geo, spine_top_w, hub_r, 3, 6, c); // locked hub
+
+		// Spine shaft (rotation bone — thick).
+		_add_tube_colored(geo, bone_world[BONE_SPINE].origin, spine_top_w,
+				bone_r, 6, c, false, false);
+		// Locked collar + neck — spine_top fans out to shoulders + head pivot.
+		_add_tube_colored(geo, spine_top_w, bone_world[BONE_L_UPPER_ARM].origin,
+				locked_r, 6, c, false, false);
+		_add_tube_colored(geo, spine_top_w, bone_world[BONE_R_UPPER_ARM].origin,
+				locked_r, 6, c, false, false);
+		_add_tube_colored(geo, spine_top_w, bone_world[BONE_HEAD].origin,
+				locked_r, 6, c, false, false);
+		// Locked pelvis — hips fan out to leg attachment points.
+		_add_tube_colored(geo, bone_world[BONE_HIPS].origin, bone_world[BONE_L_UPPER_LEG].origin,
+				locked_r, 6, c, false, false);
+		_add_tube_colored(geo, bone_world[BONE_HIPS].origin, bone_world[BONE_R_UPPER_LEG].origin,
+				locked_r, 6, c, false, false);
+		// Rotation bones — limbs.
+		_add_tube_colored(geo, bone_world[BONE_L_UPPER_ARM].origin, bone_world[BONE_L_LOWER_ARM].origin,
+				bone_r, 6, c, false, false);
+		_add_tube_colored(geo, bone_world[BONE_R_UPPER_ARM].origin, bone_world[BONE_R_LOWER_ARM].origin,
+				bone_r, 6, c, false, false);
+		_add_tube_colored(geo, bone_world[BONE_L_UPPER_LEG].origin, bone_world[BONE_L_LOWER_LEG].origin,
+				bone_r, 6, c, false, false);
+		_add_tube_colored(geo, bone_world[BONE_R_UPPER_LEG].origin, bone_world[BONE_R_LOWER_LEG].origin,
+				bone_r, 6, c, false, false);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -3954,6 +4230,25 @@ void SuperMarker3D::_add_tube_colored(GeoBuf &geo,
 	for (int i = start; i < end; i++) geo.outline_colors.push_back(c);
 }
 
+// Colored variant — same geometry as `_add_sphere_blob`, but every appended
+// vertex gets tagged with `c` in `outline_colors`. Pads existing entries
+// with white so the color array stays parallel to outline_verts.
+void SuperMarker3D::_add_sphere_blob_colored(GeoBuf &geo,
+		const Vector3 &center, float radius, int lat, int lon, const Color &c) {
+	const int start = geo.outline_verts.size();
+	if (!geo.use_outline_colors) {
+		for (int i = 0; i < start; i++) geo.outline_colors.push_back(Color(1, 1, 1, 1));
+		geo.use_outline_colors = true;
+	} else {
+		while (geo.outline_colors.size() < start) {
+			geo.outline_colors.push_back(Color(1, 1, 1, 1));
+		}
+	}
+	_add_sphere_blob(geo, center, radius, lat, lon);
+	const int end = geo.outline_verts.size();
+	for (int i = start; i < end; i++) geo.outline_colors.push_back(c);
+}
+
 // Small UV sphere at center — used for corner joins and end caps on tube edges.
 void SuperMarker3D::_add_sphere_blob(GeoBuf &geo,
 		const Vector3 &center, float radius, int lat, int lon) {
@@ -4154,7 +4449,8 @@ void SuperMarker3D::_rebuild_mesh() {
 	const bool is_mesh = (get_type() == TYPE_MESH);
 	const bool is_shape = (get_type() == TYPE_SHAPE);
 	const bool is_curve_flat = (get_type() == TYPE_CURVE) && _is_curve_flat_style();
-	const bool use_bary_path = is_mesh || is_shape || is_curve_flat;
+	const bool is_figure = (get_type() == TYPE_FIGURE);
+	const bool use_bary_path = is_mesh || is_shape || is_curve_flat || is_figure;
 
 	if (use_bary_path) {
 		// BARY shader path — single combined fill+outline surface per side.
@@ -4191,6 +4487,21 @@ void SuperMarker3D::_rebuild_mesh() {
 			}
 			if (geo.cap_top_verts.size() > 0) emit_cap(geo.cap_top_verts, geo.cap_top_normals);
 			if (geo.cap_bot_verts.size() > 0) emit_cap(geo.cap_bot_verts, geo.cap_bot_normals);
+		}
+		// FIGURE bone overlay piggybacks on the BARY path: the body uses
+		// tri_bary (fill+outline shader) while the bones live in
+		// outline_verts as a separate surface tagged with figure_bone_color.
+		if (is_figure && geo.outline_verts.size() > 0) {
+			Array a; a.resize(Mesh::ARRAY_MAX);
+			a[Mesh::ARRAY_VERTEX] = geo.outline_verts;
+			a[Mesh::ARRAY_NORMAL] = geo.outline_normals;
+			if (geo.use_outline_colors) {
+				while (geo.outline_colors.size() < geo.outline_verts.size()) {
+					geo.outline_colors.push_back(Color(1, 1, 1, 1));
+				}
+				a[Mesh::ARRAY_COLOR] = geo.outline_colors;
+			}
+			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 		}
 		// Refresh editor gizmo collision triangles so click-to-select
 		// keeps tracking the live mesh after every property edit.
