@@ -519,6 +519,10 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_figure_show_mesh"), &SuperMarker3D::get_figure_show_mesh);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "figure_show_mesh"),
 			"set_figure_show_mesh", "get_figure_show_mesh");
+	ClassDB::bind_method(D_METHOD("set_figure_show_bones", "v"), &SuperMarker3D::set_figure_show_bones);
+	ClassDB::bind_method(D_METHOD("get_figure_show_bones"), &SuperMarker3D::get_figure_show_bones);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "figure_show_bones"),
+			"set_figure_show_bones", "get_figure_show_bones");
 	ClassDB::bind_method(D_METHOD("set_figure_bone_color", "c"), &SuperMarker3D::set_figure_bone_color);
 	ClassDB::bind_method(D_METHOD("get_figure_bone_color"), &SuperMarker3D::get_figure_bone_color);
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "figure_bone_color"),
@@ -541,18 +545,25 @@ void SuperMarker3D::_bind_methods() {
 		ClassDB::bind_method(D_METHOD("get_figure_bone_" #NAME "_length"), &SuperMarker3D::get_figure_bone_##NAME##_length); \
 		ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_bone_" #NAME "_length", PROPERTY_HINT_RANGE, "0.01,2.0,0.01,or_greater,suffix:m"), \
 				"set_figure_bone_" #NAME "_length", "get_figure_bone_" #NAME "_length");
-	SM_BIND_ROT(spine)        SM_BIND_LEN(spine)
-	SM_BIND_ROT(head)         SM_BIND_LEN(head)
-	SM_BIND_ROT(l_upper_arm)  SM_BIND_LEN(l_upper_arm)
-	SM_BIND_ROT(l_lower_arm)  SM_BIND_LEN(l_lower_arm)
-	SM_BIND_ROT(r_upper_arm)  SM_BIND_LEN(r_upper_arm)
-	SM_BIND_ROT(r_lower_arm)  SM_BIND_LEN(r_lower_arm)
-	SM_BIND_ROT(l_upper_leg)  SM_BIND_LEN(l_upper_leg)
-	SM_BIND_ROT(l_lower_leg)  SM_BIND_LEN(l_lower_leg)
-	SM_BIND_ROT(r_upper_leg)  SM_BIND_LEN(r_upper_leg)
-	SM_BIND_ROT(r_lower_leg)  SM_BIND_LEN(r_lower_leg)
+	#define SM_BIND_WID(NAME) \
+		ClassDB::bind_method(D_METHOD("set_figure_bone_" #NAME "_width", "p"), &SuperMarker3D::set_figure_bone_##NAME##_width); \
+		ClassDB::bind_method(D_METHOD("get_figure_bone_" #NAME "_width"), &SuperMarker3D::get_figure_bone_##NAME##_width); \
+		ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_bone_" #NAME "_width", PROPERTY_HINT_RANGE, "0.0,1.0,0.001,or_greater,suffix:m"), \
+				"set_figure_bone_" #NAME "_width", "get_figure_bone_" #NAME "_width");
+	                          SM_BIND_WID(pelvis)
+	SM_BIND_ROT(spine)        SM_BIND_LEN(spine)        SM_BIND_WID(spine)
+	SM_BIND_ROT(head)         SM_BIND_LEN(head)         SM_BIND_WID(head)
+	SM_BIND_ROT(l_upper_arm)  SM_BIND_LEN(l_upper_arm)  SM_BIND_WID(l_upper_arm)
+	SM_BIND_ROT(l_lower_arm)  SM_BIND_LEN(l_lower_arm)  SM_BIND_WID(l_lower_arm)
+	SM_BIND_ROT(r_upper_arm)  SM_BIND_LEN(r_upper_arm)  SM_BIND_WID(r_upper_arm)
+	SM_BIND_ROT(r_lower_arm)  SM_BIND_LEN(r_lower_arm)  SM_BIND_WID(r_lower_arm)
+	SM_BIND_ROT(l_upper_leg)  SM_BIND_LEN(l_upper_leg)  SM_BIND_WID(l_upper_leg)
+	SM_BIND_ROT(l_lower_leg)  SM_BIND_LEN(l_lower_leg)  SM_BIND_WID(l_lower_leg)
+	SM_BIND_ROT(r_upper_leg)  SM_BIND_LEN(r_upper_leg)  SM_BIND_WID(r_upper_leg)
+	SM_BIND_ROT(r_lower_leg)  SM_BIND_LEN(r_lower_leg)  SM_BIND_WID(r_lower_leg)
 	#undef SM_BIND_ROT
 	#undef SM_BIND_LEN
+	#undef SM_BIND_WID
 
 	// Pose rotations — user-facing animation controls (zero = rest pose).
 	#define SM_BIND_POSE(NAME) \
@@ -584,6 +595,17 @@ void SuperMarker3D::_bind_methods() {
 	SM_BIND_OFFSET(l_hip)
 	SM_BIND_OFFSET(r_hip)
 	#undef SM_BIND_OFFSET
+	#define SM_BIND_OFFSET_WID(NAME) \
+		ClassDB::bind_method(D_METHOD("set_figure_offset_" #NAME "_width", "p"), &SuperMarker3D::set_figure_offset_##NAME##_width); \
+		ClassDB::bind_method(D_METHOD("get_figure_offset_" #NAME "_width"), &SuperMarker3D::get_figure_offset_##NAME##_width); \
+		ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_offset_" #NAME "_width", PROPERTY_HINT_RANGE, "0.0,1.0,0.001,or_greater,suffix:m"), \
+				"set_figure_offset_" #NAME "_width", "get_figure_offset_" #NAME "_width");
+	SM_BIND_OFFSET_WID(head_base)
+	SM_BIND_OFFSET_WID(l_shoulder)
+	SM_BIND_OFFSET_WID(r_shoulder)
+	SM_BIND_OFFSET_WID(l_hip)
+	SM_BIND_OFFSET_WID(r_hip)
+	#undef SM_BIND_OFFSET_WID
 
 	ADD_GROUP("Head", "head_");
 	ClassDB::bind_method(D_METHOD("set_head_length", "length"), &SuperMarker3D::set_head_length);
@@ -829,7 +851,8 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "detail_mode") hide();
 	const bool curve_flat_style = is_curve && _is_curve_flat_style();
 	// fill_color shows on every category that has a fillable interior.
-	if (name == "fill_color" && !(is_mesh || curve_flat_style || is_shape)) hide();
+	const bool is_figure_fill = (_shape == FIGURE);
+	if (name == "fill_color" && !(is_mesh || curve_flat_style || is_shape || is_figure_fill)) hide();
 	if (name == "background_color" && !is_curve) hide();
 	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
@@ -968,14 +991,19 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 
 	const bool is_figure = (_shape == FIGURE);
 	if (name.begins_with("figure_") && !is_figure) hide();
-	// Hide baked rig internals — rest rotations, lengths, offsets, pelvis pos.
-	// Only pose_rot + height + show_mesh + bone_color are user-facing.
+	// Rigging mode toggles which figure fields are visible. Bones On =
+	// edit the rest rig (rotations, lengths, widths, offsets, pelvis pos);
+	// pose rotations are hidden because the mesh is forced to rest. Bones
+	// Off = animate via pose rotations; rig fields are hidden.
 	if (is_figure) {
-		if (name.begins_with("figure_bone_") && name.ends_with("_rot")
-				&& !name.ends_with("_pose_rot")) hide();
-		if (name.begins_with("figure_bone_") && name.ends_with("_pos")) hide();
-		if (name.begins_with("figure_bone_") && name.ends_with("_length")) hide();
-		if (name.begins_with("figure_offset_")) hide();
+		const bool rig_field = (name.begins_with("figure_bone_") && name.ends_with("_rot") && !name.ends_with("_pose_rot"))
+				|| (name.begins_with("figure_bone_") && name.ends_with("_pos"))
+				|| (name.begins_with("figure_bone_") && name.ends_with("_length"))
+				|| (name.begins_with("figure_bone_") && name.ends_with("_width"))
+				|| name.begins_with("figure_offset_");
+		const bool pose_field = name.begins_with("figure_bone_") && name.ends_with("_pose_rot");
+		if (rig_field && !_figure_show_bones) hide();
+		if (pose_field && _figure_show_bones) hide();
 	}
 	if (name == "marker_size" && is_figure) hide();
 }
@@ -994,7 +1022,22 @@ SuperMarker3D::SuperMarker3D() {
 		_figure_bone_rot[i] = Vector3();
 		_figure_bone_pose_rot[i] = Vector3();
 		_figure_bone_length[i] = 0.0f;
+		_figure_bone_width[i] = 0.05f;
 	}
+	// Per-bone width defaults — torso wider than limbs, head a bit wider
+	// than its bone (it's really a sphere). Tuned so the rest skin lands
+	// cleanly without per-vertex overrides.
+	_figure_bone_width[BONE_PELVIS]      = 0.10f;
+	_figure_bone_width[BONE_SPINE]       = 0.09f;
+	_figure_bone_width[BONE_HEAD]        = 0.08f;
+	_figure_bone_width[BONE_L_UPPER_ARM] = 0.05f;
+	_figure_bone_width[BONE_R_UPPER_ARM] = 0.05f;
+	_figure_bone_width[BONE_L_LOWER_ARM] = 0.04f;
+	_figure_bone_width[BONE_R_LOWER_ARM] = 0.04f;
+	_figure_bone_width[BONE_L_UPPER_LEG] = 0.07f;
+	_figure_bone_width[BONE_R_UPPER_LEG] = 0.07f;
+	_figure_bone_width[BONE_L_LOWER_LEG] = 0.05f;
+	_figure_bone_width[BONE_R_LOWER_LEG] = 0.05f;
 	// Per-bone rest lengths (reference frame, scaled at draw).
 	_figure_bone_length[BONE_SPINE]       = 0.45f;  // pelvis to neck
 	_figure_bone_length[BONE_HEAD]        = 0.15f;  // short forward-pointing direction bone
@@ -1382,6 +1425,13 @@ void SuperMarker3D::set_figure_height(float p) { _figure_height = MAX(0.01f, p);
 float SuperMarker3D::get_figure_height() const { return _figure_height; }
 void SuperMarker3D::set_figure_show_mesh(bool p) { _figure_show_mesh = p; if (_shape == FIGURE) SM_REBUILD(); }
 bool SuperMarker3D::get_figure_show_mesh() const { return _figure_show_mesh; }
+void SuperMarker3D::set_figure_show_bones(bool p) {
+	if (_figure_show_bones == p) return;
+	_figure_show_bones = p;
+	if (_shape == FIGURE) SM_REBUILD();
+	notify_property_list_changed(); // re-evaluate inspector visibility
+}
+bool SuperMarker3D::get_figure_show_bones() const { return _figure_show_bones; }
 void SuperMarker3D::set_figure_bone_color(const Color &p) { _figure_bone_color = p; if (_shape == FIGURE) SM_REBUILD(); }
 Color SuperMarker3D::get_figure_bone_color() const { return _figure_bone_color; }
 void SuperMarker3D::set_figure_bone_pelvis_pos(const Vector3 &p) {
@@ -1404,6 +1454,14 @@ float SuperMarker3D::get_figure_bone_length(int bone) const {
 	if (bone < 0 || bone >= BONE_COUNT) return 0.0f;
 	return _figure_bone_length[bone];
 }
+void SuperMarker3D::set_figure_bone_width(int bone, float p) {
+	if (bone < 0 || bone >= BONE_COUNT) return;
+	_figure_bone_width[bone] = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD();
+}
+float SuperMarker3D::get_figure_bone_width(int bone) const {
+	if (bone < 0 || bone >= BONE_COUNT) return 0.0f;
+	return _figure_bone_width[bone];
+}
 void SuperMarker3D::set_figure_bone_pose_rot(int bone, const Vector3 &p) {
 	if (bone < 0 || bone >= BONE_COUNT) return;
 	_figure_bone_pose_rot[bone] = p; if (_shape == FIGURE) SM_REBUILD();
@@ -1421,6 +1479,15 @@ SM_OFFSET_IMPL(r_shoulder)
 SM_OFFSET_IMPL(l_hip)
 SM_OFFSET_IMPL(r_hip)
 #undef SM_OFFSET_IMPL
+#define SM_OFFSET_WID_IMPL(NAME) \
+	void SuperMarker3D::set_figure_offset_##NAME##_width(float p) { _figure_offset_##NAME##_width = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD(); } \
+	float SuperMarker3D::get_figure_offset_##NAME##_width() const { return _figure_offset_##NAME##_width; }
+SM_OFFSET_WID_IMPL(head_base)
+SM_OFFSET_WID_IMPL(l_shoulder)
+SM_OFFSET_WID_IMPL(r_shoulder)
+SM_OFFSET_WID_IMPL(l_hip)
+SM_OFFSET_WID_IMPL(r_hip)
+#undef SM_OFFSET_WID_IMPL
 
 void SuperMarker3D::set_head_length(float p) { _head_length = MAX(0.0f, p); SM_REBUILD(); }
 float SuperMarker3D::get_head_length() const { return _head_length; }
@@ -2117,10 +2184,16 @@ void SuperMarker3D::_build_materials() {
 	if (_shape == AXIS_XYZ || is_figure_type) {
 		// Vertex colors drive per-vertex tint (axis arms / figure bones).
 		// Material albedo = white so nothing tints; ALBEDO_FROM_VERTEX_COLOR
-		// reads the per-vertex outline_colors we packed in.
+		// reads the per-vertex outline_colors we packed in. For the figure,
+		// figure_bone_color carries alpha — flip transparency on when the
+		// bone color is translucent so the rig overlay can be seen through
+		// the mesh during rigging.
 		_outline_material->set_albedo(Color(1, 1, 1, 1));
 		_outline_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-		_outline_material->set_transparency(BaseMaterial3D::TRANSPARENCY_DISABLED);
+		const bool fig_alpha = is_figure_type && _figure_bone_color.a < 1.0f;
+		_outline_material->set_transparency(fig_alpha
+				? BaseMaterial3D::TRANSPARENCY_ALPHA
+				: BaseMaterial3D::TRANSPARENCY_DISABLED);
 	} else {
 		_outline_material->set_albedo(_outline_color);
 		_outline_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
@@ -3671,10 +3744,14 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 	Vector3 rest_tip[BONE_COUNT];
 	build_chain(rest_local, bone_rest, rest_tip);
 
-	// --- Posed chain (rest * pose_rot per bone) ---
+	// --- Posed chain (rest * pose_rot per bone). When `figure_show_bones` is
+	// on, pose is forced to identity so the mesh renders at its rest layout
+	// and the user can rig against the underlying mesh shape.
 	Basis posed_local[BONE_COUNT];
-	for (int b = 0; b < BONE_COUNT; b++)
-		posed_local[b] = Basis::from_euler(_figure_bone_rot[b]) * Basis::from_euler(_figure_bone_pose_rot[b]);
+	for (int b = 0; b < BONE_COUNT; b++) {
+		Basis pose = _figure_show_bones ? Basis() : Basis::from_euler(_figure_bone_pose_rot[b]);
+		posed_local[b] = Basis::from_euler(_figure_bone_rot[b]) * pose;
+	}
 
 	Transform3D bone_posed[BONE_COUNT];
 	Vector3 posed_tip[BONE_COUNT];
@@ -3686,22 +3763,42 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 		const PackedInt32Array   &mi = cache.indices;
 		const PackedByteArray &eb = cache.edge_boundary;
 
+		// Skinning segments: 11 real bones + 5 virtual segments for the offset
+		// bars (pelvis→hips, neck→shoulders, neck→head_base). Offset bars are
+		// rigid extensions of their parent (pelvis or spine) — a vertex nearest
+		// one rides with the parent, not the limb that starts where the bar
+		// ends. Each segment carries a `radius` (capsule width); the Voronoi
+		// uses (point→segment distance − radius) so a fatter bone wins by up
+		// to its full radius beyond a thinner one at equal raw distance.
+		struct SkinSeg { Vector3 a, b; int driver; float radius; };
+		Vector<SkinSeg> segs;
+		for (int bn = 0; bn < BONE_COUNT; bn++)
+			segs.push_back({bone_rest[bn].origin, rest_tip[bn], bn, _figure_bone_width[bn]});
+		const Vector3 neck_rest = rest_tip[BONE_SPINE];
+		const Basis sb_rest = bone_rest[BONE_SPINE].basis;
+		segs.push_back({pelvis, pelvis + _figure_offset_l_hip * scale, BONE_PELVIS, _figure_offset_l_hip_width});
+		segs.push_back({pelvis, pelvis + _figure_offset_r_hip * scale, BONE_PELVIS, _figure_offset_r_hip_width});
+		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_figure_offset_l_shoulder * scale), BONE_SPINE, _figure_offset_l_shoulder_width});
+		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_figure_offset_r_shoulder * scale), BONE_SPINE, _figure_offset_r_shoulder_width});
+		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_figure_offset_head_base * scale), BONE_SPINE, _figure_offset_head_base_width});
+
 		auto skin = [&](int vidx) -> Vector3 {
 			Vector3 v_rest = mv[vidx] * scale;
-			int best = 0; float best_d = 1.0e30f;
-			for (int b = 0; b < BONE_COUNT; b++) {
-				Vector3 seg = rest_tip[b] - bone_rest[b].origin;
+			int best_driver = 0; float best_d = 1.0e30f;
+			for (int s = 0; s < segs.size(); s++) {
+				Vector3 seg = segs[s].b - segs[s].a;
 				float len_sq = seg.length_squared();
-				float d;
+				float d_lin;
 				if (len_sq < 1e-8f) {
-					d = (v_rest - bone_rest[b].origin).length_squared();
+					d_lin = (v_rest - segs[s].a).length();
 				} else {
-					float t = CLAMP(seg.dot(v_rest - bone_rest[b].origin) / len_sq, 0.0f, 1.0f);
-					d = (v_rest - (bone_rest[b].origin + seg * t)).length_squared();
+					float t = CLAMP(seg.dot(v_rest - segs[s].a) / len_sq, 0.0f, 1.0f);
+					d_lin = (v_rest - (segs[s].a + seg * t)).length();
 				}
-				if (d < best_d) { best_d = d; best = b; }
+				float d_eff = d_lin - segs[s].radius;
+				if (d_eff < best_d) { best_d = d_eff; best_driver = segs[s].driver; }
 			}
-			return (bone_posed[best] * bone_rest[best].affine_inverse()).xform(v_rest);
+			return (bone_posed[best_driver] * bone_rest[best_driver].affine_inverse()).xform(v_rest);
 		};
 		for (int t = 0, ti = 0; t + 2 < mi.size(); t += 3, ti++) {
 			Vector3 a = skin(mi[t]);
@@ -3712,6 +3809,34 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 		}
 	}
 
+	// --- Bones overlay (rigging mode) ---
+	// Tubes drawn at each bone's actual width so the visual matches the
+	// capsule that the skinning Voronoi uses. Real bones in cyan, offset
+	// bars in light grey to distinguish "rotates" from "rigid extension".
+	if (_figure_show_bones) {
+		// One color drives both real bones and offset bars — cleaner read in
+		// the inspector, and offsets are conceptually "extensions of a bone"
+		// not a different category once you've internalised the rig.
+		const Color bone_col = _figure_bone_color;
+		const Color offset_col = _figure_bone_color;
+		const int tube_segs = 10;
+		const Vector3 neck = rest_tip[BONE_SPINE];
+		const Basis sbasis = bone_rest[BONE_SPINE].basis;
+		auto draw_seg = [&](const Vector3 &a, const Vector3 &b, float w, const Color &c) {
+			if (w <= 0.0f) return;
+			if ((b - a).length_squared() < 1e-8f)
+				_add_sphere_blob_colored(geo, a, w, 6, tube_segs, c);
+			else
+				_add_tube_colored(geo, a, b, w, tube_segs, c);
+		};
+		for (int b = 0; b < BONE_COUNT; b++)
+			draw_seg(bone_rest[b].origin, rest_tip[b], _figure_bone_width[b], bone_col);
+		draw_seg(pelvis, pelvis + _figure_offset_l_hip * scale, _figure_offset_l_hip_width, offset_col);
+		draw_seg(pelvis, pelvis + _figure_offset_r_hip * scale, _figure_offset_r_hip_width, offset_col);
+		draw_seg(neck, neck + sbasis.xform(_figure_offset_l_shoulder * scale), _figure_offset_l_shoulder_width, offset_col);
+		draw_seg(neck, neck + sbasis.xform(_figure_offset_r_shoulder * scale), _figure_offset_r_shoulder_width, offset_col);
+		draw_seg(neck, neck + sbasis.xform(_figure_offset_head_base * scale), _figure_offset_head_base_width, offset_col);
+	}
 }
 
 // ---------------------------------------------------------------------------

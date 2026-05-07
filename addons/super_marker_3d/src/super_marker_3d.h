@@ -248,6 +248,16 @@ public:
 	// rest stance and one of two stepping silhouettes.
 	void set_figure_height(float p);          float get_figure_height() const;
 	void set_figure_show_mesh(bool p);        bool  get_figure_show_mesh() const;
+	// Rigging mode toggle. When true: pose rotations are forced to zero,
+	// per-bone rest rotation/length/width + offsets become inspector-visible
+	// for editing, and a tube overlay of every bone draws on top of the
+	// rest mesh. When false: pose rotations drive the chain, the mesh
+	// renders posed, and rig fields are hidden.
+	void set_figure_show_bones(bool p);       bool  get_figure_show_bones() const;
+	// Color for the rigging-mode bone tubes (real bones AND offset bars).
+	// Independent from fill_color / outline_color so the mesh and the
+	// rig overlay can be coloured separately. Alpha < 1 is honoured so
+	// the user can see bones through the mesh while rigging.
 	void set_figure_bone_color(const Color &p); Color get_figure_bone_color() const;
 	// Pelvis position (rest, baked).
 	void set_figure_bone_pelvis_pos(const Vector3 &p);
@@ -258,6 +268,11 @@ public:
 	Vector3 get_figure_bone_rot(int bone) const;
 	void    set_figure_bone_length(int bone, float p);
 	float   get_figure_bone_length(int bone) const;
+	// Per-bone width = capsule radius. Used both for the tube visualizer
+	// thickness and for the skinning Voronoi (a wider bone wins out to its
+	// full radius beyond a thinner one at equal point-to-segment distance).
+	void    set_figure_bone_width(int bone, float p);
+	float   get_figure_bone_width(int bone) const;
 	// Pose rotations — applied on top of rest. These are the user-facing
 	// animation controls. Zero = rest pose (mesh undeformed).
 	void    set_figure_bone_pose_rot(int bone, const Vector3 &p);
@@ -268,19 +283,23 @@ public:
 	#define SM_BONE_LEN(NAME, IDX) \
 		void set_figure_bone_##NAME##_length(float p) { set_figure_bone_length(IDX, p); } \
 		float get_figure_bone_##NAME##_length() const { return get_figure_bone_length(IDX); }
+	#define SM_BONE_WID(NAME, IDX) \
+		void set_figure_bone_##NAME##_width(float p) { set_figure_bone_width(IDX, p); } \
+		float get_figure_bone_##NAME##_width() const { return get_figure_bone_width(IDX); }
 	#define SM_BONE_POSE(NAME, IDX) \
 		void set_figure_bone_##NAME##_pose_rot(const Vector3 &p) { set_figure_bone_pose_rot(IDX, p); } \
 		Vector3 get_figure_bone_##NAME##_pose_rot() const { return get_figure_bone_pose_rot(IDX); }
-	SM_BONE_ROT(spine,       BONE_SPINE)        SM_BONE_LEN(spine,       BONE_SPINE)
-	SM_BONE_ROT(head,        BONE_HEAD)         SM_BONE_LEN(head,        BONE_HEAD)
-	SM_BONE_ROT(l_upper_arm, BONE_L_UPPER_ARM)  SM_BONE_LEN(l_upper_arm, BONE_L_UPPER_ARM)
-	SM_BONE_ROT(l_lower_arm, BONE_L_LOWER_ARM)  SM_BONE_LEN(l_lower_arm, BONE_L_LOWER_ARM)
-	SM_BONE_ROT(r_upper_arm, BONE_R_UPPER_ARM)  SM_BONE_LEN(r_upper_arm, BONE_R_UPPER_ARM)
-	SM_BONE_ROT(r_lower_arm, BONE_R_LOWER_ARM)  SM_BONE_LEN(r_lower_arm, BONE_R_LOWER_ARM)
-	SM_BONE_ROT(l_upper_leg, BONE_L_UPPER_LEG)  SM_BONE_LEN(l_upper_leg, BONE_L_UPPER_LEG)
-	SM_BONE_ROT(l_lower_leg, BONE_L_LOWER_LEG)  SM_BONE_LEN(l_lower_leg, BONE_L_LOWER_LEG)
-	SM_BONE_ROT(r_upper_leg, BONE_R_UPPER_LEG)  SM_BONE_LEN(r_upper_leg, BONE_R_UPPER_LEG)
-	SM_BONE_ROT(r_lower_leg, BONE_R_LOWER_LEG)  SM_BONE_LEN(r_lower_leg, BONE_R_LOWER_LEG)
+	                                                                            SM_BONE_WID(pelvis,      BONE_PELVIS)
+	SM_BONE_ROT(spine,       BONE_SPINE)        SM_BONE_LEN(spine,       BONE_SPINE)        SM_BONE_WID(spine,       BONE_SPINE)
+	SM_BONE_ROT(head,        BONE_HEAD)         SM_BONE_LEN(head,        BONE_HEAD)         SM_BONE_WID(head,        BONE_HEAD)
+	SM_BONE_ROT(l_upper_arm, BONE_L_UPPER_ARM)  SM_BONE_LEN(l_upper_arm, BONE_L_UPPER_ARM)  SM_BONE_WID(l_upper_arm, BONE_L_UPPER_ARM)
+	SM_BONE_ROT(l_lower_arm, BONE_L_LOWER_ARM)  SM_BONE_LEN(l_lower_arm, BONE_L_LOWER_ARM)  SM_BONE_WID(l_lower_arm, BONE_L_LOWER_ARM)
+	SM_BONE_ROT(r_upper_arm, BONE_R_UPPER_ARM)  SM_BONE_LEN(r_upper_arm, BONE_R_UPPER_ARM)  SM_BONE_WID(r_upper_arm, BONE_R_UPPER_ARM)
+	SM_BONE_ROT(r_lower_arm, BONE_R_LOWER_ARM)  SM_BONE_LEN(r_lower_arm, BONE_R_LOWER_ARM)  SM_BONE_WID(r_lower_arm, BONE_R_LOWER_ARM)
+	SM_BONE_ROT(l_upper_leg, BONE_L_UPPER_LEG)  SM_BONE_LEN(l_upper_leg, BONE_L_UPPER_LEG)  SM_BONE_WID(l_upper_leg, BONE_L_UPPER_LEG)
+	SM_BONE_ROT(l_lower_leg, BONE_L_LOWER_LEG)  SM_BONE_LEN(l_lower_leg, BONE_L_LOWER_LEG)  SM_BONE_WID(l_lower_leg, BONE_L_LOWER_LEG)
+	SM_BONE_ROT(r_upper_leg, BONE_R_UPPER_LEG)  SM_BONE_LEN(r_upper_leg, BONE_R_UPPER_LEG)  SM_BONE_WID(r_upper_leg, BONE_R_UPPER_LEG)
+	SM_BONE_ROT(r_lower_leg, BONE_R_LOWER_LEG)  SM_BONE_LEN(r_lower_leg, BONE_R_LOWER_LEG)  SM_BONE_WID(r_lower_leg, BONE_R_LOWER_LEG)
 	SM_BONE_POSE(spine,       BONE_SPINE)
 	SM_BONE_POSE(head,        BONE_HEAD)
 	SM_BONE_POSE(l_upper_arm, BONE_L_UPPER_ARM)
@@ -293,6 +312,7 @@ public:
 	SM_BONE_POSE(r_lower_leg, BONE_R_LOWER_LEG)
 	#undef SM_BONE_ROT
 	#undef SM_BONE_LEN
+	#undef SM_BONE_WID
 	#undef SM_BONE_POSE
 
 	// Baked rig offsets (locked).
@@ -301,6 +321,15 @@ public:
 	void set_figure_offset_r_shoulder(const Vector3 &p); Vector3 get_figure_offset_r_shoulder() const;
 	void set_figure_offset_l_hip(const Vector3 &p);      Vector3 get_figure_offset_l_hip() const;
 	void set_figure_offset_r_hip(const Vector3 &p);      Vector3 get_figure_offset_r_hip() const;
+	// Per-offset-bar width (capsule radius). The offset bars are rigid
+	// extensions of the parent bone (pelvis or spine); their width drives
+	// how far past the bar a vertex can sit and still be claimed by the
+	// parent rather than the limb that starts at the bar's tip.
+	void set_figure_offset_head_base_width(float p);  float get_figure_offset_head_base_width() const;
+	void set_figure_offset_l_shoulder_width(float p); float get_figure_offset_l_shoulder_width() const;
+	void set_figure_offset_r_shoulder_width(float p); float get_figure_offset_r_shoulder_width() const;
+	void set_figure_offset_l_hip_width(float p);      float get_figure_offset_l_hip_width() const;
+	void set_figure_offset_r_hip_width(float p);      float get_figure_offset_r_hip_width() const;
 
 	void set_head_length(float p);  float get_head_length() const;
 	void set_head_width(float p);   float get_head_width() const;
@@ -460,16 +489,23 @@ private:
 	// head sizes derive proportionally inside _gen_figure.
 	float _figure_height = 1.8f;
 	bool  _figure_show_mesh  = true;
-	Color _figure_bone_color = Color(0.0f, 1.0f, 1.0f, 1.0f); // cyan, contrasts most fill colors
+	bool  _figure_show_bones = false;
+	Color _figure_bone_color = Color(0.5f, 0.5f, 0.5f, 1.0f);
 	Vector3 _figure_bone_pelvis_pos;        // pelvis offset from origin
 	Vector3 _figure_bone_rot[BONE_COUNT];   // baked rest rotations (locked after rigging)
 	Vector3 _figure_bone_pose_rot[BONE_COUNT]; // pose rotations applied on top of rest
 	float   _figure_bone_length[BONE_COUNT]; // per-bone rest lengths (rotation+length chain)
+	float   _figure_bone_width[BONE_COUNT];  // per-bone capsule radius (visualizer + skin Voronoi)
 	Vector3 _figure_offset_head_base;
 	Vector3 _figure_offset_l_shoulder;
 	Vector3 _figure_offset_r_shoulder;
 	Vector3 _figure_offset_l_hip;
 	Vector3 _figure_offset_r_hip;
+	float _figure_offset_head_base_width = 0.04f;
+	float _figure_offset_l_shoulder_width = 0.05f;
+	float _figure_offset_r_shoulder_width = 0.05f;
+	float _figure_offset_l_hip_width = 0.05f;
+	float _figure_offset_r_hip_width = 0.05f;
 
 	float _head_length = 0.3f;
 	float _head_width  = 0.15f;
