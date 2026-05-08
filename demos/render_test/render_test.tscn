@@ -241,6 +241,7 @@ type = 1
 subtype = 4
 marker_size = 0.7
 fill_color = Color(0.3, 0.9, 0.95, 0.35)
+lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.5, 1, 8)
 
 [node name="31_MeshBox_Silhouette" type="SuperMarker3D" parent="Mesh" unique_id=1621015356]
@@ -411,23 +412,29 @@ outline_thickness = 0.005
 marker_size = 0.6
 fill_color = Color(0.9, 0.5, 0.5, 1)
 smooth_shading = false
+checker_enabled = true
+checker_size = 0.1
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 1, 14)
 
 [node name="52_MeshBox_FlippedFaces" type="SuperMarker3D" parent="Mesh" unique_id=1460988171]
 type = 1
 subtype = 4
+outline_thickness = 0.146
 marker_size = 0.7
-fill_color = Color(0.4, 0.4, 0.5, 1)
 flip_faces = true
+checker_enabled = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.5, 1, 14)
 
 [node name="53_MeshCone_AsHat" type="SuperMarker3D" parent="Mesh" unique_id=938801835]
 type = 1
 subtype = 15
-outline_thickness = 0.03
+outline_thickness = 0.019
 marker_size = 0.45
 fill_color = Color(0.7, 0.2, 0.3, 1)
+checker_enabled = true
+checker_size = 0.45
+checker_darken = 0.0
 lights_and_shadows = true
 transform = Transform3D(1.4, 0, 0, 0, 1.4, 0, 0, 0, 1.4, 21, 1, 14)
 

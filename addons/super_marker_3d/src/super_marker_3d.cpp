@@ -75,6 +75,79 @@ static const int SIL_SEGS = 32;
 // mode for proper alpha blending). _build_materials picks based on
 // whether any relevant color has alpha < 1.0.
 
+// Checkerboard overlay — multiplies a darken factor into alternate squares
+// of a triplanar grid in object-local space. Attached as `next_pass` on
+// any parent material when checker_enabled is true; the parent renders
+// normally (whatever shader it uses) and this pass darkens half the
+// squares on top.
+//
+// Triplanar: pick the dominant axis of the surface normal, sample the
+// plane perpendicular to it. Flat walls / floors / Mesh faces get
+// uniform-square checkers; curved surfaces get clean checkers on the
+// dominant face with brief stretch along the axis transition zone.
+//
+// blend_mul: framebuffer *= ALBEDO. Light squares output vec3(1.0) —
+// no change. Dark squares output vec3(checker_darken) — darken the
+// underlying color uniformly.
+//
+// depth_draw_always — every overlay fragment writes its depth. Combined
+// with explicit render_priority on each overlay (back at -1, front at
+// 1, set in _build_materials), this gives a deterministic chain in the
+// transparent queue: parent_back → overlay_back → parent_front →
+// outline → overlay_front. Without these, transparent fill from
+// non-figure Mesh subtypes never writes depth, the overlay sort ties
+// with priority 0, and overlay_back can end up multiplying near-side
+// fragments — the back checker pattern then bleeds across the front
+// layer (the same flavor of issue figure hit before depth_draw_always
+// landed on its parent shader). The trade-off is that an alpha figure /
+// mesh with checker now occludes scene geometry behind it (use
+// always_on_top to bypass depth-test entirely if you need to see
+// through walls).
+//
+// One shader with `cull_disabled` + a `checker_cull` uniform that
+// discards FRONT_FACING fragments per parent's culling intent. The
+// marker keeps two overlay material instances (front and back) that
+// share this source — `_build_materials` picks the one whose cull
+// matches each parent surface, so a two-sided closed mesh ends up
+// with checker on BOTH the front and back layers (back layer visible
+// through alpha or cull_front parents). For cull_disabled parents
+// (flat shapes with two_sided), we attach the front overlay — cull is
+// camera-relative, so the front-from-camera face picks up the checker
+// regardless of which side the camera is on.
+static const char *CHECKER_OVERLAY_SHADER = R"(
+shader_type spatial;
+render_mode unshaded, cull_disabled, blend_mul, depth_draw_always;
+
+uniform float checker_size   : hint_range(0.001, 100.0) = 0.25;
+uniform float checker_darken : hint_range(0.0, 1.0)     = 0.5;
+// 0 = act like cull_back (discard back-facing-from-camera fragments)
+// 1 = act like cull_front (discard front-facing-from-camera fragments)
+uniform int   checker_cull = 0;
+
+varying vec3 v_local_pos;
+varying vec3 v_local_normal;
+
+void vertex() {
+	v_local_pos    = VERTEX;
+	v_local_normal = NORMAL;
+}
+
+void fragment() {
+	if (checker_cull == 0 && !FRONT_FACING) discard;
+	if (checker_cull == 1 &&  FRONT_FACING) discard;
+
+	vec3 absN = abs(v_local_normal);
+	vec2 p2;
+	if (absN.x >= absN.y && absN.x >= absN.z) p2 = v_local_pos.yz;
+	else if (absN.y >= absN.z)                 p2 = v_local_pos.xz;
+	else                                       p2 = v_local_pos.xy;
+	float s = max(checker_size, 1.0e-4);
+	vec2 q = floor(p2 / s);
+	float c = mod(q.x + q.y, 2.0);
+	ALBEDO = vec3(mix(1.0, checker_darken, c));
+}
+)";
+
 static const char *FILL_SHADER_OPAQUE = R"(
 uniform vec4 fill_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 void fragment() { ALBEDO = fill_color.rgb; }
@@ -219,13 +292,21 @@ Ref<Shader> SuperMarker3D::_cached_shader(const String &code) {
 }
 
 // cull: 0=cull_back, 1=cull_front, 2=cull_disabled
-String SuperMarker3D::_render_mode(bool lit, int cull, bool transparent, bool top) {
+String SuperMarker3D::_render_mode(bool lit, int cull, bool transparent, bool top, bool depth_always) {
 	static const char *cull_str[] = { "cull_back", "cull_front", "cull_disabled" };
 	String rm = "shader_type spatial;\nrender_mode ";
 	if (!lit) rm += "unshaded, ";
 	rm += cull_str[cull];
 	if (transparent) rm += ", blend_mix";
 	if (top) rm += ", depth_test_disabled";
+	// depth_draw_always forces every fragment (opaque OR alpha-blended) to
+	// write its depth — without this, Godot's default depth_draw_opaque
+	// only writes for ALPHA=1 fragments, so transparent fill blends in
+	// submission order and tris that come later in the index buffer end
+	// up on top of nearer geometry. Used for figure where the GLB's index
+	// order doesn't match camera-depth at runtime (skinning + mixed body
+	// parts), so we need depth-test to do the sort.
+	if (depth_always) rm += ", depth_draw_always";
 	rm += ";\n";
 	return rm;
 }
@@ -383,8 +464,12 @@ void SuperMarker3D::_bind_methods() {
 	// shape that draws an outline).
 	ClassDB::bind_method(D_METHOD("set_type", "type"), &SuperMarker3D::set_type);
 	ClassDB::bind_method(D_METHOD("get_type"), &SuperMarker3D::get_type);
+	// Explicit values so the dropdown stays in sync with MarkerType — slot
+	// 4 used to be TYPE_ARROW and was deleted; explicit indexing skips it
+	// without leaving a phantom "Arrow" entry that maps to a nonexistent
+	// type.
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "type", PROPERTY_HINT_ENUM,
-			"Axis,Mesh,Shape,Curve,Arrow,Figure"),
+			"Axis:0,Mesh:1,Shape:2,Curve:3,Figure:5"),
 			"set_type", "get_type");
 
 	ClassDB::bind_method(D_METHOD("set_subtype", "subtype"), &SuperMarker3D::set_subtype);
@@ -528,13 +613,19 @@ void SuperMarker3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "figure_bone_color"),
 			"set_figure_bone_color", "get_figure_bone_color");
 
-	// Pelvis position — only bone with a direct position property.
+	// Bone-property bindings, organised into per-limb subgroups so the
+	// inspector reads as a tree rather than a wall of 50+ spinners. Both
+	// the rig fields (rotation / length / width / offsets, visible when
+	// figure_show_bones is on) AND the pose rotations (visible when bones
+	// are off) live inside the same subgroup — _validate_property hides
+	// the inactive set, and Godot collapses fully-empty subgroups
+	// automatically.
+	//
+	// Pelvis is bound separately: it has only a position + width, no
+	// rotation/length/pose, so it doesn't fit through SM_BIND_SEG below.
 	ClassDB::bind_method(D_METHOD("set_figure_bone_pelvis_pos", "p"), &SuperMarker3D::set_figure_bone_pelvis_pos);
 	ClassDB::bind_method(D_METHOD("get_figure_bone_pelvis_pos"), &SuperMarker3D::get_figure_bone_pelvis_pos);
-	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_bone_pelvis_pos"),
-			"set_figure_bone_pelvis_pos", "get_figure_bone_pelvis_pos");
 
-	// Baked rest rotations + lengths (hidden from inspector, serialized).
 	#define SM_BIND_ROT(NAME) \
 		ClassDB::bind_method(D_METHOD("set_figure_bone_" #NAME "_rot", "p"), &SuperMarker3D::set_figure_bone_##NAME##_rot); \
 		ClassDB::bind_method(D_METHOD("get_figure_bone_" #NAME "_rot"), &SuperMarker3D::get_figure_bone_##NAME##_rot); \
@@ -550,62 +641,64 @@ void SuperMarker3D::_bind_methods() {
 		ClassDB::bind_method(D_METHOD("get_figure_bone_" #NAME "_width"), &SuperMarker3D::get_figure_bone_##NAME##_width); \
 		ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_bone_" #NAME "_width", PROPERTY_HINT_RANGE, "0.0,1.0,0.001,or_greater,suffix:m"), \
 				"set_figure_bone_" #NAME "_width", "get_figure_bone_" #NAME "_width");
-	                          SM_BIND_WID(pelvis)
-	SM_BIND_ROT(spine)        SM_BIND_LEN(spine)        SM_BIND_WID(spine)
-	SM_BIND_ROT(head)         SM_BIND_LEN(head)         SM_BIND_WID(head)
-	SM_BIND_ROT(l_upper_arm)  SM_BIND_LEN(l_upper_arm)  SM_BIND_WID(l_upper_arm)
-	SM_BIND_ROT(l_lower_arm)  SM_BIND_LEN(l_lower_arm)  SM_BIND_WID(l_lower_arm)
-	SM_BIND_ROT(r_upper_arm)  SM_BIND_LEN(r_upper_arm)  SM_BIND_WID(r_upper_arm)
-	SM_BIND_ROT(r_lower_arm)  SM_BIND_LEN(r_lower_arm)  SM_BIND_WID(r_lower_arm)
-	SM_BIND_ROT(l_upper_leg)  SM_BIND_LEN(l_upper_leg)  SM_BIND_WID(l_upper_leg)
-	SM_BIND_ROT(l_lower_leg)  SM_BIND_LEN(l_lower_leg)  SM_BIND_WID(l_lower_leg)
-	SM_BIND_ROT(r_upper_leg)  SM_BIND_LEN(r_upper_leg)  SM_BIND_WID(r_upper_leg)
-	SM_BIND_ROT(r_lower_leg)  SM_BIND_LEN(r_lower_leg)  SM_BIND_WID(r_lower_leg)
-	#undef SM_BIND_ROT
-	#undef SM_BIND_LEN
-	#undef SM_BIND_WID
-
-	// Pose rotations — user-facing animation controls (zero = rest pose).
 	#define SM_BIND_POSE(NAME) \
 		ClassDB::bind_method(D_METHOD("set_figure_bone_" #NAME "_pose_rot", "p"), &SuperMarker3D::set_figure_bone_##NAME##_pose_rot); \
 		ClassDB::bind_method(D_METHOD("get_figure_bone_" #NAME "_pose_rot"), &SuperMarker3D::get_figure_bone_##NAME##_pose_rot); \
 		ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_bone_" #NAME "_pose_rot"), \
 				"set_figure_bone_" #NAME "_pose_rot", "get_figure_bone_" #NAME "_pose_rot");
-	SM_BIND_POSE(spine)
-	SM_BIND_POSE(head)
-	SM_BIND_POSE(l_upper_arm)
-	SM_BIND_POSE(l_lower_arm)
-	SM_BIND_POSE(r_upper_arm)
-	SM_BIND_POSE(r_lower_arm)
-	SM_BIND_POSE(l_upper_leg)
-	SM_BIND_POSE(l_lower_leg)
-	SM_BIND_POSE(r_upper_leg)
-	SM_BIND_POSE(r_lower_leg)
-	#undef SM_BIND_POSE
-
-	// Baked rig offsets (locked).
 	#define SM_BIND_OFFSET(NAME) \
 		ClassDB::bind_method(D_METHOD("set_figure_offset_" #NAME, "p"), &SuperMarker3D::set_figure_offset_##NAME); \
 		ClassDB::bind_method(D_METHOD("get_figure_offset_" #NAME), &SuperMarker3D::get_figure_offset_##NAME); \
 		ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_offset_" #NAME), \
 				"set_figure_offset_" #NAME, "get_figure_offset_" #NAME);
-	SM_BIND_OFFSET(head_base)
-	SM_BIND_OFFSET(l_shoulder)
-	SM_BIND_OFFSET(r_shoulder)
-	SM_BIND_OFFSET(l_hip)
-	SM_BIND_OFFSET(r_hip)
-	#undef SM_BIND_OFFSET
 	#define SM_BIND_OFFSET_WID(NAME) \
 		ClassDB::bind_method(D_METHOD("set_figure_offset_" #NAME "_width", "p"), &SuperMarker3D::set_figure_offset_##NAME##_width); \
 		ClassDB::bind_method(D_METHOD("get_figure_offset_" #NAME "_width"), &SuperMarker3D::get_figure_offset_##NAME##_width); \
 		ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "figure_offset_" #NAME "_width", PROPERTY_HINT_RANGE, "0.0,1.0,0.001,or_greater,suffix:m"), \
 				"set_figure_offset_" #NAME "_width", "get_figure_offset_" #NAME "_width");
+	// One full bone segment: rest rotation + length + width + pose rotation.
+	#define SM_BIND_SEG(NAME) SM_BIND_ROT(NAME) SM_BIND_LEN(NAME) SM_BIND_WID(NAME) SM_BIND_POSE(NAME)
+
+	ADD_SUBGROUP("Core", "");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "figure_bone_pelvis_pos"),
+			"set_figure_bone_pelvis_pos", "get_figure_bone_pelvis_pos");
+	SM_BIND_WID(pelvis)
+	SM_BIND_SEG(spine)
+	SM_BIND_SEG(head)
+	SM_BIND_OFFSET(head_base)
 	SM_BIND_OFFSET_WID(head_base)
+
+	ADD_SUBGROUP("Left Arm", "");
+	SM_BIND_SEG(l_upper_arm)
+	SM_BIND_SEG(l_lower_arm)
+	SM_BIND_OFFSET(l_shoulder)
 	SM_BIND_OFFSET_WID(l_shoulder)
+
+	ADD_SUBGROUP("Right Arm", "");
+	SM_BIND_SEG(r_upper_arm)
+	SM_BIND_SEG(r_lower_arm)
+	SM_BIND_OFFSET(r_shoulder)
 	SM_BIND_OFFSET_WID(r_shoulder)
+
+	ADD_SUBGROUP("Left Leg", "");
+	SM_BIND_SEG(l_upper_leg)
+	SM_BIND_SEG(l_lower_leg)
+	SM_BIND_OFFSET(l_hip)
 	SM_BIND_OFFSET_WID(l_hip)
+
+	ADD_SUBGROUP("Right Leg", "");
+	SM_BIND_SEG(r_upper_leg)
+	SM_BIND_SEG(r_lower_leg)
+	SM_BIND_OFFSET(r_hip)
 	SM_BIND_OFFSET_WID(r_hip)
+
+	#undef SM_BIND_ROT
+	#undef SM_BIND_LEN
+	#undef SM_BIND_WID
+	#undef SM_BIND_POSE
+	#undef SM_BIND_OFFSET
 	#undef SM_BIND_OFFSET_WID
+	#undef SM_BIND_SEG
 
 	ADD_GROUP("Head", "head_");
 	ClassDB::bind_method(D_METHOD("set_head_length", "length"), &SuperMarker3D::set_head_length);
@@ -721,6 +814,25 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_flip_faces", "enabled"), &SuperMarker3D::set_flip_faces);
 	ClassDB::bind_method(D_METHOD("get_flip_faces"), &SuperMarker3D::get_flip_faces);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flip_faces"), "set_flip_faces", "get_flip_faces");
+
+	// Checkerboard overlay — renders on top of every category as a
+	// scale-reference pattern. Always visible because every type with
+	// a renderable surface picks it up via next_pass.
+	ADD_GROUP("Checker", "checker_");
+	ClassDB::bind_method(D_METHOD("set_checker_enabled", "enabled"), &SuperMarker3D::set_checker_enabled);
+	ClassDB::bind_method(D_METHOD("get_checker_enabled"), &SuperMarker3D::get_checker_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "checker_enabled"),
+			"set_checker_enabled", "get_checker_enabled");
+	ClassDB::bind_method(D_METHOD("set_checker_size", "size"), &SuperMarker3D::set_checker_size);
+	ClassDB::bind_method(D_METHOD("get_checker_size"), &SuperMarker3D::get_checker_size);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "checker_size",
+			PROPERTY_HINT_RANGE, "0.001,10.0,0.001,or_greater,suffix:m"),
+			"set_checker_size", "get_checker_size");
+	ClassDB::bind_method(D_METHOD("set_checker_darken", "darken"), &SuperMarker3D::set_checker_darken);
+	ClassDB::bind_method(D_METHOD("get_checker_darken"), &SuperMarker3D::get_checker_darken);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "checker_darken",
+			PROPERTY_HINT_RANGE, "0.0,1.0,0.01"),
+			"set_checker_darken", "get_checker_darken");
 
 	// Shape group — billboard flags, corner style, circle sides. Hidden for non-Shape types.
 	ADD_GROUP("Shape", "");
@@ -859,8 +971,9 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 			|| _shape == MESH_DIAMOND);
 	// Mesh group: hide entirely for non-Mesh types; mesh_sides further restricted to round subtypes.
 	if (name == "mesh_sides" && !is_mesh) hide();
-	if (name == "two_sided" && !(is_mesh || is_shape || is_curve)) hide();
-	if (name == "flip_faces" && (_two_sided || !(is_mesh || is_shape || is_curve))) hide();
+	const bool two_sided_capable = (is_mesh || is_shape || is_curve || _shape == FIGURE);
+	if (name == "two_sided" && !two_sided_capable) hide();
+	if (name == "flip_faces" && (_two_sided || !two_sided_capable)) hide();
 	if (name == "mesh_sides" && !is_round_mesh) hide();
 	// Smooth shading: only meaningful on curved mesh subtypes — sphere,
 	// diamond, cone, cylinder, capsule. Pyramid is always faceted.
@@ -1125,6 +1238,13 @@ void SuperMarker3D::_notification(int p_what) {
 // ---------------------------------------------------------------------------
 
 #define SM_REBUILD() if (is_inside_tree()) { _rebuild_mesh(); _build_materials(); _ensure_instance(); }
+// Color-only edits route through this — push the new uniform value, then
+// re-run _build_materials so the bary/sphere shader can swap between its
+// opaque and transparent variants when alpha crosses the 1.0 boundary.
+// Without the rebuild, the shader source stays on whichever variant was
+// in place at the last full SM_REBUILD, and editor edits do nothing
+// visible until the user toggles something that triggers a mesh rebuild.
+#define SM_REBUILD_MATERIALS() if (is_inside_tree()) { _build_materials(); }
 
 void SuperMarker3D::set_subtype(int p) {
 	_shape = p;
@@ -1237,6 +1357,7 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 		_cap_top_material_back->set_shader_parameter("outline_color", _outline_color);
 	if (_cap_bot_material_back.is_valid())
 		_cap_bot_material_back->set_shader_parameter("outline_color", _outline_color);
+	SM_REBUILD_MATERIALS();
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
 void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
@@ -1268,6 +1389,7 @@ void SuperMarker3D::set_fill_color(const Color &p) {
 		_cap_top_material_back->set_shader_parameter("fill_color", _fill_color);
 	if (_cap_bot_material_back.is_valid())
 		_cap_bot_material_back->set_shader_parameter("fill_color", _fill_color);
+	SM_REBUILD_MATERIALS();
 }
 Color SuperMarker3D::get_fill_color() const { return _fill_color; }
 void SuperMarker3D::set_background_color(const Color &p) {
@@ -1276,6 +1398,7 @@ void SuperMarker3D::set_background_color(const Color &p) {
 		_bary_material->set_shader_parameter("background_color", _background_color);
 	if (_bary_material_back.is_valid())
 		_bary_material_back->set_shader_parameter("background_color", _background_color);
+	SM_REBUILD_MATERIALS();
 }
 Color SuperMarker3D::get_background_color() const { return _background_color; }
 
@@ -1932,6 +2055,33 @@ void SuperMarker3D::set_flip_faces(bool p) {
 	SM_REBUILD();
 }
 bool SuperMarker3D::get_flip_faces() const { return _flip_faces; }
+
+// Checker overlay setters route through SM_REBUILD_MATERIALS — the next_pass
+// chain is rebuilt by _build_materials, so a full rebuild_mesh isn't needed
+// (geometry doesn't depend on checker state, only the material chain does).
+void SuperMarker3D::set_checker_enabled(bool p) {
+	if (_checker_enabled == p) return;
+	_checker_enabled = p;
+	SM_REBUILD_MATERIALS();
+}
+bool SuperMarker3D::get_checker_enabled() const { return _checker_enabled; }
+void SuperMarker3D::set_checker_size(float p) {
+	_checker_size = MAX(0.001f, p);
+	if (_checker_overlay_front.is_valid())
+		_checker_overlay_front->set_shader_parameter("checker_size", _checker_size);
+	if (_checker_overlay_back.is_valid())
+		_checker_overlay_back->set_shader_parameter("checker_size", _checker_size);
+}
+float SuperMarker3D::get_checker_size() const { return _checker_size; }
+void SuperMarker3D::set_checker_darken(float p) {
+	_checker_darken = CLAMP(p, 0.0f, 1.0f);
+	if (_checker_overlay_front.is_valid())
+		_checker_overlay_front->set_shader_parameter("checker_darken", _checker_darken);
+	if (_checker_overlay_back.is_valid())
+		_checker_overlay_back->set_shader_parameter("checker_darken", _checker_darken);
+}
+float SuperMarker3D::get_checker_darken() const { return _checker_darken; }
+
 void SuperMarker3D::set_template_mode(bool p) { _template_mode = p; _update_visibility(); }
 RID  SuperMarker3D::get_mesh_rid() const { return _mesh.is_valid() ? _mesh->get_rid() : RID(); }
 
@@ -2277,9 +2427,16 @@ void SuperMarker3D::_build_materials() {
 		else if (_flip_faces && !_two_sided) bary_cull = 1;
 
 		// Get shaders from cache using dynamic render_mode + body.
+		// Figure forces depth_draw_always so transparent fill self-sorts by
+		// depth instead of submission order — without it, partial-alpha
+		// figure shows hand/foot tris drawing on top of head tris simply
+		// because the GLB stores them later in the index buffer. Mesh
+		// subtypes deliberately don't get this so their back-wireframe-
+		// through-alpha effect is preserved.
 		const bool top = _always_on_top;
+		const bool fig_depth = is_figure_type;
 		auto get_shader = [&](int cull, bool transparent, const String &body) -> Ref<Shader> {
-			return _cached_shader(_render_mode(effective_lit && !top, cull, transparent, top) + body);
+			return _cached_shader(_render_mode(effective_lit && !top, cull, transparent, top, fig_depth) + body);
 		};
 
 		// Primary (front-face or cull_disabled) shaders.
@@ -2440,7 +2597,30 @@ void SuperMarker3D::_build_materials() {
 			const bool sphere_shader_caps = _smooth_shading;
 			Ref<ShaderMaterial> front_mat = use_sphere_shader ? _mesh_material : _bary_material;
 			Ref<ShaderMaterial> back_mat  = use_sphere_shader ? _mesh_material_back : _bary_material_back;
-			if (_two_sided && !flat_bary_assign) {
+			if (is_figure_type) {
+				// Figure surface layout — walk a running index so each part
+				// lands on the right slot regardless of which toggles are on:
+				//   if _figure_show_mesh:
+				//     [idx++] body back  (only when _two_sided)
+				//     [idx++] body front
+				//   if _figure_show_bones:
+				//     [idx]   bone overlay (vertex-colored outline material)
+				// The bone overlay must always get _outline_material — even
+				// when the body is hidden — otherwise it inherits whatever
+				// material sat at slot 0 from a previous build (notably the
+				// back-face bary material, which paints with outline_color
+				// instead of the per-vertex bone color).
+				int idx = 0;
+				if (_figure_show_mesh) {
+					if (_two_sided) {
+						if (sc > idx && back_mat.is_valid()) _mesh->surface_set_material(idx++, back_mat);
+					}
+					if (sc > idx && front_mat.is_valid()) _mesh->surface_set_material(idx++, front_mat);
+				}
+				if (_figure_show_bones && sc > idx && _outline_material.is_valid()) {
+					_mesh->surface_set_material(idx, _outline_material);
+				}
+			} else if (_two_sided && !flat_bary_assign) {
 				if (sc > 0 && back_mat.is_valid())  _mesh->surface_set_material(0, back_mat);
 				if (sc > 1 && front_mat.is_valid()) _mesh->surface_set_material(1, front_mat);
 				if (_shape == MESH_CAPSULE && sphere_shader_caps) {
@@ -2455,11 +2635,6 @@ void SuperMarker3D::_build_materials() {
 				}
 			} else {
 				if (sc > 0 && front_mat.is_valid()) _mesh->surface_set_material(0, front_mat);
-				// FIGURE: bone overlay sits at the last surface, painted by
-				// _outline_material with vertex colors enabled.
-				if (is_figure_type && sc > 1 && _outline_material.is_valid()) {
-					_mesh->surface_set_material(sc - 1, _outline_material);
-				}
 				if (_shape == MESH_CAPSULE && sphere_shader_caps) {
 					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
 					if (sc > 2 && _cap_bot_material.is_valid()) _mesh->surface_set_material(2, _cap_bot_material);
@@ -2474,6 +2649,63 @@ void SuperMarker3D::_build_materials() {
 			}
 		}
 	}
+
+	// --- Checkerboard overlay ---
+	// When enabled, build two overlay materials sharing one shader source
+	// but with different `checker_cull` uniforms (0=front, 1=back). The
+	// shader uses cull_disabled at the render_mode level and discards
+	// fragments whose FRONT_FACING doesn't match the uniform — this
+	// matches each parent surface's culling so a two-sided closed mesh
+	// gets checker on BOTH the front-facing and back-facing layers.
+	// Attach the matching overlay as `next_pass` on every visible
+	// material; clear next_pass when checker is off so we don't leave a
+	// stale overlay attached.
+	if (_checker_enabled) {
+		Ref<Shader> shader = _cached_shader(CHECKER_OVERLAY_SHADER);
+		auto build_overlay = [&](Ref<ShaderMaterial> &m, int cull, int priority) {
+			if (m.is_null()) m.instantiate();
+			m->set_shader(shader);
+			m->set_shader_parameter("checker_size", _checker_size);
+			m->set_shader_parameter("checker_darken", _checker_darken);
+			m->set_shader_parameter("checker_cull", cull);
+			// Priority slots the overlay deterministically into the
+			// transparent queue: front overlay above outline (priority 1)
+			// so it darkens the entire visible front layer including the
+			// outline strip; back overlay tied with parent_back at -1
+			// so it follows it before parent_front renders.
+			m->set_render_priority(priority);
+		};
+		build_overlay(_checker_overlay_front, 0,  1);
+		build_overlay(_checker_overlay_back,  1, -1);
+	}
+	auto apply_front = [&](const Ref<Material> &m) {
+		if (m.is_null()) return;
+		m->set_next_pass(_checker_enabled ? Ref<Material>(_checker_overlay_front) : Ref<Material>());
+	};
+	auto apply_back = [&](const Ref<Material> &m) {
+		if (m.is_null()) return;
+		m->set_next_pass(_checker_enabled ? Ref<Material>(_checker_overlay_back) : Ref<Material>());
+	};
+	// Front-cull parents (cull_back) and cull_disabled parents both take
+	// the front overlay — for cull_disabled the camera-relative cull
+	// keeps the front-from-camera face's checker correctly regardless of
+	// which side the camera sits on.
+	apply_front(_outline_material);
+	apply_front(_fill_material);
+	apply_front(_mesh_material);
+	apply_front(_bary_material);
+	apply_front(_cap_top_material);
+	apply_front(_cap_bot_material);
+	// Back-cull parents (cull_front, used by the *_back variants on
+	// two-sided 3D meshes / figure body) take the back overlay so their
+	// far-side fragments also pick up the checker.
+	apply_back(_mesh_material_back);
+	apply_back(_bary_material_back);
+	apply_back(_cap_top_material_back);
+	apply_back(_cap_bot_material_back);
+
+	// Per-arm axis materials are just _outline_material reused, so the
+	// overlay attached above already applies. Nothing extra to do per arm.
 }
 
 // Quad-face helper — single diagonal split (p0→p2), two triangles.
@@ -3804,8 +4036,26 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 			Vector3 a = skin(mi[t]);
 			Vector3 b = skin(mi[t + 1]);
 			Vector3 c = skin(mi[t + 2]);
-			_add_mesh_face(geo, a, b, c,
-					eb[ti * 3] != 0, eb[ti * 3 + 1] != 0, eb[ti * 3 + 2] != 0);
+			// The bundled GLB is wound CW-from-outside (opposite of the
+			// CCW-from-outside convention every procedural Mesh subtype
+			// uses). Without a swap, _add_mesh_face's CCW→CW reversal
+			// lands the figure mesh as CCW-from-outside in Godot's
+			// rasterizer — which means cull_front actually shows the
+			// near tris and cull_back shows the far tris. Opaque
+			// rendering hides the swap because depth-test picks the
+			// near tris regardless of which surface they live on; but
+			// in transparent mode the priority-sort puts the
+			// "front_mat" (far tris) surface on top of "back_mat" (near
+			// tris), reading as a winding flip.
+			//
+			// Swap b↔c on input so the call to _add_mesh_face sees the
+			// canonical CCW-from-outside ordering. The boundary flags
+			// follow the swap: e0 (edge opposite v0) is unchanged
+			// because (v1,v2) ↔ (v2,v1) is the same edge; e1 and e2
+			// are also opposite-vertex edges so they line up with the
+			// swapped vertex slots.
+			_add_mesh_face(geo, a, c, b,
+					eb[ti * 3] != 0, eb[ti * 3 + 2] != 0, eb[ti * 3 + 1] != 0);
 		}
 	}
 

@@ -402,6 +402,17 @@ public:
 	void set_two_sided(bool p);  bool get_two_sided() const;
 	void set_flip_faces(bool p); bool get_flip_faces() const;
 
+	/// Checkerboard overlay — when enabled, multiplies a darken factor
+	/// into alternate squares of a triplanar grid in marker-local space.
+	/// Useful for showing real-world scale on Mesh / Shape / Curve / Figure
+	/// / Axis tubes when prototyping a level. `checker_size` is the edge
+	/// length of one square in the same units as the marker's local space
+	/// (default 0.25m). `checker_darken` is the multiplier applied to
+	/// alternating squares (0 = black, 1 = no change, default 0.5).
+	void set_checker_enabled(bool p); bool get_checker_enabled() const;
+	void set_checker_size(float p);   float get_checker_size() const;
+	void set_checker_darken(float p); float get_checker_darken() const;
+
 	/// Reset the physics interpolation state on this marker's render
 	/// instances so the next frame draws at the current transform with
 	/// no blend from the previous one. Call after teleporting the
@@ -555,6 +566,11 @@ private:
 	bool _flip_faces     = false;
 	bool _template_mode  = false;
 
+	// Checkerboard overlay state — see public setter docstrings.
+	bool  _checker_enabled = false;
+	float _checker_size    = 0.25f;
+	float _checker_darken  = 0.5f;
+
 	Ref<ArrayMesh>         _mesh;
 	Ref<StandardMaterial3D> _outline_material;
 	Ref<StandardMaterial3D> _fill_material;
@@ -583,12 +599,21 @@ private:
 	Ref<ShaderMaterial>     _bary_material_back;
 	Ref<ShaderMaterial>     _cap_top_material_back;
 	Ref<ShaderMaterial>     _cap_bot_material_back;
+	/// Checkerboard overlay materials — attached as `next_pass` on every
+	/// rendered material when `_checker_enabled` is on. Two instances
+	/// share one shader (cull_disabled + per-fragment discard) but carry
+	/// different `checker_cull` uniforms so each parent surface gets the
+	/// overlay variant matching its own cull mode (front for cull_back /
+	/// cull_disabled parents, back for cull_front parents). Null when
+	/// checker is disabled.
+	Ref<ShaderMaterial>     _checker_overlay_front;
+	Ref<ShaderMaterial>     _checker_overlay_back;
 	/// Shader cache — keyed by full source code. Replaces named static
 	/// Ref<Shader> members; each unique render_mode + body combination
 	/// gets one entry, shared across all instances that need it.
 	static HashMap<String, Ref<Shader>> _shader_cache;
 	static Ref<Shader> _cached_shader(const String &code);
-	static String _render_mode(bool lit, int cull, bool transparent, bool top);
+	static String _render_mode(bool lit, int cull, bool transparent, bool top, bool depth_always = false);
 	RID _instance;
 
 	// Per-arm renderables for Axis subtypes. Each arm (and each Burr

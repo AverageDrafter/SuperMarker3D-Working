@@ -72,6 +72,8 @@ start_cap_linked = false
 curve_end_cap = 1
 end_cap_size = Vector2(20, 20)
 end_cap_linked = false
+checker_enabled = true
+checker_size = 1.0
 lights_and_shadows = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0)
 
