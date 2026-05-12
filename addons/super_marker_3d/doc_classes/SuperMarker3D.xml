@@ -1,73 +1,507 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="SuperMarker3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
 	<brief_description>
-		Graphic-design-oriented 3D marker node — seven shapes with wireframe or billboarded silhouette rendering.
+		Graphic-design-oriented 3D marker node — five marker types (Axis, Mesh, Shape, Curve, Figure) covering 26 subtype variants, with universal outline / fill / detail-mode controls.
 	</brief_description>
 	<description>
-		SuperMarker3D is a standalone debug/annotation node. It does not require a [MultiNode] parent, though it can also be used as a template child of one (SuperMarkerHandler draws per-instance copies).
+		SuperMarker3D is a standalone 3D marker / annotation node. Drop one into any scene as a Node3D child; everything is configured from the inspector or script. No companion plugin required — though it cooperates with MultiNode as a template child (set [member SuperMarker3D.template_mode] via [method set_template_mode] and the instancer will draw per-instance copies).
 
-		Seven shapes: Cross, Diamond, Sphere, Axis, Cube, Arrow, Flat Arrow.
+		[b]Type / subtype model[/b]
+		The top-level [member type] dropdown picks a [enum MarkerType] category. The [member subtype] dropdown then narrows to the variants in that category — [code]CROSS / PLAIN / BURR / XYZ[/code] for Axis, [code]SPHERE / BOX / DIAMOND / CYLINDER / CONE / CAPSULE[/code] for Mesh, [code]CIRCLE / SQUARE / DIAMOND / TRIANGLE / CAPSULE / X / ARROW_FLAT[/code] for Shape, [code]LINE / RIGHT_ANGLE / ARC / SINE / HELIX / BEZIER / CUSTOM[/code] for Curve, and [code]FIGURE[/code] for Figure. The inspector hides properties that don't apply to the current type.
 
-		Two detail modes:
-		[b]DETAIL_WIREFRAME[/b] — edges as face-normal quads (back-culled so only camera-front edges show) plus optional solid fill. Looks like a real mesh at any angle.
+		[b]Detail modes[/b]
+		[b]DETAIL_WIREFRAME[/b] — filled solid mesh (back-culled) with thin face-normal edge quads, so only camera-front-facing edges are visible — looks like a real mesh at any angle.
 		[b]DETAIL_SILHOUETTE[/b] — billboarded 2D outline + optional fill, always faces the camera.
 
-		Arrow-shape properties configure the arrowhead style, tail flare, and head dimensions.
+		[b]API stability[/b]
+		Pre-1.0: enum reordering, name changes, and removals are permitted between minor versions. From 1.0 forward: enum integer values are frozen for scene-file compatibility, no renames, no removals without a deprecation cycle.
+
+		[b]Minimal script example[/b]
+		[codeblock]
+		var m := SuperMarker3D.new()
+		m.type = SuperMarker3D.TYPE_MESH
+		m.subtype = SuperMarker3D.MESH_SPHERE
+		m.marker_size = 0.75
+		m.outline_color = Color.YELLOW
+		m.fill_color = Color(0.0, 0.6, 1.0, 0.5)
+		add_child(m)
+		[/codeblock]
 	</description>
 	<tutorials>
 	</tutorials>
+	<methods>
+		<method name="export_mesh" qualifiers="const">
+			<return type="ArrayMesh" />
+			<description>
+				Returns a freestanding [ArrayMesh] duplicate of every surface currently rendered by this marker (the primary mesh and, for Axis subtypes, each per-arm surface). Drop the result into a [MeshInstance3D], save it to disk, etc. Geometry is in marker-local space — apply the marker's transform when consuming the result if you want world-space. No materials are attached.
+			</description>
+		</method>
+		<method name="export_convex_shape" qualifiers="const">
+			<return type="ConvexPolygonShape3D" />
+			<description>
+				Convex-hull collision shape covering every triangle vertex of the marker's geometry. Cheap and stable at runtime; concavities are filled in. Suitable for movable physics bodies.
+			</description>
+		</method>
+		<method name="export_concave_shape" qualifiers="const">
+			<return type="ConcavePolygonShape3D" />
+			<description>
+				Triangle-mesh collision shape that matches the marker's visuals exactly — keeps helix coils, right-angle bends, arc curves, etc. Static-only (no movement under physics) and pricier per query than the convex variant.
+			</description>
+		</method>
+		<method name="get_active_curve" qualifiers="const">
+			<return type="Curve3D" />
+			<description>
+				Returns a [b]duplicate[/b] of the [Curve3D] currently driving the geometry — the user-supplied [member curve] resource for [code]CURVE_CUSTOM[/code], or a freshly generated curve built from the active preset's parameters for any other Curve subtype. The duplicate is independent: edit it, save it as a [code].tres[/code], or hand it to a [Path3D] for an AI agent / camera to follow without affecting the marker. Returns an empty Curve3D if the marker isn't a Curve subtype.
+			</description>
+		</method>
+		<method name="get_mesh_rid" qualifiers="const">
+			<return type="RID" />
+			<description>
+				Returns the RenderingServer mesh RID currently held by this marker. Useful when wiring a SuperMarker3D into another instancer (e.g. MultiNode's per-instance mesh ID slot).
+			</description>
+		</method>
+		<method name="is_template_mode" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns true when this marker has been flipped into template mode by an external instancer — see [method set_template_mode].
+			</description>
+		</method>
+		<method name="reset_interpolation">
+			<return type="void" />
+			<description>
+				Reset the physics interpolation state so the next render frame draws at the current transform with no blend from the previous one. Call after teleporting this marker (or its parent) to a new pose — otherwise the engine will draw a one-frame smear from the old position to the new one.
+			</description>
+		</method>
+		<method name="set_template_mode">
+			<return type="void" />
+			<arguments>
+				<argument index="0" name="template_mode" type="bool" />
+			</arguments>
+			<description>
+				Flip the marker into "template" mode — it stops rendering itself, but its mesh / materials remain available for an external instancer to draw. MultiNode's SuperMarkerHandler calls this at scan time so a SuperMarker3D used as a template child doesn't double-render alongside its stamped instances. Not normally called from game code.
+			</description>
+		</method>
+	</methods>
 	<members>
-		<member name="shape" type="int" setter="set_shape" getter="get_shape" enum="SuperMarker3D.MarkerShape" default="0">
-			Which shape to draw.
+		<member name="type" type="int" setter="set_type" getter="get_type" enum="SuperMarker3D.MarkerType" default="0">
+			Top-level marker category. Picking a type narrows the [member subtype] dropdown to variants in that category, and toggles the inspector visibility of every type-specific group below. Changing type re-initialises type-specific data fields to their defaults.
 		</member>
-		<member name="marker_size" type="float" setter="set_marker_size" getter="get_marker_size" default="0.5">
-			Overall size in meters.
+		<member name="subtype" type="int" setter="set_subtype" getter="get_subtype" enum="SuperMarker3D.Subtype" default="0">
+			Variant within the current [member type]. Enum integer values are frozen for scene-file compatibility — old pre-1.0 scenes store these directly and keep their meaning.
 		</member>
-		<member name="detail_mode" type="int" setter="set_detail_mode" getter="get_detail_mode" enum="SuperMarker3D.DetailMode" default="0">
-			[code]DETAIL_WIREFRAME[/code] (0) or [code]DETAIL_SILHOUETTE[/code] (1).
-		</member>
-		<member name="outline_color" type="Color" setter="set_outline_color" getter="get_outline_color" default="Color(0, 1, 0.8, 1)">
-			Edge / outline color.
+		<member name="outline_color" type="Color" setter="set_outline_color" getter="get_outline_color" default="Color(1, 1, 0, 1)">
+			Universal edge / outline color. Used by every subtype that draws an outline strip.
 		</member>
 		<member name="outline_thickness" type="float" setter="set_outline_thickness" getter="get_outline_thickness" default="0.0">
-			Thickness of edge quads (wireframe) or outline lines (silhouette). 0 = thin lines.
+			Universal outline width in meters. At [code]0.0[/code], outlines render as 1px lines (crisp at every camera distance). Above 0, axis arms become thin tubes, arrowheads gain volume, and mesh-face outlines paint as a strip of the given thickness. Range hint allows values greater than 1m for dramatic stand-ins (overthick green burr as a bush, etc.).
+		</member>
+		<member name="marker_size" type="float" setter="set_marker_size" getter="get_marker_size" default="0.5">
+			Overall size in meters for Mesh and Shape subtypes. Hidden for Axis (uses per-direction lengths) and Figure (uses [member figure_height]).
+		</member>
+		<member name="capsule_height" type="float" setter="set_capsule_height" getter="get_capsule_height" default="2.0">
+			Body length between the two hemisphere caps for [code]MESH_CAPSULE[/code], and the body length of the 2D pill for [code]FLAT_CAPSULE[/code]. Cap radius follows [member marker_size].
+		</member>
+		<member name="detail_mode" type="int" setter="set_detail_mode" getter="get_detail_mode" enum="SuperMarker3D.DetailMode" default="0">
+			[code]DETAIL_WIREFRAME[/code] (0) for a real-mesh look with face-normal edges; [code]DETAIL_SILHOUETTE[/code] (1) for a billboarded 2D outline that always faces the camera.
 		</member>
 		<member name="fill_color" type="Color" setter="set_fill_color" getter="get_fill_color" default="Color(0, 1, 0.8, 1)">
-			Fill color. Alpha out to hide the interior.
+			Solid-body color. Alpha &lt; 1 makes the marker translucent; alpha = 0 hides the fill entirely (outline-only).
 		</member>
 		<member name="background_color" type="Color" setter="set_background_color" getter="get_background_color" default="Color(0, 0, 0, 0)">
-			Curve only: color of dash/dot gap panels. Transparent by default (gaps are invisible).
+			Curve subtypes only: color of the gap panels between dashes / dots. Transparent by default so gaps are invisible.
+		</member>
+		<member name="axis_link_mode" type="int" setter="set_axis_link_mode" getter="get_axis_link_mode" enum="SuperMarker3D.AxisLinkMode" default="0">
+			Linkage between the six [code]axis_length_*[/code] fields. [code]LINK_ALL[/code] drives all six from a single value (uniform marker). [code]LINK_MIRRORED[/code] couples each axis's pos and neg directions. [code]LINK_FREE[/code] leaves every direction independent. Shared across every Axis subtype so switching between Cross / Plain / Burr / XYZ preserves authored values and link behavior.
+		</member>
+		<member name="axis_length_x_pos" type="float" setter="set_axis_length_x_pos" getter="get_axis_length_x_pos" default="0.5">
+			Length of the +X axis arm. Set to 0 to hide this arm. See [member axis_link_mode] for which fields are slaved.
+		</member>
+		<member name="axis_length_x_neg" type="float" setter="set_axis_length_x_neg" getter="get_axis_length_x_neg" default="0.5">
+			Length of the -X axis arm. Set to 0 to hide this arm.
+		</member>
+		<member name="axis_length_y_pos" type="float" setter="set_axis_length_y_pos" getter="get_axis_length_y_pos" default="0.5">
+			Length of the +Y axis arm. Set to 0 to hide this arm.
+		</member>
+		<member name="axis_length_y_neg" type="float" setter="set_axis_length_y_neg" getter="get_axis_length_y_neg" default="0.5">
+			Length of the -Y axis arm. Set to 0 to hide this arm.
+		</member>
+		<member name="axis_length_z_pos" type="float" setter="set_axis_length_z_pos" getter="get_axis_length_z_pos" default="0.5">
+			Length of the +Z axis arm. Set to 0 to hide this arm.
+		</member>
+		<member name="axis_length_z_neg" type="float" setter="set_axis_length_z_neg" getter="get_axis_length_z_neg" default="0.5">
+			Length of the -Z axis arm. Set to 0 to hide this arm. Note: [code]AXIS_CROSS[/code] disables Z entirely.
+		</member>
+		<member name="axis_arrows" type="bool" setter="set_axis_arrows" getter="get_axis_arrows" default="false">
+			Add a cone arrowhead to the tip of every non-zero axis arm. Honored by [code]AXIS_CROSS[/code], [code]AXIS_PLAIN[/code], and [code]AXIS_XYZ[/code]; ignored by [code]AXIS_BURR[/code] (the diagonals make it visually noisy).
+		</member>
+		<member name="axis_arrow_length" type="float" setter="set_axis_arrow_length" getter="get_axis_arrow_length" default="0.15">
+			Arrowhead cone height in meters, measured back from the arm tip along the arm direction.
+		</member>
+		<member name="axis_arrow_width" type="float" setter="set_axis_arrow_width" getter="get_axis_arrow_width" default="0.075">
+			Arrowhead base radius (splay perpendicular to the arm).
+		</member>
+		<member name="axis_color_x_pos" type="Color" setter="set_axis_color_x_pos" getter="get_axis_color_x_pos" default="Color(1, 0.04, 0.04, 1)">
+			[code]AXIS_XYZ[/code] only: bright red on the +X arm by default. Per-arm color survives the line→tube switch at thickness &gt; 0.
+		</member>
+		<member name="axis_color_x_neg" type="Color" setter="set_axis_color_x_neg" getter="get_axis_color_x_neg" default="Color(0.16, 0.04, 0.04, 1)">
+			[code]AXIS_XYZ[/code] only: dark red on the -X arm by default.
+		</member>
+		<member name="axis_color_y_pos" type="Color" setter="set_axis_color_y_pos" getter="get_axis_color_y_pos" default="Color(0.04, 1, 0.04, 1)">
+			[code]AXIS_XYZ[/code] only: bright green on the +Y arm by default.
+		</member>
+		<member name="axis_color_y_neg" type="Color" setter="set_axis_color_y_neg" getter="get_axis_color_y_neg" default="Color(0.04, 0.16, 0.04, 1)">
+			[code]AXIS_XYZ[/code] only: dark green on the -Y arm by default.
+		</member>
+		<member name="axis_color_z_pos" type="Color" setter="set_axis_color_z_pos" getter="get_axis_color_z_pos" default="Color(0.04, 0.04, 1, 1)">
+			[code]AXIS_XYZ[/code] only: bright blue on the +Z arm by default.
+		</member>
+		<member name="axis_color_z_neg" type="Color" setter="set_axis_color_z_neg" getter="get_axis_color_z_neg" default="Color(0.04, 0.04, 0.16, 1)">
+			[code]AXIS_XYZ[/code] only: dark blue on the -Z arm by default.
+		</member>
+		<member name="figure_height" type="float" setter="set_figure_height" getter="get_figure_height" default="1.8">
+			Standing tip-to-toe extent of the Figure subtype, in meters. Body proportions are derived from this value.
+		</member>
+		<member name="figure_show_mesh" type="bool" setter="set_figure_show_mesh" getter="get_figure_show_mesh" default="true">
+			When true, the skinned humanoid mesh renders. Turn off to see only the rig bones (combine with [member figure_show_bones]).
+		</member>
+		<member name="figure_show_bones" type="bool" setter="set_figure_show_bones" getter="get_figure_show_bones" default="false">
+			Rigging mode toggle. When true: pose rotations are forced to zero, per-bone rest rotation / length / width and the offsets become inspector-visible, and a tube overlay of every bone renders on top of the rest mesh. When false: pose rotations drive the chain, the mesh renders posed, and rig fields are hidden.
+		</member>
+		<member name="figure_bone_color" type="Color" setter="set_figure_bone_color" getter="get_figure_bone_color" default="Color(0.5, 0.5, 0.5, 1)">
+			Color of the bone-overlay tubes drawn when [member figure_show_bones] is on. Independent from fill / outline color so the mesh and the rig overlay can be coloured separately. Alpha &lt; 1 lets the user see bones through the mesh while rigging.
+		</member>
+		<member name="figure_offset_head_base" type="Vector3" setter="set_figure_offset_head_base" getter="get_figure_offset_head_base" default="Vector3(0, 0.05, 0)">
+			Rigging-only offset from the spine tip to the head pivot, in the spine's rotated frame.
+		</member>
+		<member name="figure_offset_head_base_width" type="float" setter="set_figure_offset_head_base_width" getter="get_figure_offset_head_base_width" default="0.04">
+			Capsule radius of the head-base offset bar — drives both the rig visualizer thickness and the skinning Voronoi at this joint.
+		</member>
+		<member name="figure_offset_l_shoulder" type="Vector3" setter="set_figure_offset_l_shoulder" getter="get_figure_offset_l_shoulder" default="Vector3(-0.2, 0, 0)">
+			Rigging-only offset from the spine tip to the left shoulder pivot.
+		</member>
+		<member name="figure_offset_l_shoulder_width" type="float" setter="set_figure_offset_l_shoulder_width" getter="get_figure_offset_l_shoulder_width" default="0.05">
+			Capsule radius of the left-shoulder offset bar.
+		</member>
+		<member name="figure_offset_r_shoulder" type="Vector3" setter="set_figure_offset_r_shoulder" getter="get_figure_offset_r_shoulder" default="Vector3(0.2, 0, 0)">
+			Rigging-only offset from the spine tip to the right shoulder pivot.
+		</member>
+		<member name="figure_offset_r_shoulder_width" type="float" setter="set_figure_offset_r_shoulder_width" getter="get_figure_offset_r_shoulder_width" default="0.05">
+			Capsule radius of the right-shoulder offset bar.
+		</member>
+		<member name="figure_offset_l_hip" type="Vector3" setter="set_figure_offset_l_hip" getter="get_figure_offset_l_hip" default="Vector3(-0.1, -0.05, 0)">
+			Rigging-only offset from the pelvis to the left hip pivot.
+		</member>
+		<member name="figure_offset_l_hip_width" type="float" setter="set_figure_offset_l_hip_width" getter="get_figure_offset_l_hip_width" default="0.05">
+			Capsule radius of the left-hip offset bar.
+		</member>
+		<member name="figure_offset_r_hip" type="Vector3" setter="set_figure_offset_r_hip" getter="get_figure_offset_r_hip" default="Vector3(0.1, -0.05, 0)">
+			Rigging-only offset from the pelvis to the right hip pivot.
+		</member>
+		<member name="figure_offset_r_hip_width" type="float" setter="set_figure_offset_r_hip_width" getter="get_figure_offset_r_hip_width" default="0.05">
+			Capsule radius of the right-hip offset bar.
+		</member>
+		<member name="figure_bone_pelvis_pos" type="Vector3" setter="set_figure_bone_pelvis_pos" getter="get_figure_bone_pelvis_pos" default="Vector3(0, 0.95, 0)">
+			Pelvis position in the marker's local space (rigging-only, baked).
+		</member>
+		<member name="figure_bone_pelvis_width" type="float" setter="set_figure_bone_pelvis_width" getter="get_figure_bone_pelvis_width" default="0.1">
+			Pelvis bone radius — affects rig visualizer and the skinning Voronoi.
+		</member>
+		<member name="figure_bone_spine_rot" type="Vector3" setter="set_figure_bone_spine_rot" getter="get_figure_bone_spine_rot" default="Vector3(0, 0, 0)">
+			Rest rotation of the spine bone (Euler XYZ). Rigging-only.
+		</member>
+		<member name="figure_bone_spine_length" type="float" setter="set_figure_bone_spine_length" getter="get_figure_bone_spine_length" default="0.45">
+			Rest length of the spine bone in meters.
+		</member>
+		<member name="figure_bone_spine_width" type="float" setter="set_figure_bone_spine_width" getter="get_figure_bone_spine_width" default="0.09">
+			Spine bone radius.
+		</member>
+		<member name="figure_bone_spine_pose_rot" type="Vector3" setter="set_figure_bone_spine_pose_rot" getter="get_figure_bone_spine_pose_rot" default="Vector3(0, 0, 0)">
+			Pose rotation of the spine bone (Euler XYZ), applied on top of the rest rotation. Zero = rest pose. This is the runtime animation control.
+		</member>
+		<member name="figure_bone_head_rot" type="Vector3" setter="set_figure_bone_head_rot" getter="get_figure_bone_head_rot" default="Vector3(0, 0, 0)">Rest rotation of the head bone.</member>
+		<member name="figure_bone_head_length" type="float" setter="set_figure_bone_head_length" getter="get_figure_bone_head_length" default="0.15">Rest length of the head bone.</member>
+		<member name="figure_bone_head_width" type="float" setter="set_figure_bone_head_width" getter="get_figure_bone_head_width" default="0.08">Head bone radius.</member>
+		<member name="figure_bone_head_pose_rot" type="Vector3" setter="set_figure_bone_head_pose_rot" getter="get_figure_bone_head_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the head bone.</member>
+		<member name="figure_bone_l_upper_arm_rot" type="Vector3" setter="set_figure_bone_l_upper_arm_rot" getter="get_figure_bone_l_upper_arm_rot" default="Vector3(0, 0, 0)">Rest rotation of the left upper arm.</member>
+		<member name="figure_bone_l_upper_arm_length" type="float" setter="set_figure_bone_l_upper_arm_length" getter="get_figure_bone_l_upper_arm_length" default="0.28">Rest length of the left upper arm.</member>
+		<member name="figure_bone_l_upper_arm_width" type="float" setter="set_figure_bone_l_upper_arm_width" getter="get_figure_bone_l_upper_arm_width" default="0.05">Left upper arm radius.</member>
+		<member name="figure_bone_l_upper_arm_pose_rot" type="Vector3" setter="set_figure_bone_l_upper_arm_pose_rot" getter="get_figure_bone_l_upper_arm_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the left upper arm.</member>
+		<member name="figure_bone_l_lower_arm_rot" type="Vector3" setter="set_figure_bone_l_lower_arm_rot" getter="get_figure_bone_l_lower_arm_rot" default="Vector3(0, 0, 0)">Rest rotation of the left lower arm.</member>
+		<member name="figure_bone_l_lower_arm_length" type="float" setter="set_figure_bone_l_lower_arm_length" getter="get_figure_bone_l_lower_arm_length" default="0.25">Rest length of the left lower arm.</member>
+		<member name="figure_bone_l_lower_arm_width" type="float" setter="set_figure_bone_l_lower_arm_width" getter="get_figure_bone_l_lower_arm_width" default="0.04">Left lower arm radius.</member>
+		<member name="figure_bone_l_lower_arm_pose_rot" type="Vector3" setter="set_figure_bone_l_lower_arm_pose_rot" getter="get_figure_bone_l_lower_arm_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the left lower arm.</member>
+		<member name="figure_bone_r_upper_arm_rot" type="Vector3" setter="set_figure_bone_r_upper_arm_rot" getter="get_figure_bone_r_upper_arm_rot" default="Vector3(0, 0, 0)">Rest rotation of the right upper arm.</member>
+		<member name="figure_bone_r_upper_arm_length" type="float" setter="set_figure_bone_r_upper_arm_length" getter="get_figure_bone_r_upper_arm_length" default="0.28">Rest length of the right upper arm.</member>
+		<member name="figure_bone_r_upper_arm_width" type="float" setter="set_figure_bone_r_upper_arm_width" getter="get_figure_bone_r_upper_arm_width" default="0.05">Right upper arm radius.</member>
+		<member name="figure_bone_r_upper_arm_pose_rot" type="Vector3" setter="set_figure_bone_r_upper_arm_pose_rot" getter="get_figure_bone_r_upper_arm_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the right upper arm.</member>
+		<member name="figure_bone_r_lower_arm_rot" type="Vector3" setter="set_figure_bone_r_lower_arm_rot" getter="get_figure_bone_r_lower_arm_rot" default="Vector3(0, 0, 0)">Rest rotation of the right lower arm.</member>
+		<member name="figure_bone_r_lower_arm_length" type="float" setter="set_figure_bone_r_lower_arm_length" getter="get_figure_bone_r_lower_arm_length" default="0.25">Rest length of the right lower arm.</member>
+		<member name="figure_bone_r_lower_arm_width" type="float" setter="set_figure_bone_r_lower_arm_width" getter="get_figure_bone_r_lower_arm_width" default="0.04">Right lower arm radius.</member>
+		<member name="figure_bone_r_lower_arm_pose_rot" type="Vector3" setter="set_figure_bone_r_lower_arm_pose_rot" getter="get_figure_bone_r_lower_arm_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the right lower arm.</member>
+		<member name="figure_bone_l_upper_leg_rot" type="Vector3" setter="set_figure_bone_l_upper_leg_rot" getter="get_figure_bone_l_upper_leg_rot" default="Vector3(0, 0, 0)">Rest rotation of the left upper leg.</member>
+		<member name="figure_bone_l_upper_leg_length" type="float" setter="set_figure_bone_l_upper_leg_length" getter="get_figure_bone_l_upper_leg_length" default="0.45">Rest length of the left upper leg.</member>
+		<member name="figure_bone_l_upper_leg_width" type="float" setter="set_figure_bone_l_upper_leg_width" getter="get_figure_bone_l_upper_leg_width" default="0.07">Left upper leg radius.</member>
+		<member name="figure_bone_l_upper_leg_pose_rot" type="Vector3" setter="set_figure_bone_l_upper_leg_pose_rot" getter="get_figure_bone_l_upper_leg_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the left upper leg.</member>
+		<member name="figure_bone_l_lower_leg_rot" type="Vector3" setter="set_figure_bone_l_lower_leg_rot" getter="get_figure_bone_l_lower_leg_rot" default="Vector3(0, 0, 0)">Rest rotation of the left lower leg.</member>
+		<member name="figure_bone_l_lower_leg_length" type="float" setter="set_figure_bone_l_lower_leg_length" getter="get_figure_bone_l_lower_leg_length" default="0.37">Rest length of the left lower leg.</member>
+		<member name="figure_bone_l_lower_leg_width" type="float" setter="set_figure_bone_l_lower_leg_width" getter="get_figure_bone_l_lower_leg_width" default="0.05">Left lower leg radius.</member>
+		<member name="figure_bone_l_lower_leg_pose_rot" type="Vector3" setter="set_figure_bone_l_lower_leg_pose_rot" getter="get_figure_bone_l_lower_leg_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the left lower leg.</member>
+		<member name="figure_bone_r_upper_leg_rot" type="Vector3" setter="set_figure_bone_r_upper_leg_rot" getter="get_figure_bone_r_upper_leg_rot" default="Vector3(0, 0, 0)">Rest rotation of the right upper leg.</member>
+		<member name="figure_bone_r_upper_leg_length" type="float" setter="set_figure_bone_r_upper_leg_length" getter="get_figure_bone_r_upper_leg_length" default="0.45">Rest length of the right upper leg.</member>
+		<member name="figure_bone_r_upper_leg_width" type="float" setter="set_figure_bone_r_upper_leg_width" getter="get_figure_bone_r_upper_leg_width" default="0.07">Right upper leg radius.</member>
+		<member name="figure_bone_r_upper_leg_pose_rot" type="Vector3" setter="set_figure_bone_r_upper_leg_pose_rot" getter="get_figure_bone_r_upper_leg_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the right upper leg.</member>
+		<member name="figure_bone_r_lower_leg_rot" type="Vector3" setter="set_figure_bone_r_lower_leg_rot" getter="get_figure_bone_r_lower_leg_rot" default="Vector3(0, 0, 0)">Rest rotation of the right lower leg.</member>
+		<member name="figure_bone_r_lower_leg_length" type="float" setter="set_figure_bone_r_lower_leg_length" getter="get_figure_bone_r_lower_leg_length" default="0.37">Rest length of the right lower leg.</member>
+		<member name="figure_bone_r_lower_leg_width" type="float" setter="set_figure_bone_r_lower_leg_width" getter="get_figure_bone_r_lower_leg_width" default="0.05">Right lower leg radius.</member>
+		<member name="figure_bone_r_lower_leg_pose_rot" type="Vector3" setter="set_figure_bone_r_lower_leg_pose_rot" getter="get_figure_bone_r_lower_leg_pose_rot" default="Vector3(0, 0, 0)">Pose rotation of the right lower leg.</member>
+		<member name="head_length" type="float" setter="set_head_length" getter="get_head_length" default="0.3">
+			[code]ARROW_FLAT[/code] only: arrowhead length in marker-local units, measured back from the arrow tip.
+		</member>
+		<member name="head_width" type="float" setter="set_head_width" getter="get_head_width" default="0.15">
+			[code]ARROW_FLAT[/code] only: full arrowhead width at the shoulders.
+		</member>
+		<member name="curve_flat" type="bool" setter="set_curve_flat" getter="get_curve_flat" default="true">
+			Curve only: when true the curve renders as a flat ribbon (2D-look stamp on a 3D path); when false it renders as a 3D tube.
+		</member>
+		<member name="curve_length" type="float" setter="set_curve_length" getter="get_curve_length" default="2.0">
+			Curve preset only: overall length of the generated path (semantics vary slightly by preset — straight-line distance for [code]CURVE_LINE[/code], arc chord, helix axial length, etc.).
+		</member>
+		<member name="curve_amplitude" type="float" setter="set_curve_amplitude" getter="get_curve_amplitude" default="0.5">
+			Curve preset only: bend / radius / wave depth for presets that have one (arc radius, sine height, helix radius, bezier deflection).
+		</member>
+		<member name="curve_turns" type="float" setter="set_curve_turns" getter="get_curve_turns" default="2.0">
+			Curve preset only: cycle count for periodic presets (sine cycles, helix turns).
+		</member>
+		<member name="curve_segments" type="int" setter="set_curve_segments" getter="get_curve_segments" default="32">
+			Curve preset only: tessellation segment count along the path. Higher = smoother but more verts.
+		</member>
+		<member name="curve" type="Curve3D" setter="set_curve" getter="get_curve">
+			User-supplied [Curve3D] driving the path when [member subtype] is [code]CURVE_CUSTOM[/code]. Ignored for the procedural presets — see [method get_active_curve] to get the actual curve in use.
+		</member>
+		<member name="curve_width" type="float" setter="set_curve_width" getter="get_curve_width" default="0.15">
+			Curve only: ribbon / tube width (flat) or tube radius (3D) in meters.
+		</member>
+		<member name="curve_bank" type="float" setter="set_curve_bank" getter="get_curve_bank" default="0.0">
+			Curve only: lean angle of the ribbon around its travel direction, in radians. Useful for banking a racetrack ribbon into turns.
+		</member>
+		<member name="bank_easing" type="float" setter="set_bank_easing" getter="get_bank_easing" default="0.15">
+			Curve only: ease-in / ease-out fraction at the ends of the bank ramp (0 = no easing, hard step; 0.5 = full sigmoid).
+		</member>
+		<member name="curve_pattern" type="int" setter="set_curve_pattern" getter="get_curve_pattern" enum="SuperMarker3D.CurvePattern" default="0">
+			Curve only: [code]CURVE_PATTERN_SOLID[/code], [code]CURVE_PATTERN_DASH[/code], or [code]CURVE_PATTERN_DOT[/code].
+		</member>
+		<member name="dash_length" type="float" setter="set_dash_length" getter="get_dash_length" default="1.0">
+			Curve only: length of one dash segment when [member curve_pattern] is [code]DASH[/code].
+		</member>
+		<member name="dash_gap" type="float" setter="set_dash_gap" getter="get_dash_gap" default="0.5">
+			Curve only: length of the gap between dashes / dots.
+		</member>
+		<member name="curve_start_cap" type="int" setter="set_curve_start_cap" getter="get_curve_start_cap" enum="SuperMarker3D.CurveCapStyle" default="0">
+			Curve only: cap style at the start of the path — [code]None / Arrow / Dot / Line[/code].
+		</member>
+		<member name="start_cap_size" type="Vector2" setter="set_start_cap_size" getter="get_start_cap_size" default="Vector2(0.3, 0.3)">
+			Curve only: cap dimensions at the start. x = along-path length, y = perpendicular width. When [member start_cap_linked] is true, the setter mirrors x into y so the cap stays proportional.
+		</member>
+		<member name="start_cap_linked" type="bool" setter="set_start_cap_linked" getter="get_start_cap_linked" default="true">
+			Curve only: when true, [member start_cap_size] keeps x and y synchronized — editing one updates the other.
+		</member>
+		<member name="curve_end_cap" type="int" setter="set_curve_end_cap" getter="get_curve_end_cap" enum="SuperMarker3D.CurveCapStyle" default="0">
+			Curve only: cap style at the end of the path.
+		</member>
+		<member name="end_cap_size" type="Vector2" setter="set_end_cap_size" getter="get_end_cap_size" default="Vector2(0.3, 0.3)">
+			Curve only: cap dimensions at the end. See [member start_cap_size].
+		</member>
+		<member name="end_cap_linked" type="bool" setter="set_end_cap_linked" getter="get_end_cap_linked" default="true">
+			Curve only: when true, [member end_cap_size] keeps x and y synchronized.
+		</member>
+		<member name="length_fraction" type="float" setter="set_length_fraction" getter="get_length_fraction" default="1.0">
+			Curve only: fraction (0–1) of the path that is actually rendered. Useful for "drawing in" a path over time — animate from 0 to 1 with a Tween.
+		</member>
+		<member name="mesh_sides" type="int" setter="set_mesh_sides" getter="get_mesh_sides" default="24">
+			Mesh only: longitudinal segment count for sphere / diamond / cone / cylinder / capsule. Range 5..24. Controls both fill tessellation and wireframe segmentation. Use [code]mesh_sides = 4[/code] on [code]MESH_CONE[/code] for a four-sided pyramid.
+		</member>
+		<member name="smooth_shading" type="bool" setter="set_smooth_shading" getter="get_smooth_shading" default="true">
+			Mesh only: when true (default), curved subtypes (sphere, diamond, cone, cylinder, capsule) use smooth per-pixel normals plus the analytical sphere shader for lat/lon (or meridian + rim) outlines. When false, every face uses its flat face normal and outlines are painted along the actual mesh edges — the faceted, low-poly look. Pyramid is always faceted regardless.
 		</member>
 		<member name="two_sided" type="bool" setter="set_two_sided" getter="get_two_sided" default="true">
-			Render both sides of the geometry. Mesh types use two surfaces; flat types (Shape, flat Curve) use a single cull-disabled surface.
+			Render both sides of the geometry. Back faces draw in an earlier pass (cull_front, no depth-write, lower render_priority) and front faces overwrite them where they overlap — so the mesh reads correctly from all angles at any fill alpha. Flat-shape subtypes use a single cull-disabled surface instead.
 		</member>
 		<member name="flip_faces" type="bool" setter="set_flip_faces" getter="get_flip_faces" default="false">
 			When [member two_sided] is false, renders the back face instead of the front face.
 		</member>
-		<member name="axis_x_color" type="Color" setter="set_axis_x_color" getter="get_axis_x_color" default="Color(1, 0.3, 0.3, 1)">
-			Axis shape only: color of the X axis line.
+		<member name="checker_enabled" type="bool" setter="set_checker_enabled" getter="get_checker_enabled" default="false">
+			Checkerboard overlay. When on, multiplies a darken factor into alternate squares of a triplanar grid in marker-local space — useful for showing real-world scale on Mesh / Shape / Curve / Figure / Axis tubes while prototyping a level.
 		</member>
-		<member name="axis_y_color" type="Color" setter="set_axis_y_color" getter="get_axis_y_color" default="Color(0.3, 1, 0.3, 1)">
-			Axis shape only: color of the Y axis line.
+		<member name="checker_size" type="float" setter="set_checker_size" getter="get_checker_size" default="0.25">
+			Checker only: edge length of one square, in the same units as the marker's local space.
 		</member>
-		<member name="axis_z_color" type="Color" setter="set_axis_z_color" getter="get_axis_z_color" default="Color(0.3, 0.3, 1, 1)">
-			Axis shape only: color of the Z axis line.
+		<member name="checker_darken" type="float" setter="set_checker_darken" getter="get_checker_darken" default="0.5">
+			Checker only: multiplier applied to alternating squares (0 = black, 1 = no change).
 		</member>
-		<member name="head_length" type="float" setter="set_head_length" getter="get_head_length" default="0.3">
-			Arrow Shape only: length of the arrowhead in marker-local units.
+		<member name="billboard_xz" type="bool" setter="set_billboard_xz" getter="get_billboard_xz" default="false">
+			Shape only: when true, the flat shape rotates in the XZ plane to face the camera while keeping Y axis fixed (BILLBOARD_FIXED_Y). Mutually distinct from [member billboard_y].
 		</member>
-		<member name="head_width" type="float" setter="set_head_width" getter="get_head_width" default="0.15">
-			Arrow Shape only: full width of the arrowhead at the shoulders.
+		<member name="billboard_y" type="bool" setter="set_billboard_y" getter="get_billboard_y" default="false">
+			Shape only: when true, the flat shape fully faces the camera (BILLBOARD_ENABLED).
 		</member>
-		<member name="editor_only" type="bool" setter="set_editor_only" getter="get_editor_only" default="true">
-			If true, the marker only renders in the editor.
+		<member name="rounded_corners" type="bool" setter="set_rounded_corners" getter="get_rounded_corners" default="true">
+			Shape only: when true, arc joints and polygon corners gain a disc blob to produce smooth rounded joins.
 		</member>
-		<member name="always_on_top" type="bool" setter="set_always_on_top" getter="get_always_on_top" default="true">
-			If true, disables depth testing — marker draws over opaque geometry.
+		<member name="shape_sides" type="int" setter="set_shape_sides" getter="get_shape_sides" default="24">
+			[code]FLAT_CIRCLE[/code] only: regular N-gon segment count. Range 6..64. Hidden for all other subtypes.
+		</member>
+		<member name="shows_in_play" type="bool" setter="set_shows_in_play" getter="get_shows_in_play" default="true">
+			Renderer flag — when false, the marker hides at runtime (only visible in the editor). Pair with [member always_on_top] for editor-only annotations.
+		</member>
+		<member name="always_on_top" type="bool" setter="set_always_on_top" getter="get_always_on_top" default="false">
+			Renderer flag — when true, disables depth testing so the marker draws over opaque geometry. Useful for editor cues and HUD overlays.
+		</member>
+		<member name="lights_and_shadows" type="bool" setter="set_lights_and_shadows" getter="get_lights_and_shadows" default="false">
+			Renderer flag — when true, the marker switches to per-pixel lit shading and casts / receives shadows like a normal MeshInstance3D. A thick burr stands in for a bush, a tall mesh box stands in for a building, etc. Off (default) = unshaded, no shadows — best for editor cues, HUD overlays, and pure design markers.
 		</member>
 	</members>
 	<constants>
-		<constant name="DETAIL_WIREFRAME" value="0" enum="DetailMode" />
-		<constant name="DETAIL_SILHOUETTE" value="1" enum="DetailMode" />
+		<constant name="TYPE_AXIS" value="0" enum="MarkerType">
+			Axis category — line clusters through the origin (Cross / Plain / Burr / XYZ).
+		</constant>
+		<constant name="TYPE_MESH" value="1" enum="MarkerType">
+			Mesh category — closed 3D primitives (sphere, box, diamond, cylinder, cone, capsule).
+		</constant>
+		<constant name="TYPE_SHAPE" value="2" enum="MarkerType">
+			Shape category — flat 2D polygon icons + the flat arrow.
+		</constant>
+		<constant name="TYPE_CURVE" value="3" enum="MarkerType">
+			Curve category — path stamped along a [Curve3D] (procedural presets + user-supplied custom).
+		</constant>
+		<constant name="TYPE_FIGURE" value="5" enum="MarkerType">
+			Figure category — humanoid mock-up with an 11-bone rig.
+		</constant>
+		<constant name="AXIS_CROSS" value="0" enum="Subtype">
+			Four arms on the X/Y plane (Z disabled).
+		</constant>
+		<constant name="MESH_DIAMOND" value="1" enum="Subtype">
+			Octahedron (8-faced diamond).
+		</constant>
+		<constant name="MESH_SPHERE" value="2" enum="Subtype">
+			UV sphere.
+		</constant>
+		<constant name="AXIS_PLAIN" value="3" enum="Subtype">
+			Six axes (±X ±Y ±Z), all rendered in [member outline_color].
+		</constant>
+		<constant name="MESH_BOX" value="4" enum="Subtype">
+			Axis-aligned cube.
+		</constant>
+		<constant name="ARROW_FLAT" value="6" enum="Subtype">
+			Flat 2D arrow icon — lives in the Shape category.
+		</constant>
+		<constant name="AXIS_XYZ" value="8" enum="Subtype">
+			Six axes with per-direction colors (bright on positive, dark on negative by default).
+		</constant>
+		<constant name="FIGURE" value="10" enum="Subtype">
+			Humanoid figure.
+		</constant>
+		<constant name="AXIS_BURR" value="11" enum="Subtype">
+			Six cardinal + six face-diagonal axes (12 lines total).
+		</constant>
+		<constant name="MESH_CYLINDER" value="14" enum="Subtype">
+			Capped cylinder.
+		</constant>
+		<constant name="MESH_CONE" value="15" enum="Subtype">
+			Round-base cone. Use [member mesh_sides] = 4 for a four-sided pyramid.
+		</constant>
+		<constant name="MESH_CAPSULE" value="16" enum="Subtype">
+			Cylinder body + hemisphere caps. See [member capsule_height].
+		</constant>
+		<constant name="FLAT_CIRCLE" value="17" enum="Subtype">
+			Regular N-gon, segment count from [member shape_sides].
+		</constant>
+		<constant name="FLAT_SQUARE" value="18" enum="Subtype">
+			Axis-aligned square.
+		</constant>
+		<constant name="FLAT_DIAMOND" value="19" enum="Subtype">
+			Rhombus (square rotated 45°).
+		</constant>
+		<constant name="FLAT_TRIANGLE" value="20" enum="Subtype">
+			Equilateral triangle, apex up.
+		</constant>
+		<constant name="FLAT_CAPSULE" value="21" enum="Subtype">
+			2D pill — two semicircles + rectangular body. See [member capsule_height].
+		</constant>
+		<constant name="FLAT_X" value="22" enum="Subtype">
+			X / close icon (two crossed bars).
+		</constant>
+		<constant name="CURVE_LINE" value="23" enum="Subtype">
+			Straight segment.
+		</constant>
+		<constant name="CURVE_RIGHT_ANGLE" value="24" enum="Subtype">
+			L-bend.
+		</constant>
+		<constant name="CURVE_ARC" value="25" enum="Subtype">
+			Circular arc.
+		</constant>
+		<constant name="CURVE_SINE" value="26" enum="Subtype">
+			Sine wave.
+		</constant>
+		<constant name="CURVE_HELIX" value="27" enum="Subtype">
+			3D coil.
+		</constant>
+		<constant name="CURVE_BEZIER" value="28" enum="Subtype">
+			Smooth S-curve.
+		</constant>
+		<constant name="CURVE_CUSTOM" value="29" enum="Subtype">
+			User-supplied Curve3D — see [member curve].
+		</constant>
+		<constant name="LINK_ALL" value="0" enum="AxisLinkMode">
+			A single value drives all six axis lengths.
+		</constant>
+		<constant name="LINK_MIRRORED" value="1" enum="AxisLinkMode">
+			Pos and neg of the same axis share a value; each axis pair is independent.
+		</constant>
+		<constant name="LINK_FREE" value="2" enum="AxisLinkMode">
+			Every direction is independent.
+		</constant>
+		<constant name="DETAIL_WIREFRAME" value="0" enum="DetailMode">
+			Filled mesh + face-normal edge quads (camera-front edges only). Looks like a real mesh.
+		</constant>
+		<constant name="DETAIL_SILHOUETTE" value="1" enum="DetailMode">
+			Billboarded 2D outline + optional fill. Always faces the camera.
+		</constant>
+		<constant name="CURVE_PATTERN_SOLID" value="0" enum="CurvePattern">
+			Continuous ribbon / tube.
+		</constant>
+		<constant name="CURVE_PATTERN_DASH" value="1" enum="CurvePattern">
+			Periodic dashes — see [member dash_length] / [member dash_gap].
+		</constant>
+		<constant name="CURVE_PATTERN_DOT" value="2" enum="CurvePattern">
+			Periodic dots.
+		</constant>
+		<constant name="CURVE_CAP_NONE" value="0" enum="CurveCapStyle">
+			No cap.
+		</constant>
+		<constant name="CURVE_CAP_ARROW" value="1" enum="CurveCapStyle">
+			Arrowhead cap.
+		</constant>
+		<constant name="CURVE_CAP_DOT" value="2" enum="CurveCapStyle">
+			Disc cap.
+		</constant>
+		<constant name="CURVE_CAP_LINE" value="3" enum="CurveCapStyle">
+			Perpendicular bar.
+		</constant>
+		<constant name="BONE_PELVIS" value="0" enum="FigureBone">
+			Root bone — position is [member figure_bone_pelvis_pos], rotation is the node transform.
+		</constant>
+		<constant name="BONE_SPINE" value="1" enum="FigureBone" />
+		<constant name="BONE_HEAD" value="2" enum="FigureBone" />
+		<constant name="BONE_L_UPPER_ARM" value="3" enum="FigureBone" />
+		<constant name="BONE_L_LOWER_ARM" value="4" enum="FigureBone" />
+		<constant name="BONE_R_UPPER_ARM" value="5" enum="FigureBone" />
+		<constant name="BONE_R_LOWER_ARM" value="6" enum="FigureBone" />
+		<constant name="BONE_L_UPPER_LEG" value="7" enum="FigureBone" />
+		<constant name="BONE_L_LOWER_LEG" value="8" enum="FigureBone" />
+		<constant name="BONE_R_UPPER_LEG" value="9" enum="FigureBone" />
+		<constant name="BONE_R_LOWER_LEG" value="10" enum="FigureBone" />
+		<constant name="BONE_COUNT" value="11" enum="FigureBone">
+			Sentinel — total bone count.
+		</constant>
 	</constants>
 </class>

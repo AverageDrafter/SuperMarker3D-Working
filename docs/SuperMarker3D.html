@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SuperMarker3D — SuperMarker3D Docs</title>
+<style>
+/* ----- Layout & theme — modeled after docs.godotengine.org (sphinx-rtd-theme dark) ----- */
+:root {
+	--bg: #1c1c1c;
+	--bg-sidebar: #222;
+	--bg-sidebar-2: #2d2d2d;
+	--bg-code: #2b2b2b;
+	--bg-table-head: #2a2a2a;
+	--bg-table-alt: #232323;
+	--fg: #d0d0d0;
+	--fg-dim: #999;
+	--fg-strong: #fff;
+	--accent: #478cbf;          /* Godot blue */
+	--accent-hover: #6cb4ec;
+	--code-fg: #e0e0e0;
+	--keyword: #c586c0;
+	--type: #4ec9b0;
+	--string: #ce9178;
+	--border: #3a3a3a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 14px; line-height: 1.55; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
+code, pre, .mono { font-family: "Cascadia Code", Consolas, "SF Mono", Monaco, "Courier New", monospace; font-size: 13px; }
+code { background: var(--bg-code); color: var(--code-fg); padding: 1px 5px; border-radius: 3px; }
+pre { background: var(--bg-code); color: var(--code-fg); padding: 12px 16px; border-radius: 4px; overflow-x: auto; border-left: 3px solid var(--accent); }
+pre code { background: transparent; padding: 0; }
+
+/* Layout */
+.wrap { display: flex; min-height: 100vh; }
+.sidebar {
+	width: 290px; flex-shrink: 0;
+	background: var(--bg-sidebar);
+	padding: 22px 18px;
+	border-right: 1px solid var(--border);
+	position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.sidebar h1 {
+	margin: 0 0 16px;
+	font-size: 18px; color: var(--fg-strong);
+	padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.sidebar h2 {
+	font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+	color: var(--fg-dim); margin: 18px 0 6px;
+}
+.sidebar ul { list-style: none; margin: 0; padding: 0; }
+.sidebar li { margin: 2px 0; }
+.sidebar a { display: block; padding: 3px 8px; border-radius: 3px; color: var(--fg); font-size: 13px; }
+.sidebar a:hover { background: var(--bg-sidebar-2); text-decoration: none; }
+.sidebar a.deep { padding-left: 22px; font-size: 12px; color: var(--fg-dim); }
+
+.content { flex: 1; padding: 30px 50px; max-width: 1000px; }
+.breadcrumb { font-size: 12px; color: var(--fg-dim); margin-bottom: 8px; }
+.breadcrumb a { color: var(--fg-dim); }
+
+h1.class-title { font-size: 30px; color: var(--fg-strong); margin: 0 0 4px; font-weight: 400; }
+h1.class-title .type-link { color: var(--type); font-size: 18px; font-weight: 400; }
+.inherits { color: var(--fg-dim); font-size: 13px; margin-bottom: 22px; }
+.inherits .type-link { color: var(--type); }
+
+h2.section { font-size: 22px; color: var(--fg-strong); margin: 38px 0 14px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-weight: 400; }
+h3.member-name { font-size: 16px; color: var(--fg-strong); margin: 22px 0 6px; font-weight: 500; scroll-margin-top: 16px; }
+h3.member-name .anchor { color: var(--fg-dim); font-weight: 400; font-size: 13px; margin-left: 8px; opacity: 0; transition: opacity 0.15s; }
+h3.member-name:hover .anchor { opacity: 1; }
+
+/* Tables */
+table { border-collapse: collapse; width: 100%; margin: 6px 0 18px; font-size: 13px; }
+th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--bg-table-head); color: var(--fg-strong); font-weight: 500; }
+tr:nth-child(even) td { background: var(--bg-table-alt); }
+td.type { color: var(--type); white-space: nowrap; }
+td.name { color: var(--accent); white-space: nowrap; }
+td.default { color: var(--fg-dim); white-space: nowrap; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+
+/* Signature / member-detail header */
+.signature { background: var(--bg-table-head); padding: 8px 14px; border-radius: 3px; font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; margin: 4px 0 10px; }
+.signature .type { color: var(--type); }
+.signature .name { color: var(--accent); }
+.signature .keyword { color: var(--keyword); }
+.signature .default { color: var(--fg-dim); }
+
+.note { border-left: 3px solid var(--accent); background: rgba(71, 140, 191, 0.08); padding: 10px 14px; margin: 14px 0; border-radius: 0 3px 3px 0; }
+.note .label { color: var(--accent); font-weight: 600; margin-right: 6px; }
+
+p { margin: 8px 0; }
+.constant-name { color: var(--keyword); }
+.enum-name { color: var(--type); }
+
+hr.member-sep { border: none; border-top: 1px solid var(--border); margin: 22px 0; }
+
+/* Subtle scrollbar in sidebar */
+.sidebar::-webkit-scrollbar { width: 8px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--bg-sidebar-2); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="sidebar">
+	<h1>SuperMarker3D</h1>
+	<ul>
+		<li><a href="#description">Description</a></li>
+		<li><a href="#properties">Properties</a></li>
+		<li><a href="#methods">Methods</a></li>
+		<li><a href="#enumerations">Enumerations</a></li>
+	</ul>
+	<h2>Property groups</h2>
+	<ul>
+		<li><a href="#prop-universal">Universal</a></li>
+		<li><a href="#prop-fill">Fill</a></li>
+		<li><a href="#prop-axis">Axis</a></li>
+		<li><a href="#prop-axiscolor">Axis Colors</a></li>
+		<li><a href="#prop-figure">Figure</a></li>
+		<li><a href="#prop-head">Head (Arrow)</a></li>
+		<li><a href="#prop-curve">Curve</a></li>
+		<li><a href="#prop-mesh">Mesh</a></li>
+		<li><a href="#prop-checker">Checker</a></li>
+		<li><a href="#prop-shape">Shape</a></li>
+		<li><a href="#prop-renderer">Renderer</a></li>
+	</ul>
+	<h2>Enums</h2>
+	<ul>
+		<li><a href="#enum-MarkerType" class="deep">MarkerType</a></li>
+		<li><a href="#enum-Subtype" class="deep">Subtype</a></li>
+		<li><a href="#enum-AxisLinkMode" class="deep">AxisLinkMode</a></li>
+		<li><a href="#enum-DetailMode" class="deep">DetailMode</a></li>
+		<li><a href="#enum-CurvePattern" class="deep">CurvePattern</a></li>
+		<li><a href="#enum-CurveCapStyle" class="deep">CurveCapStyle</a></li>
+		<li><a href="#enum-FigureBone" class="deep">FigureBone</a></li>
+	</ul>
+</nav>
+
+<main class="content">
+
+<div class="breadcrumb"><a href="#">Docs</a> &raquo; <a href="#">Class reference</a> &raquo; SuperMarker3D</div>
+
+<h1 class="class-title">SuperMarker3D</h1>
+<div class="inherits">Inherits: <a class="type-link" href="https://docs.godotengine.org/en/stable/classes/class_node3d.html">Node3D</a> &lt; Node &lt; Object</div>
+
+<p><em>Graphic-design-oriented 3D marker node — five marker types (Axis, Mesh, Shape, Curve, Figure) covering 26 subtype variants, with universal outline / fill / detail-mode controls.</em></p>
+
+<h2 class="section" id="description">Description</h2>
+
+<p>SuperMarker3D is a standalone 3D marker / annotation node. Drop one into any scene as a Node3D child; everything is configured from the inspector or script. No companion plugin required — though it cooperates with MultiNode as a template child (set <code>template_mode</code> via <a href="#method-set_template_mode">set_template_mode</a> and the instancer will draw per-instance copies).</p>
+
+<h3 style="font-size:15px;color:var(--fg-strong);margin-top:18px;">Type / subtype model</h3>
+<p>The top-level <a href="#prop-type">type</a> dropdown picks a <a href="#enum-MarkerType">MarkerType</a> category. The <a href="#prop-subtype">subtype</a> dropdown then narrows to the variants in that category — <code>CROSS / PLAIN / BURR / XYZ</code> for Axis, <code>SPHERE / BOX / DIAMOND / CYLINDER / CONE / CAPSULE</code> for Mesh, <code>CIRCLE / SQUARE / DIAMOND / TRIANGLE / CAPSULE / X / ARROW_FLAT</code> for Shape, <code>LINE / RIGHT_ANGLE / ARC / SINE / HELIX / BEZIER / CUSTOM</code> for Curve, and <code>FIGURE</code> for Figure. The inspector hides properties that don't apply to the current type.</p>
+
+<h3 style="font-size:15px;color:var(--fg-strong);margin-top:18px;">Detail modes</h3>
+<p><strong>DETAIL_WIREFRAME</strong> — filled solid mesh (back-culled) with thin face-normal edge quads, so only camera-front-facing edges are visible. Looks like a real mesh at any angle.</p>
+<p><strong>DETAIL_SILHOUETTE</strong> — billboarded 2D outline + optional fill, always faces the camera.</p>
+
+<h3 style="font-size:15px;color:var(--fg-strong);margin-top:18px;">API stability</h3>
+<p>Pre-1.0: enum reordering, name changes, and removals are permitted between minor versions. From 1.0 forward: enum integer values are frozen for scene-file compatibility, no renames, no removals without a deprecation cycle.</p>
+
+<h3 style="font-size:15px;color:var(--fg-strong);margin-top:18px;">Minimal script example</h3>
+<pre><code>var m := SuperMarker3D.new()
+m.type = SuperMarker3D.TYPE_MESH
+m.subtype = SuperMarker3D.MESH_SPHERE
+m.marker_size = 0.75
+m.outline_color = Color.YELLOW
+m.fill_color = Color(0.0, 0.6, 1.0, 0.5)
+add_child(m)</code></pre>
+
+<h2 class="section" id="properties">Properties</h2>
+<table>
+<tr><th>Type</th><th>Name</th><th>Default</th></tr>
+
+<tr id="prop-universal"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Universal</td></tr>
+<tr><td class="type"><a href="#enum-MarkerType">MarkerType</a></td><td class="name"><a href="#prop-type">type</a></td><td class="default">TYPE_AXIS</td></tr>
+<tr><td class="type"><a href="#enum-Subtype">Subtype</a></td><td class="name"><a href="#prop-subtype">subtype</a></td><td class="default">AXIS_CROSS</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-outline_color">outline_color</a></td><td class="default">Color(1, 1, 0, 1)</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-outline_thickness">outline_thickness</a></td><td class="default">0.0</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-marker_size">marker_size</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-capsule_height">capsule_height</a></td><td class="default">2.0</td></tr>
+<tr><td class="type"><a href="#enum-DetailMode">DetailMode</a></td><td class="name"><a href="#prop-detail_mode">detail_mode</a></td><td class="default">DETAIL_WIREFRAME</td></tr>
+
+<tr id="prop-fill"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Fill</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-fill_color">fill_color</a></td><td class="default">Color(0, 1, 0.8, 1)</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-background_color">background_color</a></td><td class="default">Color(0, 0, 0, 0)</td></tr>
+
+<tr id="prop-axis"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Axis</td></tr>
+<tr><td class="type"><a href="#enum-AxisLinkMode">AxisLinkMode</a></td><td class="name"><a href="#prop-axis_link_mode">axis_link_mode</a></td><td class="default">LINK_ALL</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_length_x_pos">axis_length_x_pos</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_length_x_neg">axis_length_x_neg</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_length_y_pos">axis_length_y_pos</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_length_y_neg">axis_length_y_neg</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_length_z_pos">axis_length_z_pos</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_length_z_neg">axis_length_z_neg</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-axis_arrows">axis_arrows</a></td><td class="default">false</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_arrow_length">axis_arrow_length</a></td><td class="default">0.15</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-axis_arrow_width">axis_arrow_width</a></td><td class="default">0.075</td></tr>
+
+<tr id="prop-axiscolor"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Axis Colors</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-axis_color_x_pos">axis_color_x_pos</a></td><td class="default">Color(1, 0.04, 0.04, 1)</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-axis_color_x_neg">axis_color_x_neg</a></td><td class="default">Color(0.16, 0.04, 0.04, 1)</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-axis_color_y_pos">axis_color_y_pos</a></td><td class="default">Color(0.04, 1, 0.04, 1)</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-axis_color_y_neg">axis_color_y_neg</a></td><td class="default">Color(0.04, 0.16, 0.04, 1)</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-axis_color_z_pos">axis_color_z_pos</a></td><td class="default">Color(0.04, 0.04, 1, 1)</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-axis_color_z_neg">axis_color_z_neg</a></td><td class="default">Color(0.04, 0.04, 0.16, 1)</td></tr>
+
+<tr id="prop-figure"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Figure</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-figure_height">figure_height</a></td><td class="default">1.8</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-figure_show_mesh">figure_show_mesh</a></td><td class="default">true</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-figure_show_bones">figure_show_bones</a></td><td class="default">false</td></tr>
+<tr><td class="type">Color</td><td class="name"><a href="#prop-figure_bone_color">figure_bone_color</a></td><td class="default">Color(0.5, 0.5, 0.5, 1)</td></tr>
+<tr><td class="type">Vector3</td><td class="name"><a href="#prop-figure_bone_pelvis_pos">figure_bone_pelvis_pos</a></td><td class="default">Vector3(0, 0.95, 0)</td></tr>
+<tr><td class="type">Vector3</td><td class="name">figure_offset_*</td><td class="default">— see rigging</td></tr>
+<tr><td class="type">Vector3</td><td class="name">figure_bone_*_rot</td><td class="default">Vector3(0, 0, 0)</td></tr>
+<tr><td class="type">float</td><td class="name">figure_bone_*_length</td><td class="default">— per-bone</td></tr>
+<tr><td class="type">float</td><td class="name">figure_bone_*_width</td><td class="default">— per-bone</td></tr>
+<tr><td class="type">Vector3</td><td class="name">figure_bone_*_pose_rot</td><td class="default">Vector3(0, 0, 0)</td></tr>
+
+<tr id="prop-head"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Head (Arrow)</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-head_length">head_length</a></td><td class="default">0.3</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-head_width">head_width</a></td><td class="default">0.15</td></tr>
+
+<tr id="prop-curve"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Curve</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-curve_flat">curve_flat</a></td><td class="default">true</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-curve_length">curve_length</a></td><td class="default">2.0</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-curve_amplitude">curve_amplitude</a></td><td class="default">0.5</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-curve_turns">curve_turns</a></td><td class="default">2.0</td></tr>
+<tr><td class="type">int</td><td class="name"><a href="#prop-curve_segments">curve_segments</a></td><td class="default">32</td></tr>
+<tr><td class="type">Curve3D</td><td class="name"><a href="#prop-curve">curve</a></td><td class="default">null</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-curve_width">curve_width</a></td><td class="default">0.15</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-curve_bank">curve_bank</a></td><td class="default">0.0</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-bank_easing">bank_easing</a></td><td class="default">0.15</td></tr>
+<tr><td class="type"><a href="#enum-CurvePattern">CurvePattern</a></td><td class="name"><a href="#prop-curve_pattern">curve_pattern</a></td><td class="default">CURVE_PATTERN_SOLID</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-dash_length">dash_length</a></td><td class="default">1.0</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-dash_gap">dash_gap</a></td><td class="default">0.5</td></tr>
+<tr><td class="type"><a href="#enum-CurveCapStyle">CurveCapStyle</a></td><td class="name"><a href="#prop-curve_start_cap">curve_start_cap</a></td><td class="default">CURVE_CAP_NONE</td></tr>
+<tr><td class="type">Vector2</td><td class="name"><a href="#prop-start_cap_size">start_cap_size</a></td><td class="default">Vector2(0.3, 0.3)</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-start_cap_linked">start_cap_linked</a></td><td class="default">true</td></tr>
+<tr><td class="type"><a href="#enum-CurveCapStyle">CurveCapStyle</a></td><td class="name"><a href="#prop-curve_end_cap">curve_end_cap</a></td><td class="default">CURVE_CAP_NONE</td></tr>
+<tr><td class="type">Vector2</td><td class="name"><a href="#prop-end_cap_size">end_cap_size</a></td><td class="default">Vector2(0.3, 0.3)</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-end_cap_linked">end_cap_linked</a></td><td class="default">true</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-length_fraction">length_fraction</a></td><td class="default">1.0</td></tr>
+
+<tr id="prop-mesh"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Mesh</td></tr>
+<tr><td class="type">int</td><td class="name"><a href="#prop-mesh_sides">mesh_sides</a></td><td class="default">24</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-smooth_shading">smooth_shading</a></td><td class="default">true</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-two_sided">two_sided</a></td><td class="default">true</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-flip_faces">flip_faces</a></td><td class="default">false</td></tr>
+
+<tr id="prop-checker"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Checker</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-checker_enabled">checker_enabled</a></td><td class="default">false</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-checker_size">checker_size</a></td><td class="default">0.25</td></tr>
+<tr><td class="type">float</td><td class="name"><a href="#prop-checker_darken">checker_darken</a></td><td class="default">0.5</td></tr>
+
+<tr id="prop-shape"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Shape</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-billboard_xz">billboard_xz</a></td><td class="default">false</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-billboard_y">billboard_y</a></td><td class="default">false</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-rounded_corners">rounded_corners</a></td><td class="default">true</td></tr>
+<tr><td class="type">int</td><td class="name"><a href="#prop-shape_sides">shape_sides</a></td><td class="default">24</td></tr>
+
+<tr id="prop-renderer"><td colspan="3" style="background:var(--bg-sidebar-2);color:var(--fg-strong);font-weight:600;">Renderer</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-shows_in_play">shows_in_play</a></td><td class="default">true</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-always_on_top">always_on_top</a></td><td class="default">false</td></tr>
+<tr><td class="type">bool</td><td class="name"><a href="#prop-lights_and_shadows">lights_and_shadows</a></td><td class="default">false</td></tr>
+</table>
+
+<h2 class="section" id="methods">Methods</h2>
+<table>
+<tr><th>Return type</th><th>Signature</th></tr>
+<tr><td class="type">ArrayMesh</td><td><a href="#method-export_mesh">export_mesh</a> ( ) <em style="color:var(--fg-dim)">const</em></td></tr>
+<tr><td class="type">ConvexPolygonShape3D</td><td><a href="#method-export_convex_shape">export_convex_shape</a> ( ) <em style="color:var(--fg-dim)">const</em></td></tr>
+<tr><td class="type">ConcavePolygonShape3D</td><td><a href="#method-export_concave_shape">export_concave_shape</a> ( ) <em style="color:var(--fg-dim)">const</em></td></tr>
+<tr><td class="type">Curve3D</td><td><a href="#method-get_active_curve">get_active_curve</a> ( ) <em style="color:var(--fg-dim)">const</em></td></tr>
+<tr><td class="type">RID</td><td><a href="#method-get_mesh_rid">get_mesh_rid</a> ( ) <em style="color:var(--fg-dim)">const</em></td></tr>
+<tr><td class="type">bool</td><td><a href="#method-is_template_mode">is_template_mode</a> ( ) <em style="color:var(--fg-dim)">const</em></td></tr>
+<tr><td class="type">void</td><td><a href="#method-reset_interpolation">reset_interpolation</a> ( )</td></tr>
+<tr><td class="type">void</td><td><a href="#method-set_template_mode">set_template_mode</a> ( bool <em>template_mode</em> )</td></tr>
+</table>
+
+<h2 class="section" id="enumerations">Enumerations</h2>
+
+<h3 class="member-name" id="enum-MarkerType">enum <span class="enum-name">MarkerType</span>:</h3>
+<ul>
+	<li><span class="constant-name">TYPE_AXIS</span> = <code>0</code> — Axis category — line clusters through the origin (Cross / Plain / Burr / XYZ).</li>
+	<li><span class="constant-name">TYPE_MESH</span> = <code>1</code> — Mesh category — closed 3D primitives.</li>
+	<li><span class="constant-name">TYPE_SHAPE</span> = <code>2</code> — Shape category — flat 2D polygon icons + the flat arrow.</li>
+	<li><span class="constant-name">TYPE_CURVE</span> = <code>3</code> — Curve category — path stamped along a Curve3D.</li>
+	<li><span class="constant-name">TYPE_FIGURE</span> = <code>5</code> — Figure category — humanoid mock-up with an 11-bone rig.</li>
+</ul>
+
+<h3 class="member-name" id="enum-Subtype">enum <span class="enum-name">Subtype</span>:</h3>
+<p style="color:var(--fg-dim);font-style:italic;">Integer values are frozen for scene-file compatibility — listed in numeric order below.</p>
+<ul>
+	<li><span class="constant-name">AXIS_CROSS</span> = <code>0</code> — Four arms on the X/Y plane (Z disabled).</li>
+	<li><span class="constant-name">MESH_DIAMOND</span> = <code>1</code> — Octahedron.</li>
+	<li><span class="constant-name">MESH_SPHERE</span> = <code>2</code> — UV sphere.</li>
+	<li><span class="constant-name">AXIS_PLAIN</span> = <code>3</code> — Six axes, all rendered in outline_color.</li>
+	<li><span class="constant-name">MESH_BOX</span> = <code>4</code> — Axis-aligned cube.</li>
+	<li><span class="constant-name">ARROW_FLAT</span> = <code>6</code> — Flat 2D arrow icon.</li>
+	<li><span class="constant-name">AXIS_XYZ</span> = <code>8</code> — Six axes with per-direction colors.</li>
+	<li><span class="constant-name">FIGURE</span> = <code>10</code> — Humanoid figure.</li>
+	<li><span class="constant-name">AXIS_BURR</span> = <code>11</code> — Six cardinal + six face-diagonal axes (12 lines).</li>
+	<li><span class="constant-name">MESH_CYLINDER</span> = <code>14</code> — Capped cylinder.</li>
+	<li><span class="constant-name">MESH_CONE</span> = <code>15</code> — Round-base cone (mesh_sides = 4 → pyramid).</li>
+	<li><span class="constant-name">MESH_CAPSULE</span> = <code>16</code> — Cylinder body + hemisphere caps.</li>
+	<li><span class="constant-name">FLAT_CIRCLE</span> = <code>17</code> — Regular N-gon.</li>
+	<li><span class="constant-name">FLAT_SQUARE</span> = <code>18</code> — Axis-aligned square.</li>
+	<li><span class="constant-name">FLAT_DIAMOND</span> = <code>19</code> — Rhombus.</li>
+	<li><span class="constant-name">FLAT_TRIANGLE</span> = <code>20</code> — Equilateral triangle, apex up.</li>
+	<li><span class="constant-name">FLAT_CAPSULE</span> = <code>21</code> — 2D pill.</li>
+	<li><span class="constant-name">FLAT_X</span> = <code>22</code> — X / close icon.</li>
+	<li><span class="constant-name">CURVE_LINE</span> = <code>23</code> — Straight segment.</li>
+	<li><span class="constant-name">CURVE_RIGHT_ANGLE</span> = <code>24</code> — L-bend.</li>
+	<li><span class="constant-name">CURVE_ARC</span> = <code>25</code> — Circular arc.</li>
+	<li><span class="constant-name">CURVE_SINE</span> = <code>26</code> — Sine wave.</li>
+	<li><span class="constant-name">CURVE_HELIX</span> = <code>27</code> — 3D coil.</li>
+	<li><span class="constant-name">CURVE_BEZIER</span> = <code>28</code> — Smooth S-curve.</li>
+	<li><span class="constant-name">CURVE_CUSTOM</span> = <code>29</code> — User-supplied Curve3D.</li>
+</ul>
+
+<h3 class="member-name" id="enum-AxisLinkMode">enum <span class="enum-name">AxisLinkMode</span>:</h3>
+<ul>
+	<li><span class="constant-name">LINK_ALL</span> = <code>0</code> — A single value drives all six axis lengths.</li>
+	<li><span class="constant-name">LINK_MIRRORED</span> = <code>1</code> — Pos and neg of the same axis share a value.</li>
+	<li><span class="constant-name">LINK_FREE</span> = <code>2</code> — Every direction is independent.</li>
+</ul>
+
+<h3 class="member-name" id="enum-DetailMode">enum <span class="enum-name">DetailMode</span>:</h3>
+<ul>
+	<li><span class="constant-name">DETAIL_WIREFRAME</span> = <code>0</code> — Filled mesh + face-normal edge quads.</li>
+	<li><span class="constant-name">DETAIL_SILHOUETTE</span> = <code>1</code> — Billboarded 2D outline + optional fill.</li>
+</ul>
+
+<h3 class="member-name" id="enum-CurvePattern">enum <span class="enum-name">CurvePattern</span>:</h3>
+<ul>
+	<li><span class="constant-name">CURVE_PATTERN_SOLID</span> = <code>0</code></li>
+	<li><span class="constant-name">CURVE_PATTERN_DASH</span> = <code>1</code></li>
+	<li><span class="constant-name">CURVE_PATTERN_DOT</span> = <code>2</code></li>
+</ul>
+
+<h3 class="member-name" id="enum-CurveCapStyle">enum <span class="enum-name">CurveCapStyle</span>:</h3>
+<ul>
+	<li><span class="constant-name">CURVE_CAP_NONE</span> = <code>0</code></li>
+	<li><span class="constant-name">CURVE_CAP_ARROW</span> = <code>1</code></li>
+	<li><span class="constant-name">CURVE_CAP_DOT</span> = <code>2</code></li>
+	<li><span class="constant-name">CURVE_CAP_LINE</span> = <code>3</code></li>
+</ul>
+
+<h3 class="member-name" id="enum-FigureBone">enum <span class="enum-name">FigureBone</span>:</h3>
+<ul>
+	<li><span class="constant-name">BONE_PELVIS</span> = <code>0</code> — Root bone; position from figure_bone_pelvis_pos.</li>
+	<li><span class="constant-name">BONE_SPINE</span> = <code>1</code></li>
+	<li><span class="constant-name">BONE_HEAD</span> = <code>2</code></li>
+	<li><span class="constant-name">BONE_L_UPPER_ARM</span> = <code>3</code></li>
+	<li><span class="constant-name">BONE_L_LOWER_ARM</span> = <code>4</code></li>
+	<li><span class="constant-name">BONE_R_UPPER_ARM</span> = <code>5</code></li>
+	<li><span class="constant-name">BONE_R_LOWER_ARM</span> = <code>6</code></li>
+	<li><span class="constant-name">BONE_L_UPPER_LEG</span> = <code>7</code></li>
+	<li><span class="constant-name">BONE_L_LOWER_LEG</span> = <code>8</code></li>
+	<li><span class="constant-name">BONE_R_UPPER_LEG</span> = <code>9</code></li>
+	<li><span class="constant-name">BONE_R_LOWER_LEG</span> = <code>10</code></li>
+	<li><span class="constant-name">BONE_COUNT</span> = <code>11</code> — Sentinel.</li>
+</ul>
+
+<h2 class="section" id="property-descriptions">Property Descriptions</h2>
+
+<h3 class="member-name" id="prop-type"><span style="color:var(--type)">MarkerType</span> type<a class="anchor" href="#prop-type">#</a></h3>
+<div class="signature"><span class="keyword">void</span> <span class="name">set_type</span> ( <span class="type">int</span> value )<br><span class="type">int</span> <span class="name">get_type</span> ( )</div>
+<p>Top-level marker category. Picking a type narrows the <a href="#prop-subtype">subtype</a> dropdown to variants in that category, and toggles the inspector visibility of every type-specific group below. Changing type re-initialises type-specific data fields to their defaults.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-subtype"><span style="color:var(--type)">Subtype</span> subtype<a class="anchor" href="#prop-subtype">#</a></h3>
+<div class="signature"><span class="keyword">void</span> <span class="name">set_subtype</span> ( <span class="type">int</span> value )<br><span class="type">int</span> <span class="name">get_subtype</span> ( )</div>
+<p>Variant within the current <a href="#prop-type">type</a>. Enum integer values are frozen for scene-file compatibility — old pre-1.0 scenes store these directly and keep their meaning.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-outline_color"><span style="color:var(--type)">Color</span> outline_color<a class="anchor" href="#prop-outline_color">#</a></h3>
+<p>Universal edge / outline color. Used by every subtype that draws an outline strip.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-outline_thickness"><span style="color:var(--type)">float</span> outline_thickness<a class="anchor" href="#prop-outline_thickness">#</a></h3>
+<p>Universal outline width in meters. At <code>0.0</code>, outlines render as 1px lines (crisp at every camera distance). Above 0, axis arms become thin tubes, arrowheads gain volume, and mesh-face outlines paint as a strip of the given thickness.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-marker_size"><span style="color:var(--type)">float</span> marker_size<a class="anchor" href="#prop-marker_size">#</a></h3>
+<p>Overall size in meters for Mesh and Shape subtypes. Hidden for Axis (uses per-direction lengths) and Figure (uses <a href="#prop-figure_height">figure_height</a>).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-capsule_height"><span style="color:var(--type)">float</span> capsule_height<a class="anchor" href="#prop-capsule_height">#</a></h3>
+<p>Body length between the two hemisphere caps for <code>MESH_CAPSULE</code>, and the body length of the 2D pill for <code>FLAT_CAPSULE</code>. Cap radius follows <a href="#prop-marker_size">marker_size</a>.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-detail_mode"><span style="color:var(--type)">DetailMode</span> detail_mode<a class="anchor" href="#prop-detail_mode">#</a></h3>
+<p><code>DETAIL_WIREFRAME</code> for a real-mesh look with face-normal edges; <code>DETAIL_SILHOUETTE</code> for a billboarded 2D outline that always faces the camera.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-fill_color"><span style="color:var(--type)">Color</span> fill_color<a class="anchor" href="#prop-fill_color">#</a></h3>
+<p>Solid-body color. Alpha &lt; 1 makes the marker translucent; alpha = 0 hides the fill entirely (outline-only).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-background_color"><span style="color:var(--type)">Color</span> background_color<a class="anchor" href="#prop-background_color">#</a></h3>
+<p>Curve subtypes only: color of the gap panels between dashes / dots. Transparent by default so gaps are invisible.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_link_mode"><span style="color:var(--type)">AxisLinkMode</span> axis_link_mode<a class="anchor" href="#prop-axis_link_mode">#</a></h3>
+<p>Linkage between the six <code>axis_length_*</code> fields. <code>LINK_ALL</code> drives all six from a single value (uniform marker). <code>LINK_MIRRORED</code> couples each axis's pos and neg directions. <code>LINK_FREE</code> leaves every direction independent. Shared across every Axis subtype so switching between Cross / Plain / Burr / XYZ preserves authored values and link behavior.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_length_x_pos"><span style="color:var(--type)">float</span> axis_length_x_pos<a class="anchor" href="#prop-axis_length_x_pos">#</a></h3>
+<p>Length of the +X axis arm. Set to 0 to hide this arm. See <a href="#prop-axis_link_mode">axis_link_mode</a> for which fields are slaved.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_length_x_neg"><span style="color:var(--type)">float</span> axis_length_x_neg<a class="anchor" href="#prop-axis_length_x_neg">#</a></h3>
+<p>Length of the -X axis arm. Set to 0 to hide this arm.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_length_y_pos"><span style="color:var(--type)">float</span> axis_length_y_pos<a class="anchor" href="#prop-axis_length_y_pos">#</a></h3>
+<p>Length of the +Y axis arm. Set to 0 to hide this arm.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_length_y_neg"><span style="color:var(--type)">float</span> axis_length_y_neg<a class="anchor" href="#prop-axis_length_y_neg">#</a></h3>
+<p>Length of the -Y axis arm. Set to 0 to hide this arm.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_length_z_pos"><span style="color:var(--type)">float</span> axis_length_z_pos<a class="anchor" href="#prop-axis_length_z_pos">#</a></h3>
+<p>Length of the +Z axis arm. Set to 0 to hide this arm.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_length_z_neg"><span style="color:var(--type)">float</span> axis_length_z_neg<a class="anchor" href="#prop-axis_length_z_neg">#</a></h3>
+<p>Length of the -Z axis arm. Set to 0 to hide this arm. Note: <code>AXIS_CROSS</code> disables Z entirely.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_arrows"><span style="color:var(--type)">bool</span> axis_arrows<a class="anchor" href="#prop-axis_arrows">#</a></h3>
+<p>Add a cone arrowhead to the tip of every non-zero axis arm. Honored by <code>AXIS_CROSS</code>, <code>AXIS_PLAIN</code>, and <code>AXIS_XYZ</code>; ignored by <code>AXIS_BURR</code> (the diagonals make it visually noisy).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_arrow_length"><span style="color:var(--type)">float</span> axis_arrow_length<a class="anchor" href="#prop-axis_arrow_length">#</a></h3>
+<p>Arrowhead cone height in meters, measured back from the arm tip along the arm direction.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_arrow_width"><span style="color:var(--type)">float</span> axis_arrow_width<a class="anchor" href="#prop-axis_arrow_width">#</a></h3>
+<p>Arrowhead base radius (splay perpendicular to the arm).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_color_x_pos"><span style="color:var(--type)">Color</span> axis_color_x_pos<a class="anchor" href="#prop-axis_color_x_pos">#</a></h3>
+<p><code>AXIS_XYZ</code> only: bright red on the +X arm by default. Per-arm color survives the line→tube switch at thickness &gt; 0.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_color_x_neg"><span style="color:var(--type)">Color</span> axis_color_x_neg<a class="anchor" href="#prop-axis_color_x_neg">#</a></h3>
+<p><code>AXIS_XYZ</code> only: dark red on the -X arm by default.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_color_y_pos"><span style="color:var(--type)">Color</span> axis_color_y_pos<a class="anchor" href="#prop-axis_color_y_pos">#</a></h3>
+<p><code>AXIS_XYZ</code> only: bright green on the +Y arm by default.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_color_y_neg"><span style="color:var(--type)">Color</span> axis_color_y_neg<a class="anchor" href="#prop-axis_color_y_neg">#</a></h3>
+<p><code>AXIS_XYZ</code> only: dark green on the -Y arm by default.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_color_z_pos"><span style="color:var(--type)">Color</span> axis_color_z_pos<a class="anchor" href="#prop-axis_color_z_pos">#</a></h3>
+<p><code>AXIS_XYZ</code> only: bright blue on the +Z arm by default.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-axis_color_z_neg"><span style="color:var(--type)">Color</span> axis_color_z_neg<a class="anchor" href="#prop-axis_color_z_neg">#</a></h3>
+<p><code>AXIS_XYZ</code> only: dark blue on the -Z arm by default.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-figure_height"><span style="color:var(--type)">float</span> figure_height<a class="anchor" href="#prop-figure_height">#</a></h3>
+<p>Standing tip-to-toe extent of the Figure subtype, in meters. Body proportions are derived from this value.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-figure_show_mesh"><span style="color:var(--type)">bool</span> figure_show_mesh<a class="anchor" href="#prop-figure_show_mesh">#</a></h3>
+<p>When true, the skinned humanoid mesh renders. Turn off to see only the rig bones (combine with <a href="#prop-figure_show_bones">figure_show_bones</a>).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-figure_show_bones"><span style="color:var(--type)">bool</span> figure_show_bones<a class="anchor" href="#prop-figure_show_bones">#</a></h3>
+<p>Rigging mode toggle. When true: pose rotations are forced to zero, per-bone rest rotation / length / width and the offsets become inspector-visible, and a tube overlay of every bone renders on top of the rest mesh. When false: pose rotations drive the chain, the mesh renders posed, and rig fields are hidden.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-figure_bone_color"><span style="color:var(--type)">Color</span> figure_bone_color<a class="anchor" href="#prop-figure_bone_color">#</a></h3>
+<p>Color of the bone-overlay tubes drawn when <a href="#prop-figure_show_bones">figure_show_bones</a> is on. Independent from fill / outline color. Alpha &lt; 1 lets you see bones through the mesh while rigging.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-figure_bone_pelvis_pos"><span style="color:var(--type)">Vector3</span> figure_bone_pelvis_pos<a class="anchor" href="#prop-figure_bone_pelvis_pos">#</a></h3>
+<p>Pelvis position in the marker's local space (rigging-only, baked). All other bones cascade from this point through the rig graph.</p>
+<div class="note"><span class="label">Note:</span> Each of the 10 non-pelvis bones exposes a parallel <code>_rot</code>, <code>_length</code>, <code>_width</code>, and <code>_pose_rot</code> property (e.g. <code>figure_bone_l_upper_arm_rot</code>). The first three are rigging-only (locked once the rig is baked); <code>_pose_rot</code> is the runtime animation control — zero means rest pose, anything else rotates the bone (and every descendant) on top of the rest.</div>
+<div class="note"><span class="label">Note:</span> The five offset bars — <code>figure_offset_head_base</code>, <code>figure_offset_l_shoulder</code>, <code>figure_offset_r_shoulder</code>, <code>figure_offset_l_hip</code>, <code>figure_offset_r_hip</code> — attach child pivots to their parent bone's tip in the parent's rotated frame. Each has a paired <code>_width</code> for the capsule radius used by the skinning Voronoi.</div>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-head_length"><span style="color:var(--type)">float</span> head_length<a class="anchor" href="#prop-head_length">#</a></h3>
+<p><code>ARROW_FLAT</code> only: arrowhead length in marker-local units, measured back from the arrow tip.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-head_width"><span style="color:var(--type)">float</span> head_width<a class="anchor" href="#prop-head_width">#</a></h3>
+<p><code>ARROW_FLAT</code> only: full arrowhead width at the shoulders.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_flat"><span style="color:var(--type)">bool</span> curve_flat<a class="anchor" href="#prop-curve_flat">#</a></h3>
+<p>Curve only: when true the curve renders as a flat ribbon (2D-look stamp on a 3D path); when false it renders as a 3D tube.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_length"><span style="color:var(--type)">float</span> curve_length<a class="anchor" href="#prop-curve_length">#</a></h3>
+<p>Curve preset only: overall length of the generated path (semantics vary slightly by preset — straight-line distance for <code>CURVE_LINE</code>, arc chord, helix axial length, etc.).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_amplitude"><span style="color:var(--type)">float</span> curve_amplitude<a class="anchor" href="#prop-curve_amplitude">#</a></h3>
+<p>Curve preset only: bend / radius / wave depth for presets that have one (arc radius, sine height, helix radius, bezier deflection).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_turns"><span style="color:var(--type)">float</span> curve_turns<a class="anchor" href="#prop-curve_turns">#</a></h3>
+<p>Curve preset only: cycle count for periodic presets (sine cycles, helix turns).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_segments"><span style="color:var(--type)">int</span> curve_segments<a class="anchor" href="#prop-curve_segments">#</a></h3>
+<p>Curve preset only: tessellation segment count along the path. Higher = smoother but more verts.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve"><span style="color:var(--type)">Curve3D</span> curve<a class="anchor" href="#prop-curve">#</a></h3>
+<p>User-supplied <a href="https://docs.godotengine.org/en/stable/classes/class_curve3d.html">Curve3D</a> driving the path when <a href="#prop-subtype">subtype</a> is <code>CURVE_CUSTOM</code>. Ignored for the procedural presets — see <a href="#method-get_active_curve">get_active_curve</a> to get the actual curve in use.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_width"><span style="color:var(--type)">float</span> curve_width<a class="anchor" href="#prop-curve_width">#</a></h3>
+<p>Curve only: ribbon / tube width (flat) or tube radius (3D) in meters.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_bank"><span style="color:var(--type)">float</span> curve_bank<a class="anchor" href="#prop-curve_bank">#</a></h3>
+<p>Curve only: lean angle of the ribbon around its travel direction, in radians. Useful for banking a racetrack ribbon into turns.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-bank_easing"><span style="color:var(--type)">float</span> bank_easing<a class="anchor" href="#prop-bank_easing">#</a></h3>
+<p>Curve only: ease-in / ease-out fraction at the ends of the bank ramp (0 = no easing, hard step; 0.5 = full sigmoid).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_pattern"><span style="color:var(--type)">CurvePattern</span> curve_pattern<a class="anchor" href="#prop-curve_pattern">#</a></h3>
+<p>Curve only: <code>CURVE_PATTERN_SOLID</code>, <code>CURVE_PATTERN_DASH</code>, or <code>CURVE_PATTERN_DOT</code>.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-dash_length"><span style="color:var(--type)">float</span> dash_length<a class="anchor" href="#prop-dash_length">#</a></h3>
+<p>Curve only: length of one dash segment when <a href="#prop-curve_pattern">curve_pattern</a> is <code>DASH</code>.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-dash_gap"><span style="color:var(--type)">float</span> dash_gap<a class="anchor" href="#prop-dash_gap">#</a></h3>
+<p>Curve only: length of the gap between dashes / dots.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_start_cap"><span style="color:var(--type)">CurveCapStyle</span> curve_start_cap<a class="anchor" href="#prop-curve_start_cap">#</a></h3>
+<p>Curve only: cap style at the start of the path — <code>None / Arrow / Dot / Line</code>.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-start_cap_size"><span style="color:var(--type)">Vector2</span> start_cap_size<a class="anchor" href="#prop-start_cap_size">#</a></h3>
+<p>Curve only: cap dimensions at the start. x = along-path length, y = perpendicular width. When <a href="#prop-start_cap_linked">start_cap_linked</a> is true, the setter mirrors x into y so the cap stays proportional.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-start_cap_linked"><span style="color:var(--type)">bool</span> start_cap_linked<a class="anchor" href="#prop-start_cap_linked">#</a></h3>
+<p>Curve only: when true, <a href="#prop-start_cap_size">start_cap_size</a> keeps x and y synchronized.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-curve_end_cap"><span style="color:var(--type)">CurveCapStyle</span> curve_end_cap<a class="anchor" href="#prop-curve_end_cap">#</a></h3>
+<p>Curve only: cap style at the end of the path.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-end_cap_size"><span style="color:var(--type)">Vector2</span> end_cap_size<a class="anchor" href="#prop-end_cap_size">#</a></h3>
+<p>Curve only: cap dimensions at the end. See <a href="#prop-start_cap_size">start_cap_size</a>.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-end_cap_linked"><span style="color:var(--type)">bool</span> end_cap_linked<a class="anchor" href="#prop-end_cap_linked">#</a></h3>
+<p>Curve only: when true, <a href="#prop-end_cap_size">end_cap_size</a> keeps x and y synchronized.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-length_fraction"><span style="color:var(--type)">float</span> length_fraction<a class="anchor" href="#prop-length_fraction">#</a></h3>
+<p>Curve only: fraction (0–1) of the path that is actually rendered. Useful for "drawing in" a path over time — animate from 0 to 1 with a Tween.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-mesh_sides"><span style="color:var(--type)">int</span> mesh_sides<a class="anchor" href="#prop-mesh_sides">#</a></h3>
+<p>Mesh only: longitudinal segment count for sphere / diamond / cone / cylinder / capsule. Range 5..24. Controls both fill tessellation and wireframe segmentation. Use <code>mesh_sides = 4</code> on <code>MESH_CONE</code> for a four-sided pyramid.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-smooth_shading"><span style="color:var(--type)">bool</span> smooth_shading<a class="anchor" href="#prop-smooth_shading">#</a></h3>
+<p>Mesh only: when true (default), curved subtypes use smooth per-pixel normals plus the analytical sphere shader for lat/lon (or meridian + rim) outlines. When false, every face uses its flat face normal and outlines are painted along the actual mesh edges — the faceted, low-poly look. Pyramid is always faceted regardless.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-two_sided"><span style="color:var(--type)">bool</span> two_sided<a class="anchor" href="#prop-two_sided">#</a></h3>
+<p>Render both sides of the geometry. Back faces draw in an earlier pass (cull_front, no depth-write, lower render_priority) and front faces overwrite them where they overlap — so the mesh reads correctly from all angles at any fill alpha. Flat-shape subtypes use a single cull-disabled surface instead.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-flip_faces"><span style="color:var(--type)">bool</span> flip_faces<a class="anchor" href="#prop-flip_faces">#</a></h3>
+<p>When <a href="#prop-two_sided">two_sided</a> is false, renders the back face instead of the front face.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-checker_enabled"><span style="color:var(--type)">bool</span> checker_enabled<a class="anchor" href="#prop-checker_enabled">#</a></h3>
+<p>Checkerboard overlay. When on, multiplies a darken factor into alternate squares of a triplanar grid in marker-local space — useful for showing real-world scale on Mesh / Shape / Curve / Figure / Axis tubes while prototyping a level.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-checker_size"><span style="color:var(--type)">float</span> checker_size<a class="anchor" href="#prop-checker_size">#</a></h3>
+<p>Checker only: edge length of one square, in the same units as the marker's local space.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-checker_darken"><span style="color:var(--type)">float</span> checker_darken<a class="anchor" href="#prop-checker_darken">#</a></h3>
+<p>Checker only: multiplier applied to alternating squares (0 = black, 1 = no change).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-billboard_xz"><span style="color:var(--type)">bool</span> billboard_xz<a class="anchor" href="#prop-billboard_xz">#</a></h3>
+<p>Shape only: when true, the flat shape rotates in the XZ plane to face the camera while keeping Y axis fixed (BILLBOARD_FIXED_Y). Mutually distinct from <a href="#prop-billboard_y">billboard_y</a>.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-billboard_y"><span style="color:var(--type)">bool</span> billboard_y<a class="anchor" href="#prop-billboard_y">#</a></h3>
+<p>Shape only: when true, the flat shape fully faces the camera (BILLBOARD_ENABLED).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-rounded_corners"><span style="color:var(--type)">bool</span> rounded_corners<a class="anchor" href="#prop-rounded_corners">#</a></h3>
+<p>Shape only: when true, arc joints and polygon corners gain a disc blob to produce smooth rounded joins.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-shape_sides"><span style="color:var(--type)">int</span> shape_sides<a class="anchor" href="#prop-shape_sides">#</a></h3>
+<p><code>FLAT_CIRCLE</code> only: regular N-gon segment count. Range 6..64. Hidden for all other subtypes.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-shows_in_play"><span style="color:var(--type)">bool</span> shows_in_play<a class="anchor" href="#prop-shows_in_play">#</a></h3>
+<p>Renderer flag — when false, the marker hides at runtime (only visible in the editor). Pair with <a href="#prop-always_on_top">always_on_top</a> for editor-only annotations.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-always_on_top"><span style="color:var(--type)">bool</span> always_on_top<a class="anchor" href="#prop-always_on_top">#</a></h3>
+<p>Renderer flag — when true, disables depth testing so the marker draws over opaque geometry. Useful for editor cues and HUD overlays.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="prop-lights_and_shadows"><span style="color:var(--type)">bool</span> lights_and_shadows<a class="anchor" href="#prop-lights_and_shadows">#</a></h3>
+<p>Renderer flag — when true, the marker switches to per-pixel lit shading and casts / receives shadows like a normal MeshInstance3D. A thick burr stands in for a bush, a tall mesh box stands in for a building, etc. Off (default) = unshaded, no shadows — best for editor cues, HUD overlays, and pure design markers.</p>
+
+<h2 class="section" id="method-descriptions">Method Descriptions</h2>
+
+<h3 class="member-name" id="method-export_mesh"><span style="color:var(--type)">ArrayMesh</span> export_mesh ( ) <em style="color:var(--fg-dim)">const</em><a class="anchor" href="#method-export_mesh">#</a></h3>
+<p>Returns a freestanding <code>ArrayMesh</code> duplicate of every surface currently rendered by this marker (the primary mesh and, for Axis subtypes, each per-arm surface). Drop the result into a <a href="https://docs.godotengine.org/en/stable/classes/class_meshinstance3d.html">MeshInstance3D</a>, save it to disk, etc. Geometry is in marker-local space — apply the marker's transform when consuming the result if you want world-space. No materials are attached.</p>
+<pre><code>var marker := $SuperMarker3D
+var mesh := marker.export_mesh()
+$MeshInstance3D.mesh = mesh
+ResourceSaver.save(mesh, "res://my_marker.tres")</code></pre>
+<hr class="member-sep">
+
+<h3 class="member-name" id="method-export_convex_shape"><span style="color:var(--type)">ConvexPolygonShape3D</span> export_convex_shape ( ) <em style="color:var(--fg-dim)">const</em><a class="anchor" href="#method-export_convex_shape">#</a></h3>
+<p>Convex-hull collision shape covering every triangle vertex of the marker's geometry. Cheap and stable at runtime; concavities are filled in. Suitable for movable physics bodies (RigidBody3D / CharacterBody3D).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="method-export_concave_shape"><span style="color:var(--type)">ConcavePolygonShape3D</span> export_concave_shape ( ) <em style="color:var(--fg-dim)">const</em><a class="anchor" href="#method-export_concave_shape">#</a></h3>
+<p>Triangle-mesh collision shape that matches the marker's visuals exactly — keeps helix coils, right-angle bends, arc curves, etc. Static-only (no movement under physics) and pricier per query than the convex variant.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="method-get_active_curve"><span style="color:var(--type)">Curve3D</span> get_active_curve ( ) <em style="color:var(--fg-dim)">const</em><a class="anchor" href="#method-get_active_curve">#</a></h3>
+<p>Returns a <strong>duplicate</strong> of the <a href="https://docs.godotengine.org/en/stable/classes/class_curve3d.html">Curve3D</a> currently driving the geometry — the user-supplied <a href="#prop-curve">curve</a> resource for <code>CURVE_CUSTOM</code>, or a freshly generated curve built from the active preset's parameters for any other Curve subtype. The duplicate is independent: edit it, save it as a <code>.tres</code>, or hand it to a <a href="https://docs.godotengine.org/en/stable/classes/class_path3d.html">Path3D</a> for an AI agent / camera to follow without affecting the marker. Returns an empty Curve3D if the marker isn't a Curve subtype.</p>
+<pre><code>var path := Path3D.new()
+path.curve = $SuperMarker3D.get_active_curve()
+add_child(path)
+var follower := PathFollow3D.new()
+path.add_child(follower)
+# Now `follower` traces the marker's curve.</code></pre>
+<hr class="member-sep">
+
+<h3 class="member-name" id="method-get_mesh_rid"><span style="color:var(--type)">RID</span> get_mesh_rid ( ) <em style="color:var(--fg-dim)">const</em><a class="anchor" href="#method-get_mesh_rid">#</a></h3>
+<p>Returns the RenderingServer mesh RID currently held by this marker. Useful when wiring a SuperMarker3D into another instancer (e.g. MultiNode's per-instance mesh ID slot).</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="method-is_template_mode"><span style="color:var(--type)">bool</span> is_template_mode ( ) <em style="color:var(--fg-dim)">const</em><a class="anchor" href="#method-is_template_mode">#</a></h3>
+<p>Returns true when this marker has been flipped into template mode by an external instancer — see <a href="#method-set_template_mode">set_template_mode</a>.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="method-reset_interpolation"><span style="color:var(--type)">void</span> reset_interpolation ( )<a class="anchor" href="#method-reset_interpolation">#</a></h3>
+<p>Reset the physics interpolation state so the next render frame draws at the current transform with no blend from the previous one. Call after teleporting this marker (or its parent) to a new pose — otherwise the engine will draw a one-frame smear from the old position to the new one.</p>
+<hr class="member-sep">
+
+<h3 class="member-name" id="method-set_template_mode"><span style="color:var(--type)">void</span> set_template_mode ( bool <em>template_mode</em> )<a class="anchor" href="#method-set_template_mode">#</a></h3>
+<p>Flip the marker into "template" mode — it stops rendering itself, but its mesh / materials remain available for an external instancer to draw. MultiNode's SuperMarkerHandler calls this at scan time so a SuperMarker3D used as a template child doesn't double-render alongside its stamped instances. Not normally called from game code.</p>
+
+</main>
+</div>
+</body>
+</html>
