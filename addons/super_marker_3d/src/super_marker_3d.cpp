@@ -929,6 +929,9 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	const bool is_axis_2d  = (_shape == AXIS_CROSS); // 4 arms, no Z
 	const bool is_axis_burr = (_shape == AXIS_BURR);
 	auto hide = [&]() { p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_STORAGE; };
+	// Strip both editor AND storage — for union-backed fields whose type
+	// doesn't match. Prevents loading stale/garbage union data.
+	auto hide_nosave = [&]() { p_property.usage = PROPERTY_USAGE_NONE; };
 	auto read_only = [&]() { p_property.usage |= PROPERTY_USAGE_READ_ONLY; };
 
 	// `subtype` is the inspector's second dropdown — its enum hint
@@ -965,7 +968,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// fill_color shows on every category that has a fillable interior.
 	const bool is_figure_fill = (_shape == FIGURE);
 	if (name == "fill_color" && !(is_mesh || curve_flat_style || is_shape || is_figure_fill)) hide();
-	if (name == "background_color" && !is_curve) hide();
+	if (name == "background_color" && !is_curve) hide_nosave();
 	// Side count is only meaningful on round-bodied mesh subtypes and FLAT_CIRCLE.
 	const bool is_round_mesh = (_shape == MESH_CYLINDER || _shape == MESH_CONE
 			|| _shape == MESH_DIAMOND);
@@ -973,7 +976,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "mesh_sides" && !is_mesh) hide();
 	const bool two_sided_capable = (is_mesh || is_shape || is_curve || _shape == FIGURE);
 	if (name == "two_sided" && !two_sided_capable) hide();
-	if (name == "flip_faces" && (_two_sided || !two_sided_capable)) hide();
+	if (name == "flip_faces" && (_flag(F_TWO_SIDED) || !two_sided_capable)) hide();
 	if (name == "mesh_sides" && !is_round_mesh) hide();
 	// Smooth shading: only meaningful on curved mesh subtypes — sphere,
 	// diamond, cone, cylinder, capsule. Pyramid is always faceted.
@@ -991,19 +994,20 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Axis type — link mode + 6 length fields. Whether each length
 	// is editable depends on the link mode; whether it's visible at all
 	// depends on the subtype (Cross hides Z).
-	if (name == "axis_link_mode" && !is_axis) hide();
+	if (name == "axis_link_mode" && !is_axis) hide_nosave();
 	const bool is_axis_color = name.begins_with("axis_color_");
-	if (is_axis_color && !is_axis_xyz) hide();
+	if (is_axis_color && !is_axis) hide_nosave();
+	else if (is_axis_color && !is_axis_xyz) hide();
 	const bool is_axis_len = (name == "axis_length_x_pos" || name == "axis_length_x_neg"
 			|| name == "axis_length_y_pos" || name == "axis_length_y_neg"
 			|| name == "axis_length_z_pos" || name == "axis_length_z_neg");
-	if (is_axis_len && !is_axis) hide();
+	if (is_axis_len && !is_axis) hide_nosave();
 	// AXIS_CROSS hides all Z lengths — 2D only.
 	if (is_axis_2d && (name == "axis_length_z_pos" || name == "axis_length_z_neg")) hide();
 	// Apply linkage greying. LINK_ALL: every length except X+ is slaved.
 	// LINK_MIRRORED: every neg is slaved to its pos.
 	if (is_axis_len && is_axis) {
-		switch (_axis_link_mode) {
+		switch (_td.axis.link_mode) {
 			case LINK_ALL:
 				if (name != "axis_length_x_pos") read_only();
 				break;
@@ -1021,12 +1025,14 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// always_on_top forces unshaded — grey out lights_and_shadows but
 	// keep its underlying value, so toggling always_on_top off restores
 	// the user's prior choice.
-	if (name == "lights_and_shadows" && _always_on_top) read_only();
+	if (name == "lights_and_shadows" && _flag(F_ALWAYS_ON_TOP)) read_only();
 
 	if ((name == "axis_arrows" || name == "axis_arrow_length"
-			|| name == "axis_arrow_width") && (!is_axis || is_axis_burr)) hide();
+			|| name == "axis_arrow_width") && !is_axis) hide_nosave();
+	else if ((name == "axis_arrows" || name == "axis_arrow_length"
+			|| name == "axis_arrow_width") && is_axis_burr) hide();
 	if ((name == "axis_arrow_length" || name == "axis_arrow_width")
-			&& is_axis && !is_axis_burr && !_axis_arrows) hide();
+			&& is_axis && !is_axis_burr && !_flag(F_AXIS_ARROWS)) hide();
 	// Axis type drives marker_size out of the picture — lengths run
 	// the show; outline_color drives the bare-line variants but is
 	// hidden on the per-axis-color XYZ variant.
@@ -1034,7 +1040,8 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	if (name == "outline_color" && is_axis_xyz) hide();
 
 	// Arrow proportions — only meaningful on the flat-arrow Shape subtype.
-	if ((name == "head_length" || name == "head_width") && _shape != ARROW_FLAT) hide();
+	if ((name == "head_length" || name == "head_width") && !is_shape) hide_nosave();
+	else if ((name == "head_length" || name == "head_width") && _shape != ARROW_FLAT) hide();
 	if (name == "rounded_corners" && _shape == ARROW_FLAT) hide();
 
 	// Curve shape uses its own width; generic marker_size / outline_thickness don't apply.
@@ -1050,13 +1057,13 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 			|| name == "curve_start_cap" || name == "curve_end_cap"
 			|| name == "start_cap_size" || name == "end_cap_size"
 			|| name == "start_cap_linked" || name == "end_cap_linked"
-			|| name == "length_fraction") && !is_curve) hide();
+			|| name == "length_fraction") && !is_curve) hide_nosave();
 	// Curve subtype gating — `curve` resource only for CUSTOM;
 	// preset knobs only when the active subtype reads them.
 	if (is_curve) {
 		const bool is_custom = _curve_is_custom();
 		if (name == "curve" && !is_custom) hide();
-		// Sampled subtypes use _curve_segments. Linear ones (Line,
+		// Sampled subtypes use _td.curve.segments. Linear ones (Line,
 		// Right Angle, Bezier) and Custom don't.
 		if (name == "curve_segments" && (is_custom
 				|| _shape == CURVE_LINE
@@ -1086,24 +1093,24 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	// Caps + patterns now apply to BOTH ribbon and 3D-tube. Just gate on
 	// the cap kind / pattern selector.
 	if ((name == "dash_length" || name == "dash_gap") && is_curve
-			&& _curve_pattern == CURVE_PATTERN_SOLID) hide();
+			&& _td.curve.pattern == CURVE_PATTERN_SOLID) hide();
 	if ((name == "start_cap_size" || name == "start_cap_linked") && is_curve
-			&& _curve_start_cap == CURVE_CAP_NONE) hide();
+			&& _td.curve.start_cap == CURVE_CAP_NONE) hide();
 	if ((name == "end_cap_size" || name == "end_cap_linked") && is_curve
-			&& _curve_end_cap == CURVE_CAP_NONE) hide();
+			&& _td.curve.end_cap == CURVE_CAP_NONE) hide();
 	// 3D tube treats CURVE_CAP_DOT as Round = same as None (the tube's
 	// natural hemisphere end already provides the round cap), so its
 	// per-cap size + linked controls don't apply.
 	const bool curve_3d_style = is_curve && !_is_curve_flat_style();
 	if (curve_3d_style) {
 		if ((name == "start_cap_size" || name == "start_cap_linked")
-				&& _curve_start_cap == CURVE_CAP_DOT) hide();
+				&& _td.curve.start_cap == CURVE_CAP_DOT) hide();
 		if ((name == "end_cap_size" || name == "end_cap_linked")
-				&& _curve_end_cap == CURVE_CAP_DOT) hide();
+				&& _td.curve.end_cap == CURVE_CAP_DOT) hide();
 	}
 
 	const bool is_figure = (_shape == FIGURE);
-	if (name.begins_with("figure_") && !is_figure) hide();
+	if (name.begins_with("figure_") && !is_figure) hide_nosave();
 	// Rigging mode toggles which figure fields are visible. Bones On =
 	// edit the rest rig (rotations, lengths, widths, offsets, pelvis pos);
 	// pose rotations are hidden because the mesh is forced to rest. Bones
@@ -1115,8 +1122,8 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				|| (name.begins_with("figure_bone_") && name.ends_with("_width"))
 				|| name.begins_with("figure_offset_");
 		const bool pose_field = name.begins_with("figure_bone_") && name.ends_with("_pose_rot");
-		if (rig_field && !_figure_show_bones) hide();
-		if (pose_field && _figure_show_bones) hide();
+		if (rig_field && !_flag(F_FIGURE_SHOW_BONES)) hide();
+		if (pose_field && _flag(F_FIGURE_SHOW_BONES)) hide();
 	}
 	if (name == "marker_size" && is_figure) hide();
 }
@@ -1126,49 +1133,89 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 // ---------------------------------------------------------------------------
 
 SuperMarker3D::SuperMarker3D() {
-	// Pelvis position — offset from origin (player position) in the 1.65m
-	// reference frame. All other bone positions are derived from the
-	// rotation+length chain. Final positions scale by figure_height/1.65.
-	_figure_bone_pelvis_pos = Vector3(0.00f, 0.95f, 0.00f);
+	_init_type_data(TYPE_AXIS);
+}
 
-	for (int i = 0; i < BONE_COUNT; i++) {
-		_figure_bone_rot[i] = Vector3();
-		_figure_bone_pose_rot[i] = Vector3();
-		_figure_bone_length[i] = 0.0f;
-		_figure_bone_width[i] = 0.05f;
+void SuperMarker3D::_init_type_data(int p_type) {
+	memset(&_td, 0, sizeof(_td));
+	switch (p_type) {
+		case TYPE_AXIS:
+			for (int i = 0; i < 6; i++) _td.axis.lengths[i] = 0.5f;
+			_td.axis.arrow_length = 0.15f;
+			_td.axis.arrow_width = 0.075f;
+			_td.axis.link_mode = LINK_ALL;
+			_td.axis.colors[AL_XP] = Color(1.00f, 0.04f, 0.04f, 1.0f);
+			_td.axis.colors[AL_XN] = Color(0.16f, 0.04f, 0.04f, 1.0f);
+			_td.axis.colors[AL_YP] = Color(0.04f, 1.00f, 0.04f, 1.0f);
+			_td.axis.colors[AL_YN] = Color(0.04f, 0.16f, 0.04f, 1.0f);
+			_td.axis.colors[AL_ZP] = Color(0.04f, 0.04f, 1.00f, 1.0f);
+			_td.axis.colors[AL_ZN] = Color(0.04f, 0.04f, 0.16f, 1.0f);
+			_sflag(F_AXIS_ARROWS, false);
+			break;
+		case TYPE_MESH:
+			_sflag(F_SMOOTH_SHADING, true);
+			break;
+		case TYPE_SHAPE:
+			_td.shape.head_length = 0.3f;
+			_td.shape.head_width = 0.15f;
+			_sflag(F_BILLBOARD_XZ, false);
+			_sflag(F_BILLBOARD_Y, false);
+			_sflag(F_ROUNDED_CORNERS, true);
+			break;
+		case TYPE_CURVE:
+			_td.curve.length = 2.0f;
+			_td.curve.amplitude = 0.5f;
+			_td.curve.turns = 2.0f;
+			_td.curve.width = 0.15f;
+			_td.curve.bank_easing = 0.15f;
+			_td.curve.dash_length = 1.0f;
+			_td.curve.dash_gap = 0.5f;
+			_td.curve.length_fraction = 1.0f;
+			_td.curve.segments = 32;
+			_td.curve.start_cap_size = Vector2(0.3f, 0.3f);
+			_td.curve.end_cap_size = Vector2(0.3f, 0.3f);
+			_sflag(F_CURVE_FLAT, true);
+			_sflag(F_START_CAP_LINKED, true);
+			_sflag(F_END_CAP_LINKED, true);
+			break;
+		case TYPE_FIGURE: {
+			_td.figure.height = 1.8f;
+			_td.figure.bone_color = Color(0.5f, 0.5f, 0.5f, 1.0f);
+			_td.figure.pelvis_pos = Vector3(0.00f, 0.95f, 0.00f);
+			for (int i = 0; i < BONE_COUNT; i++) {
+				_td.figure.bone_width[i] = 0.05f;
+			}
+			_td.figure.bone_width[BONE_PELVIS]      = 0.10f;
+			_td.figure.bone_width[BONE_SPINE]       = 0.09f;
+			_td.figure.bone_width[BONE_HEAD]        = 0.08f;
+			_td.figure.bone_width[BONE_L_LOWER_ARM] = 0.04f;
+			_td.figure.bone_width[BONE_R_LOWER_ARM] = 0.04f;
+			_td.figure.bone_width[BONE_L_UPPER_LEG] = 0.07f;
+			_td.figure.bone_width[BONE_R_UPPER_LEG] = 0.07f;
+			_td.figure.bone_length[BONE_SPINE]       = 0.45f;
+			_td.figure.bone_length[BONE_HEAD]        = 0.15f;
+			_td.figure.bone_length[BONE_L_UPPER_ARM] = 0.28f;
+			_td.figure.bone_length[BONE_L_LOWER_ARM] = 0.25f;
+			_td.figure.bone_length[BONE_R_UPPER_ARM] = 0.28f;
+			_td.figure.bone_length[BONE_R_LOWER_ARM] = 0.25f;
+			_td.figure.bone_length[BONE_L_UPPER_LEG] = 0.45f;
+			_td.figure.bone_length[BONE_L_LOWER_LEG] = 0.37f;
+			_td.figure.bone_length[BONE_R_UPPER_LEG] = 0.45f;
+			_td.figure.bone_length[BONE_R_LOWER_LEG] = 0.37f;
+			_td.figure.offsets[FO_HEAD_BASE]  = Vector3( 0.00f, 0.05f, 0.00f);
+			_td.figure.offsets[FO_L_SHOULDER] = Vector3(-0.20f, 0.00f, 0.00f);
+			_td.figure.offsets[FO_R_SHOULDER] = Vector3( 0.20f, 0.00f, 0.00f);
+			_td.figure.offsets[FO_L_HIP]      = Vector3(-0.10f,-0.05f, 0.00f);
+			_td.figure.offsets[FO_R_HIP]      = Vector3( 0.10f,-0.05f, 0.00f);
+			_td.figure.offset_widths[FO_HEAD_BASE]  = 0.04f;
+			_td.figure.offset_widths[FO_L_SHOULDER] = 0.05f;
+			_td.figure.offset_widths[FO_R_SHOULDER] = 0.05f;
+			_td.figure.offset_widths[FO_L_HIP]      = 0.05f;
+			_td.figure.offset_widths[FO_R_HIP]      = 0.05f;
+			_sflag(F_FIGURE_SHOW_MESH, true);
+			_sflag(F_FIGURE_SHOW_BONES, false);
+		} break;
 	}
-	// Per-bone width defaults — torso wider than limbs, head a bit wider
-	// than its bone (it's really a sphere). Tuned so the rest skin lands
-	// cleanly without per-vertex overrides.
-	_figure_bone_width[BONE_PELVIS]      = 0.10f;
-	_figure_bone_width[BONE_SPINE]       = 0.09f;
-	_figure_bone_width[BONE_HEAD]        = 0.08f;
-	_figure_bone_width[BONE_L_UPPER_ARM] = 0.05f;
-	_figure_bone_width[BONE_R_UPPER_ARM] = 0.05f;
-	_figure_bone_width[BONE_L_LOWER_ARM] = 0.04f;
-	_figure_bone_width[BONE_R_LOWER_ARM] = 0.04f;
-	_figure_bone_width[BONE_L_UPPER_LEG] = 0.07f;
-	_figure_bone_width[BONE_R_UPPER_LEG] = 0.07f;
-	_figure_bone_width[BONE_L_LOWER_LEG] = 0.05f;
-	_figure_bone_width[BONE_R_LOWER_LEG] = 0.05f;
-	// Per-bone rest lengths (reference frame, scaled at draw).
-	_figure_bone_length[BONE_SPINE]       = 0.45f;  // pelvis to neck
-	_figure_bone_length[BONE_HEAD]        = 0.15f;  // short forward-pointing direction bone
-	_figure_bone_length[BONE_L_UPPER_ARM] = 0.28f;  // shoulder to elbow
-	_figure_bone_length[BONE_L_LOWER_ARM] = 0.25f;  // elbow to wrist
-	_figure_bone_length[BONE_R_UPPER_ARM] = 0.28f;
-	_figure_bone_length[BONE_R_LOWER_ARM] = 0.25f;
-	_figure_bone_length[BONE_L_UPPER_LEG] = 0.45f;  // hip to knee
-	_figure_bone_length[BONE_L_LOWER_LEG] = 0.37f;  // knee to ankle
-	_figure_bone_length[BONE_R_UPPER_LEG] = 0.45f;
-	_figure_bone_length[BONE_R_LOWER_LEG] = 0.37f;
-
-	// Baked offsets — locked once rigged. All in their parent bone's local frame.
-	_figure_offset_head_base  = Vector3( 0.00f, 0.05f, 0.00f); // head pivot above neck
-	_figure_offset_l_shoulder = Vector3(-0.20f, 0.00f, 0.00f); // shoulder spread from neck
-	_figure_offset_r_shoulder = Vector3( 0.20f, 0.00f, 0.00f);
-	_figure_offset_l_hip      = Vector3(-0.10f,-0.05f, 0.00f); // hip points from pelvis
-	_figure_offset_r_hip      = Vector3( 0.10f,-0.05f, 0.00f);
 }
 SuperMarker3D::~SuperMarker3D() { _cleanup_instance(); }
 
@@ -1188,8 +1235,8 @@ void SuperMarker3D::_notification(int p_what) {
 			// renderer used to ignore it) would render a degenerate cap
 			// the first time `linked` was toggled off. Forcing y := x at
 			// enter-tree gives every loaded marker a sane y starting point.
-			if (_start_cap_linked) _start_cap_size.y = _start_cap_size.x;
-			if (_end_cap_linked)   _end_cap_size.y   = _end_cap_size.x;
+			if (_flag(F_START_CAP_LINKED)) _td.curve.start_cap_size.y = _td.curve.start_cap_size.x;
+			if (_flag(F_END_CAP_LINKED))   _td.curve.end_cap_size.y   = _td.curve.end_cap_size.x;
 			_rebuild_mesh(); _build_materials();
 			_ensure_instance(); _update_visibility(); _update_transform();
 			// Initialise interpolation state to the current pose so the
@@ -1256,7 +1303,9 @@ int  SuperMarker3D::get_subtype() const { return _shape; }
 
 void SuperMarker3D::set_type(int p) {
 	if (_type == p && _subtype_to_type(_shape) == p) return;
+	int old_type = _type;
 	_type = p;
+	if (old_type != p) _init_type_data(p);
 	if (_subtype_to_type(_shape) != p) {
 		// Shape ↔ Mesh: preserve semantic intent (circle=sphere, square=cube, etc.)
 		int prev = _shape;
@@ -1393,14 +1442,14 @@ void SuperMarker3D::set_fill_color(const Color &p) {
 }
 Color SuperMarker3D::get_fill_color() const { return _fill_color; }
 void SuperMarker3D::set_background_color(const Color &p) {
-	_background_color = p;
+	_td.curve.background_color = p;
 	if (_bary_material.is_valid())
-		_bary_material->set_shader_parameter("background_color", _background_color);
+		_bary_material->set_shader_parameter("background_color", _td.curve.background_color);
 	if (_bary_material_back.is_valid())
-		_bary_material_back->set_shader_parameter("background_color", _background_color);
+		_bary_material_back->set_shader_parameter("background_color", _td.curve.background_color);
 	SM_REBUILD_MATERIALS();
 }
-Color SuperMarker3D::get_background_color() const { return _background_color; }
+Color SuperMarker3D::get_background_color() const { return _td.curve.background_color; }
 
 #define AXIS_COLOR_SETTER(name, field) \
 	void SuperMarker3D::set_##name(const Color &p) { \
@@ -1409,46 +1458,46 @@ Color SuperMarker3D::get_background_color() const { return _background_color; }
 	} \
 	Color SuperMarker3D::get_##name() const { return field; }
 
-AXIS_COLOR_SETTER(axis_color_x_pos, _axis_color_x_pos)
-AXIS_COLOR_SETTER(axis_color_x_neg, _axis_color_x_neg)
-AXIS_COLOR_SETTER(axis_color_y_pos, _axis_color_y_pos)
-AXIS_COLOR_SETTER(axis_color_y_neg, _axis_color_y_neg)
-AXIS_COLOR_SETTER(axis_color_z_pos, _axis_color_z_pos)
-AXIS_COLOR_SETTER(axis_color_z_neg, _axis_color_z_neg)
+AXIS_COLOR_SETTER(axis_color_x_pos, _td.axis.colors[AL_XP])
+AXIS_COLOR_SETTER(axis_color_x_neg, _td.axis.colors[AL_XN])
+AXIS_COLOR_SETTER(axis_color_y_pos, _td.axis.colors[AL_YP])
+AXIS_COLOR_SETTER(axis_color_y_neg, _td.axis.colors[AL_YN])
+AXIS_COLOR_SETTER(axis_color_z_pos, _td.axis.colors[AL_ZP])
+AXIS_COLOR_SETTER(axis_color_z_neg, _td.axis.colors[AL_ZN])
 #undef AXIS_COLOR_SETTER
 
 void SuperMarker3D::set_axis_arrows(bool p) {
-	_axis_arrows = p;
+	_sflag(F_AXIS_ARROWS, p);
 	notify_property_list_changed(); // refreshes axis_arrow_length visibility
 	if (get_type() == TYPE_AXIS) SM_REBUILD();
 }
-bool SuperMarker3D::get_axis_arrows() const { return _axis_arrows; }
+bool SuperMarker3D::get_axis_arrows() const { return _flag(F_AXIS_ARROWS); }
 void SuperMarker3D::set_axis_arrow_length(float p) {
-	_axis_arrow_length = MAX(0.0f, p);
-	if (get_type() == TYPE_AXIS && _axis_arrows) SM_REBUILD();
+	_td.axis.arrow_length = MAX(0.0f, p);
+	if (get_type() == TYPE_AXIS && _flag(F_AXIS_ARROWS)) SM_REBUILD();
 }
-float SuperMarker3D::get_axis_arrow_length() const { return _axis_arrow_length; }
+float SuperMarker3D::get_axis_arrow_length() const { return _td.axis.arrow_length; }
 void SuperMarker3D::set_axis_arrow_width(float p) {
-	_axis_arrow_width = MAX(0.0f, p);
-	if (get_type() == TYPE_AXIS && _axis_arrows) SM_REBUILD();
+	_td.axis.arrow_width = MAX(0.0f, p);
+	if (get_type() == TYPE_AXIS && _flag(F_AXIS_ARROWS)) SM_REBUILD();
 }
-float SuperMarker3D::get_axis_arrow_width() const { return _axis_arrow_width; }
+float SuperMarker3D::get_axis_arrow_width() const { return _td.axis.arrow_width; }
 
 void SuperMarker3D::set_mesh_sides(int p) {
-	_mesh_sides = CLAMP(p, 3, 24);
+	_sides = CLAMP(p, 3, 24);
 	if (_shape == MESH_CYLINDER || _shape == MESH_CONE || _shape == MESH_DIAMOND) {
 		SM_REBUILD();
 	}
 }
-int SuperMarker3D::get_mesh_sides() const { return _mesh_sides; }
+int SuperMarker3D::get_mesh_sides() const { return _sides; }
 
 void SuperMarker3D::set_smooth_shading(bool p) {
-	if (_smooth_shading == p) return;
-	_smooth_shading = p;
+	if (_flag(F_SMOOTH_SHADING) == p) return;
+	_sflag(F_SMOOTH_SHADING, p);
 	_rebuild_mesh();
 	_build_materials();
 }
-bool SuperMarker3D::get_smooth_shading() const { return _smooth_shading; }
+bool SuperMarker3D::get_smooth_shading() const { return _flag(F_SMOOTH_SHADING); }
 
 void SuperMarker3D::set_capsule_height(float p) {
 	_capsule_height = MAX(0.0f, p);
@@ -1457,35 +1506,35 @@ void SuperMarker3D::set_capsule_height(float p) {
 float SuperMarker3D::get_capsule_height() const { return _capsule_height; }
 
 void SuperMarker3D::set_billboard_xz(bool p) {
-	_billboard_xz = p;
+	_sflag(F_BILLBOARD_XZ, p);
 	if (get_type() == TYPE_SHAPE) { _build_materials(); }
 }
-bool SuperMarker3D::get_billboard_xz() const { return _billboard_xz; }
+bool SuperMarker3D::get_billboard_xz() const { return _flag(F_BILLBOARD_XZ); }
 
 void SuperMarker3D::set_billboard_y(bool p) {
-	_billboard_y = p;
+	_sflag(F_BILLBOARD_Y, p);
 	if (get_type() == TYPE_SHAPE) { _build_materials(); }
 }
-bool SuperMarker3D::get_billboard_y() const { return _billboard_y; }
+bool SuperMarker3D::get_billboard_y() const { return _flag(F_BILLBOARD_Y); }
 
 void SuperMarker3D::set_rounded_corners(bool p) {
-	_rounded_corners = p;
+	_sflag(F_ROUNDED_CORNERS, p);
 	if (get_type() == TYPE_SHAPE) SM_REBUILD();
 }
-bool SuperMarker3D::get_rounded_corners() const { return _rounded_corners; }
+bool SuperMarker3D::get_rounded_corners() const { return _flag(F_ROUNDED_CORNERS); }
 
 void SuperMarker3D::set_shape_sides(int p) {
-	_shape_sides = CLAMP(p, 6, 64);
+	_sides = CLAMP(p, 6, 64);
 	if (_shape == FLAT_CIRCLE) SM_REBUILD();
 }
-int SuperMarker3D::get_shape_sides() const { return _shape_sides; }
+int SuperMarker3D::get_shape_sides() const { return _sides; }
 
 void SuperMarker3D::set_axis_link_mode(int p) {
-	_axis_link_mode = p;
+	_td.axis.link_mode = p;
 	notify_property_list_changed(); // refreshes READ_ONLY flags on slaved fields
 	if (get_type() == TYPE_AXIS) SM_REBUILD();
 }
-int SuperMarker3D::get_axis_link_mode() const { return _axis_link_mode; }
+int SuperMarker3D::get_axis_link_mode() const { return _td.axis.link_mode; }
 
 // Setters always write to the underlying field (so a user's authored
 // values are preserved across link-mode toggles). Getters route through
@@ -1498,12 +1547,12 @@ int SuperMarker3D::get_axis_link_mode() const { return _axis_link_mode; }
 		if (get_type() == TYPE_AXIS) SM_REBUILD(); \
 	}
 
-AXIS_LEN_SETTER(axis_length_x_pos, _axis_length_x_pos)
-AXIS_LEN_SETTER(axis_length_x_neg, _axis_length_x_neg)
-AXIS_LEN_SETTER(axis_length_y_pos, _axis_length_y_pos)
-AXIS_LEN_SETTER(axis_length_y_neg, _axis_length_y_neg)
-AXIS_LEN_SETTER(axis_length_z_pos, _axis_length_z_pos)
-AXIS_LEN_SETTER(axis_length_z_neg, _axis_length_z_neg)
+AXIS_LEN_SETTER(axis_length_x_pos, _td.axis.lengths[AL_XP])
+AXIS_LEN_SETTER(axis_length_x_neg, _td.axis.lengths[AL_XN])
+AXIS_LEN_SETTER(axis_length_y_pos, _td.axis.lengths[AL_YP])
+AXIS_LEN_SETTER(axis_length_y_neg, _td.axis.lengths[AL_YN])
+AXIS_LEN_SETTER(axis_length_z_pos, _td.axis.lengths[AL_ZP])
+AXIS_LEN_SETTER(axis_length_z_neg, _td.axis.lengths[AL_ZN])
 #undef AXIS_LEN_SETTER
 
 // Length getters — resolve through link mode.
@@ -1523,99 +1572,99 @@ AXIS_LEN_GETTER(axis_length_z_neg, 5)
 // Resolve the 6 raw fields through the active link mode so every Axis
 // generator sees the same expanded list. Output: [X+, X-, Y+, Y-, Z+, Z-].
 void SuperMarker3D::_resolved_axis_lengths(float p_out[6]) const {
-	switch (_axis_link_mode) {
+	switch (_td.axis.link_mode) {
 		case LINK_ALL: {
 			// Every direction follows X+. The "first value" the user
 			// touches drives the rest.
-			float v = _axis_length_x_pos;
+			float v = _td.axis.lengths[AL_XP];
 			p_out[0] = p_out[1] = p_out[2] = p_out[3] = p_out[4] = p_out[5] = v;
 		} break;
 		case LINK_MIRRORED: {
-			p_out[0] = _axis_length_x_pos; p_out[1] = _axis_length_x_pos;
-			p_out[2] = _axis_length_y_pos; p_out[3] = _axis_length_y_pos;
-			p_out[4] = _axis_length_z_pos; p_out[5] = _axis_length_z_pos;
+			p_out[0] = _td.axis.lengths[AL_XP]; p_out[1] = _td.axis.lengths[AL_XP];
+			p_out[2] = _td.axis.lengths[AL_YP]; p_out[3] = _td.axis.lengths[AL_YP];
+			p_out[4] = _td.axis.lengths[AL_ZP]; p_out[5] = _td.axis.lengths[AL_ZP];
 		} break;
 		case LINK_FREE:
 		default: {
-			p_out[0] = _axis_length_x_pos; p_out[1] = _axis_length_x_neg;
-			p_out[2] = _axis_length_y_pos; p_out[3] = _axis_length_y_neg;
-			p_out[4] = _axis_length_z_pos; p_out[5] = _axis_length_z_neg;
+			p_out[0] = _td.axis.lengths[AL_XP]; p_out[1] = _td.axis.lengths[AL_XN];
+			p_out[2] = _td.axis.lengths[AL_YP]; p_out[3] = _td.axis.lengths[AL_YN];
+			p_out[4] = _td.axis.lengths[AL_ZP]; p_out[5] = _td.axis.lengths[AL_ZN];
 		} break;
 	}
 }
 
-void SuperMarker3D::set_figure_height(float p) { _figure_height = MAX(0.01f, p); if (_shape == FIGURE) SM_REBUILD(); }
-float SuperMarker3D::get_figure_height() const { return _figure_height; }
-void SuperMarker3D::set_figure_show_mesh(bool p) { _figure_show_mesh = p; if (_shape == FIGURE) SM_REBUILD(); }
-bool SuperMarker3D::get_figure_show_mesh() const { return _figure_show_mesh; }
+void SuperMarker3D::set_figure_height(float p) { _td.figure.height = MAX(0.01f, p); if (_shape == FIGURE) SM_REBUILD(); }
+float SuperMarker3D::get_figure_height() const { return _td.figure.height; }
+void SuperMarker3D::set_figure_show_mesh(bool p) { _sflag(F_FIGURE_SHOW_MESH, p); if (_shape == FIGURE) SM_REBUILD(); }
+bool SuperMarker3D::get_figure_show_mesh() const { return _flag(F_FIGURE_SHOW_MESH); }
 void SuperMarker3D::set_figure_show_bones(bool p) {
-	if (_figure_show_bones == p) return;
-	_figure_show_bones = p;
+	if (_flag(F_FIGURE_SHOW_BONES) == p) return;
+	_sflag(F_FIGURE_SHOW_BONES, p);
 	if (_shape == FIGURE) SM_REBUILD();
 	notify_property_list_changed(); // re-evaluate inspector visibility
 }
-bool SuperMarker3D::get_figure_show_bones() const { return _figure_show_bones; }
-void SuperMarker3D::set_figure_bone_color(const Color &p) { _figure_bone_color = p; if (_shape == FIGURE) SM_REBUILD(); }
-Color SuperMarker3D::get_figure_bone_color() const { return _figure_bone_color; }
+bool SuperMarker3D::get_figure_show_bones() const { return _flag(F_FIGURE_SHOW_BONES); }
+void SuperMarker3D::set_figure_bone_color(const Color &p) { _td.figure.bone_color = p; if (_shape == FIGURE) SM_REBUILD(); }
+Color SuperMarker3D::get_figure_bone_color() const { return _td.figure.bone_color; }
 void SuperMarker3D::set_figure_bone_pelvis_pos(const Vector3 &p) {
-	_figure_bone_pelvis_pos = p; if (_shape == FIGURE) SM_REBUILD();
+	_td.figure.pelvis_pos = p; if (_shape == FIGURE) SM_REBUILD();
 }
-Vector3 SuperMarker3D::get_figure_bone_pelvis_pos() const { return _figure_bone_pelvis_pos; }
+Vector3 SuperMarker3D::get_figure_bone_pelvis_pos() const { return _td.figure.pelvis_pos; }
 void SuperMarker3D::set_figure_bone_rot(int bone, const Vector3 &p) {
 	if (bone < 0 || bone >= BONE_COUNT) return;
-	_figure_bone_rot[bone] = p; if (_shape == FIGURE) SM_REBUILD();
+	_td.figure.bone_rot[bone] = p; if (_shape == FIGURE) SM_REBUILD();
 }
 Vector3 SuperMarker3D::get_figure_bone_rot(int bone) const {
 	if (bone < 0 || bone >= BONE_COUNT) return Vector3();
-	return _figure_bone_rot[bone];
+	return _td.figure.bone_rot[bone];
 }
 void SuperMarker3D::set_figure_bone_length(int bone, float p) {
 	if (bone < 0 || bone >= BONE_COUNT) return;
-	_figure_bone_length[bone] = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD();
+	_td.figure.bone_length[bone] = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD();
 }
 float SuperMarker3D::get_figure_bone_length(int bone) const {
 	if (bone < 0 || bone >= BONE_COUNT) return 0.0f;
-	return _figure_bone_length[bone];
+	return _td.figure.bone_length[bone];
 }
 void SuperMarker3D::set_figure_bone_width(int bone, float p) {
 	if (bone < 0 || bone >= BONE_COUNT) return;
-	_figure_bone_width[bone] = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD();
+	_td.figure.bone_width[bone] = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD();
 }
 float SuperMarker3D::get_figure_bone_width(int bone) const {
 	if (bone < 0 || bone >= BONE_COUNT) return 0.0f;
-	return _figure_bone_width[bone];
+	return _td.figure.bone_width[bone];
 }
 void SuperMarker3D::set_figure_bone_pose_rot(int bone, const Vector3 &p) {
 	if (bone < 0 || bone >= BONE_COUNT) return;
-	_figure_bone_pose_rot[bone] = p; if (_shape == FIGURE) SM_REBUILD();
+	_td.figure.bone_pose_rot[bone] = p; if (_shape == FIGURE) SM_REBUILD();
 }
 Vector3 SuperMarker3D::get_figure_bone_pose_rot(int bone) const {
 	if (bone < 0 || bone >= BONE_COUNT) return Vector3();
-	return _figure_bone_pose_rot[bone];
+	return _td.figure.bone_pose_rot[bone];
 }
-#define SM_OFFSET_IMPL(NAME) \
-	void SuperMarker3D::set_figure_offset_##NAME(const Vector3 &p) { _figure_offset_##NAME = p; if (_shape == FIGURE) SM_REBUILD(); } \
-	Vector3 SuperMarker3D::get_figure_offset_##NAME() const { return _figure_offset_##NAME; }
-SM_OFFSET_IMPL(head_base)
-SM_OFFSET_IMPL(l_shoulder)
-SM_OFFSET_IMPL(r_shoulder)
-SM_OFFSET_IMPL(l_hip)
-SM_OFFSET_IMPL(r_hip)
+#define SM_OFFSET_IMPL(NAME, IDX) \
+	void SuperMarker3D::set_figure_offset_##NAME(const Vector3 &p) { _td.figure.offsets[IDX] = p; if (_shape == FIGURE) SM_REBUILD(); } \
+	Vector3 SuperMarker3D::get_figure_offset_##NAME() const { return _td.figure.offsets[IDX]; }
+SM_OFFSET_IMPL(head_base, FO_HEAD_BASE)
+SM_OFFSET_IMPL(l_shoulder, FO_L_SHOULDER)
+SM_OFFSET_IMPL(r_shoulder, FO_R_SHOULDER)
+SM_OFFSET_IMPL(l_hip, FO_L_HIP)
+SM_OFFSET_IMPL(r_hip, FO_R_HIP)
 #undef SM_OFFSET_IMPL
-#define SM_OFFSET_WID_IMPL(NAME) \
-	void SuperMarker3D::set_figure_offset_##NAME##_width(float p) { _figure_offset_##NAME##_width = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD(); } \
-	float SuperMarker3D::get_figure_offset_##NAME##_width() const { return _figure_offset_##NAME##_width; }
-SM_OFFSET_WID_IMPL(head_base)
-SM_OFFSET_WID_IMPL(l_shoulder)
-SM_OFFSET_WID_IMPL(r_shoulder)
-SM_OFFSET_WID_IMPL(l_hip)
-SM_OFFSET_WID_IMPL(r_hip)
+#define SM_OFFSET_WID_IMPL(NAME, IDX) \
+	void SuperMarker3D::set_figure_offset_##NAME##_width(float p) { _td.figure.offset_widths[IDX] = MAX(0.0f, p); if (_shape == FIGURE) SM_REBUILD(); } \
+	float SuperMarker3D::get_figure_offset_##NAME##_width() const { return _td.figure.offset_widths[IDX]; }
+SM_OFFSET_WID_IMPL(head_base, FO_HEAD_BASE)
+SM_OFFSET_WID_IMPL(l_shoulder, FO_L_SHOULDER)
+SM_OFFSET_WID_IMPL(r_shoulder, FO_R_SHOULDER)
+SM_OFFSET_WID_IMPL(l_hip, FO_L_HIP)
+SM_OFFSET_WID_IMPL(r_hip, FO_R_HIP)
 #undef SM_OFFSET_WID_IMPL
 
-void SuperMarker3D::set_head_length(float p) { _head_length = MAX(0.0f, p); SM_REBUILD(); }
-float SuperMarker3D::get_head_length() const { return _head_length; }
-void SuperMarker3D::set_head_width(float p) { _head_width = MAX(0.0f, p); SM_REBUILD(); }
-float SuperMarker3D::get_head_width() const { return _head_width; }
+void SuperMarker3D::set_head_length(float p) { _td.shape.head_length = MAX(0.0f, p); SM_REBUILD(); }
+float SuperMarker3D::get_head_length() const { return _td.shape.head_length; }
+void SuperMarker3D::set_head_width(float p) { _td.shape.head_width = MAX(0.0f, p); SM_REBUILD(); }
+float SuperMarker3D::get_head_width() const { return _td.shape.head_width; }
 
 // Curve ribbon — Curve3D-driven flat strip with pattern + endcaps.
 // Reconnects to the new resource's `changed` signal so in-editor edits of
@@ -1637,23 +1686,23 @@ Ref<Curve3D> SuperMarker3D::get_curve() const { return _curve; }
 void SuperMarker3D::_on_curve_changed() { SM_REBUILD(); }
 
 void SuperMarker3D::set_curve_flat(bool p) {
-	if (_curve_flat == p) return;
-	_curve_flat = p;
+	if (_flag(F_CURVE_FLAT) == p) return;
+	_sflag(F_CURVE_FLAT, p);
 	notify_property_list_changed(); // toggling style hides/shows ribbon-only props
 	SM_REBUILD();
 }
-bool SuperMarker3D::get_curve_flat() const { return _curve_flat; }
-void SuperMarker3D::set_curve_length(float p)    { _curve_length    = MAX(0.0f, p); _preset_curve_dirty = true; SM_REBUILD(); }
-float SuperMarker3D::get_curve_length() const    { return _curve_length; }
+bool SuperMarker3D::get_curve_flat() const { return _flag(F_CURVE_FLAT); }
+void SuperMarker3D::set_curve_length(float p)    { _td.curve.length    = MAX(0.0f, p); _preset_curve_dirty = true; SM_REBUILD(); }
+float SuperMarker3D::get_curve_length() const    { return _td.curve.length; }
 // Amplitude is signed — negative flips the curve across its primary axis
 // (Sine wave below the line, Arc curving the other way, Helix reversing
 // chirality, Bezier S-curve mirrored). Length stays non-negative.
-void SuperMarker3D::set_curve_amplitude(float p) { _curve_amplitude = p; _preset_curve_dirty = true; SM_REBUILD(); }
-float SuperMarker3D::get_curve_amplitude() const { return _curve_amplitude; }
-void SuperMarker3D::set_curve_turns(float p)     { _curve_turns     = MAX(0.01f, p); _preset_curve_dirty = true; SM_REBUILD(); }
-float SuperMarker3D::get_curve_turns() const     { return _curve_turns; }
-void SuperMarker3D::set_curve_segments(int p)    { _curve_segments  = CLAMP(p, 4, 256); _preset_curve_dirty = true; SM_REBUILD(); }
-int  SuperMarker3D::get_curve_segments() const   { return _curve_segments; }
+void SuperMarker3D::set_curve_amplitude(float p) { _td.curve.amplitude = p; _preset_curve_dirty = true; SM_REBUILD(); }
+float SuperMarker3D::get_curve_amplitude() const { return _td.curve.amplitude; }
+void SuperMarker3D::set_curve_turns(float p)     { _td.curve.turns     = MAX(0.01f, p); _preset_curve_dirty = true; SM_REBUILD(); }
+float SuperMarker3D::get_curve_turns() const     { return _td.curve.turns; }
+void SuperMarker3D::set_curve_segments(int p)    { _td.curve.segments  = CLAMP(p, 4, 256); _preset_curve_dirty = true; SM_REBUILD(); }
+int  SuperMarker3D::get_curve_segments() const   { return _td.curve.segments; }
 
 bool SuperMarker3D::_is_curve_subtype(int s) {
 	switch (s) {
@@ -1667,7 +1716,7 @@ bool SuperMarker3D::_is_curve_subtype(int s) {
 }
 
 bool SuperMarker3D::_is_curve_flat_style() const {
-	return _curve_flat;
+	return _flag(F_CURVE_FLAT);
 }
 
 bool SuperMarker3D::_curve_is_custom() const {
@@ -1842,7 +1891,7 @@ Ref<Curve3D> SuperMarker3D::_get_active_curve() const {
 // Build a fresh Curve3D for the active preset. Each preset writes points
 // in marker-local space; the user rotates/translates the SuperMarker3D
 // node itself to orient the path. Sampled presets (Arc/Sine/Helix) lay
-// down `_curve_segments+1` points with analytic in/out tangent handles
+// down `_td.curve.segments+1` points with analytic in/out tangent handles
 // derived from the parametric derivative, producing smooth cubic Bezier
 // splines. Bezier uses its own two-point cubic with explicit tangents.
 Ref<Curve3D> SuperMarker3D::_make_preset_curve() const {
@@ -1853,10 +1902,10 @@ Ref<Curve3D> SuperMarker3D::_make_preset_curve() const {
 	// detail (sine peaks, helix turns) the user explicitly dialled in.
 	c->set_bake_interval(0.05f);
 
-	const int   N    = MAX(4, _curve_segments);
-	const float L    = _curve_length;
-	const float A    = _curve_amplitude;
-	const float T    = _curve_turns;
+	const int   N    = MAX(4, _td.curve.segments);
+	const float L    = _td.curve.length;
+	const float A    = _td.curve.amplitude;
+	const float T    = _td.curve.turns;
 	const Vector3 Z3 = Vector3();
 
 	switch (_shape) {
@@ -1935,22 +1984,22 @@ Ref<Curve3D> SuperMarker3D::_make_preset_curve() const {
 	return c;
 }
 
-void SuperMarker3D::set_curve_width(float p)    { _curve_width = MAX(0.001f, p); SM_REBUILD(); }
-float SuperMarker3D::get_curve_width() const    { return _curve_width; }
-void SuperMarker3D::set_curve_bank(float p)     { _curve_bank = p; SM_REBUILD(); }
-float SuperMarker3D::get_curve_bank() const     { return _curve_bank; }
-void SuperMarker3D::set_bank_easing(float p)    { _bank_easing = CLAMP(p, 0.0f, 0.5f); SM_REBUILD(); }
-float SuperMarker3D::get_bank_easing() const    { return _bank_easing; }
-void SuperMarker3D::set_curve_pattern(int p)    { _curve_pattern = p; notify_property_list_changed(); SM_REBUILD(); }
-int  SuperMarker3D::get_curve_pattern() const   { return _curve_pattern; }
-void SuperMarker3D::set_dash_length(float p)    { _dash_length = MAX(0.001f, p); SM_REBUILD(); }
-float SuperMarker3D::get_dash_length() const    { return _dash_length; }
-void SuperMarker3D::set_dash_gap(float p)       { _dash_gap = MAX(0.001f, p); SM_REBUILD(); }
-float SuperMarker3D::get_dash_gap() const       { return _dash_gap; }
-void SuperMarker3D::set_curve_start_cap(int p)  { _curve_start_cap = p; notify_property_list_changed(); SM_REBUILD(); }
-int  SuperMarker3D::get_curve_start_cap() const { return _curve_start_cap; }
-void SuperMarker3D::set_curve_end_cap(int p)    { _curve_end_cap = p; notify_property_list_changed(); SM_REBUILD(); }
-int  SuperMarker3D::get_curve_end_cap() const   { return _curve_end_cap; }
+void SuperMarker3D::set_curve_width(float p)    { _td.curve.width = MAX(0.001f, p); SM_REBUILD(); }
+float SuperMarker3D::get_curve_width() const    { return _td.curve.width; }
+void SuperMarker3D::set_curve_bank(float p)     { _td.curve.bank = p; SM_REBUILD(); }
+float SuperMarker3D::get_curve_bank() const     { return _td.curve.bank; }
+void SuperMarker3D::set_bank_easing(float p)    { _td.curve.bank_easing = CLAMP(p, 0.0f, 0.5f); SM_REBUILD(); }
+float SuperMarker3D::get_bank_easing() const    { return _td.curve.bank_easing; }
+void SuperMarker3D::set_curve_pattern(int p)    { _td.curve.pattern = p; notify_property_list_changed(); SM_REBUILD(); }
+int  SuperMarker3D::get_curve_pattern() const   { return _td.curve.pattern; }
+void SuperMarker3D::set_dash_length(float p)    { _td.curve.dash_length = MAX(0.001f, p); SM_REBUILD(); }
+float SuperMarker3D::get_dash_length() const    { return _td.curve.dash_length; }
+void SuperMarker3D::set_dash_gap(float p)       { _td.curve.dash_gap = MAX(0.001f, p); SM_REBUILD(); }
+float SuperMarker3D::get_dash_gap() const       { return _td.curve.dash_gap; }
+void SuperMarker3D::set_curve_start_cap(int p)  { _td.curve.start_cap = p; notify_property_list_changed(); SM_REBUILD(); }
+int  SuperMarker3D::get_curve_start_cap() const { return _td.curve.start_cap; }
+void SuperMarker3D::set_curve_end_cap(int p)    { _td.curve.end_cap = p; notify_property_list_changed(); SM_REBUILD(); }
+int  SuperMarker3D::get_curve_end_cap() const   { return _td.curve.end_cap; }
 // Setters DO NOT slave Y=X when linked. Linked is a render-time flag:
 // when true, the generator uses X alone and ignores Y. The inspector can
 // show any (X, Y) without values snapping back — predictable editing.
@@ -1960,38 +2009,38 @@ int  SuperMarker3D::get_curve_end_cap() const   { return _curve_end_cap; }
 // y was last typed (often 0) and the cap would visually collapse.
 void SuperMarker3D::set_start_cap_size(const Vector2 &p) {
 	const float x = MAX(0.0f, p.x);
-	const float y = _start_cap_linked ? x : MAX(0.0f, p.y);
-	_start_cap_size = Vector2(x, y);
+	const float y = _flag(F_START_CAP_LINKED) ? x : MAX(0.0f, p.y);
+	_td.curve.start_cap_size = Vector2(x, y);
 	SM_REBUILD();
 }
-Vector2 SuperMarker3D::get_start_cap_size() const { return _start_cap_size; }
+Vector2 SuperMarker3D::get_start_cap_size() const { return _td.curve.start_cap_size; }
 void SuperMarker3D::set_end_cap_size(const Vector2 &p) {
 	const float x = MAX(0.0f, p.x);
-	const float y = _end_cap_linked ? x : MAX(0.0f, p.y);
-	_end_cap_size = Vector2(x, y);
+	const float y = _flag(F_END_CAP_LINKED) ? x : MAX(0.0f, p.y);
+	_td.curve.end_cap_size = Vector2(x, y);
 	SM_REBUILD();
 }
-Vector2 SuperMarker3D::get_end_cap_size() const { return _end_cap_size; }
+Vector2 SuperMarker3D::get_end_cap_size() const { return _td.curve.end_cap_size; }
 void SuperMarker3D::set_start_cap_linked(bool p) {
-	_start_cap_linked = p;
-	if (p) _start_cap_size.y = _start_cap_size.x;
+	_sflag(F_START_CAP_LINKED, p);
+	if (p) _td.curve.start_cap_size.y = _td.curve.start_cap_size.x;
 	SM_REBUILD();
 }
-bool SuperMarker3D::get_start_cap_linked() const { return _start_cap_linked; }
+bool SuperMarker3D::get_start_cap_linked() const { return _flag(F_START_CAP_LINKED); }
 void SuperMarker3D::set_end_cap_linked(bool p) {
-	_end_cap_linked = p;
-	if (p) _end_cap_size.y = _end_cap_size.x;
+	_sflag(F_END_CAP_LINKED, p);
+	if (p) _td.curve.end_cap_size.y = _td.curve.end_cap_size.x;
 	SM_REBUILD();
 }
-bool SuperMarker3D::get_end_cap_linked() const { return _end_cap_linked; }
-void SuperMarker3D::set_length_fraction(float p){ _length_fraction = CLAMP(p, 0.0f, 1.0f); SM_REBUILD(); }
-float SuperMarker3D::get_length_fraction() const{ return _length_fraction; }
+bool SuperMarker3D::get_end_cap_linked() const { return _flag(F_END_CAP_LINKED); }
+void SuperMarker3D::set_length_fraction(float p){ _td.curve.length_fraction = CLAMP(p, 0.0f, 1.0f); SM_REBUILD(); }
+float SuperMarker3D::get_length_fraction() const{ return _td.curve.length_fraction; }
 
-void SuperMarker3D::set_shows_in_play(bool p) { _shows_in_play = p; _update_visibility(); }
-bool SuperMarker3D::get_shows_in_play() const { return _shows_in_play; }
+void SuperMarker3D::set_shows_in_play(bool p) { _sflag(F_SHOWS_IN_PLAY, p); _update_visibility(); }
+bool SuperMarker3D::get_shows_in_play() const { return _flag(F_SHOWS_IN_PLAY); }
 void SuperMarker3D::set_always_on_top(bool p) {
-	if (_always_on_top == p) return;
-	_always_on_top = p;
+	if (_flag(F_ALWAYS_ON_TOP) == p) return;
+	_sflag(F_ALWAYS_ON_TOP, p);
 	// Rebuild materials: under always_on_top we force unshaded shading
 	// AND swap mesh-category ShaderMaterials to the *_top variant
 	// (which carries `depth_test_disabled` in render_mode). This is the
@@ -2011,8 +2060,8 @@ void SuperMarker3D::set_always_on_top(bool p) {
 		// self-shadow artefacts.
 		const bool flat_single_surface = (get_type() == TYPE_SHAPE)
 				|| (get_type() == TYPE_CURVE && _is_curve_flat_style());
-		const RenderingServer::ShadowCastingSetting cast = (_lights_and_shadows && !_always_on_top)
-				? ((flat_single_surface && _two_sided)
+		const RenderingServer::ShadowCastingSetting cast = (_flag(F_LIGHTS_SHADOWS) && !_flag(F_ALWAYS_ON_TOP))
+				? ((flat_single_surface && _flag(F_TWO_SIDED))
 						? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
 						: RenderingServer::SHADOW_CASTING_SETTING_ON)
 				: RenderingServer::SHADOW_CASTING_SETTING_OFF;
@@ -2023,9 +2072,9 @@ void SuperMarker3D::set_always_on_top(bool p) {
 	}
 	notify_property_list_changed(); // refresh greyed-out lights_and_shadows
 }
-bool SuperMarker3D::get_always_on_top() const { return _always_on_top; }
+bool SuperMarker3D::get_always_on_top() const { return _flag(F_ALWAYS_ON_TOP); }
 void SuperMarker3D::set_lights_and_shadows(bool p) {
-	_lights_and_shadows = p;
+	_sflag(F_LIGHTS_SHADOWS, p);
 	if (is_inside_tree()) {
 		_build_materials();
 		// Refresh shadow casting on the RS instance — only valid when
@@ -2033,38 +2082,38 @@ void SuperMarker3D::set_lights_and_shadows(bool p) {
 		if (_instance.is_valid()) {
 			RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(
 					_instance,
-					(_lights_and_shadows && !_always_on_top)
+					(_flag(F_LIGHTS_SHADOWS) && !_flag(F_ALWAYS_ON_TOP))
 							? (((get_type() == TYPE_SHAPE
 									|| (get_type() == TYPE_CURVE && _is_curve_flat_style()))
-									&& _two_sided)
+									&& _flag(F_TWO_SIDED))
 									? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
 									: RenderingServer::SHADOW_CASTING_SETTING_ON)
 							: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 		}
 	}
 }
-bool SuperMarker3D::get_lights_and_shadows() const { return _lights_and_shadows; }
+bool SuperMarker3D::get_lights_and_shadows() const { return _flag(F_LIGHTS_SHADOWS); }
 void SuperMarker3D::set_two_sided(bool p) {
-	_two_sided = p;
+	_sflag(F_TWO_SIDED, p);
 	notify_property_list_changed();
 	SM_REBUILD();
 }
-bool SuperMarker3D::get_two_sided() const { return _two_sided; }
+bool SuperMarker3D::get_two_sided() const { return _flag(F_TWO_SIDED); }
 void SuperMarker3D::set_flip_faces(bool p) {
-	_flip_faces = p;
+	_sflag(F_FLIP_FACES, p);
 	SM_REBUILD();
 }
-bool SuperMarker3D::get_flip_faces() const { return _flip_faces; }
+bool SuperMarker3D::get_flip_faces() const { return _flag(F_FLIP_FACES); }
 
 // Checker overlay setters route through SM_REBUILD_MATERIALS — the next_pass
 // chain is rebuilt by _build_materials, so a full rebuild_mesh isn't needed
 // (geometry doesn't depend on checker state, only the material chain does).
 void SuperMarker3D::set_checker_enabled(bool p) {
-	if (_checker_enabled == p) return;
-	_checker_enabled = p;
+	if (_flag(F_CHECKER_ENABLED) == p) return;
+	_sflag(F_CHECKER_ENABLED, p);
 	SM_REBUILD_MATERIALS();
 }
-bool SuperMarker3D::get_checker_enabled() const { return _checker_enabled; }
+bool SuperMarker3D::get_checker_enabled() const { return _flag(F_CHECKER_ENABLED); }
 void SuperMarker3D::set_checker_size(float p) {
 	_checker_size = MAX(0.001f, p);
 	if (_checker_overlay_front.is_valid())
@@ -2082,7 +2131,7 @@ void SuperMarker3D::set_checker_darken(float p) {
 }
 float SuperMarker3D::get_checker_darken() const { return _checker_darken; }
 
-void SuperMarker3D::set_template_mode(bool p) { _template_mode = p; _update_visibility(); }
+void SuperMarker3D::set_template_mode(bool p) { _sflag(F_TEMPLATE_MODE, p); _update_visibility(); }
 RID  SuperMarker3D::get_mesh_rid() const { return _mesh.is_valid() ? _mesh->get_rid() : RID(); }
 
 // ---------------------------------------------------------------------------
@@ -2100,10 +2149,10 @@ void SuperMarker3D::_ensure_instance() {
 	// the flag toggle calls `_ensure_instance` indirectly via SM_REBUILD,
 	// so this is the single place that has to keep the RS state in sync.
 	rs->instance_geometry_set_cast_shadows_setting(_instance,
-			(_lights_and_shadows && !_always_on_top)
+			(_flag(F_LIGHTS_SHADOWS) && !_flag(F_ALWAYS_ON_TOP))
 					? (((get_type() == TYPE_SHAPE
 							|| (get_type() == TYPE_CURVE && _is_curve_flat_style()))
-							&& _two_sided)
+							&& _flag(F_TWO_SIDED))
 							? RenderingServer::SHADOW_CASTING_SETTING_DOUBLE_SIDED
 							: RenderingServer::SHADOW_CASTING_SETTING_ON)
 					: RenderingServer::SHADOW_CASTING_SETTING_OFF);
@@ -2215,10 +2264,10 @@ void SuperMarker3D::_build_axis_per_arm(const Vector<Vector3> &dirs,
 		if (scenario.is_valid()) rs->instance_set_scenario(_arm_instances[i], scenario);
 		rs->instance_set_transform(_arm_instances[i], xf);
 		rs->instance_set_visible(_arm_instances[i],
-				is_visible_in_tree() && !_template_mode
-				&& (_shows_in_play || Engine::get_singleton()->is_editor_hint()));
+				is_visible_in_tree() && !_flag(F_TEMPLATE_MODE)
+				&& (_flag(F_SHOWS_IN_PLAY) || Engine::get_singleton()->is_editor_hint()));
 		rs->instance_geometry_set_cast_shadows_setting(_arm_instances[i],
-				(_lights_and_shadows && !_always_on_top)
+				(_flag(F_LIGHTS_SHADOWS) && !_flag(F_ALWAYS_ON_TOP))
 						? RenderingServer::SHADOW_CASTING_SETTING_ON
 						: RenderingServer::SHADOW_CASTING_SETTING_OFF);
 	}
@@ -2236,9 +2285,9 @@ void SuperMarker3D::_cleanup_arm_instances() {
 }
 
 void SuperMarker3D::_update_visibility() {
-	bool vis = is_visible_in_tree() && !_template_mode;
+	bool vis = is_visible_in_tree() && !_flag(F_TEMPLATE_MODE);
 	// `_shows_in_play=false` hides at runtime; in-editor we always render.
-	if (!_shows_in_play && !Engine::get_singleton()->is_editor_hint()) vis = false;
+	if (!_flag(F_SHOWS_IN_PLAY) && !Engine::get_singleton()->is_editor_hint()) vis = false;
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (_instance.is_valid()) rs->instance_set_visible(_instance, vis);
 	for (int i = 0; i < _arm_instances.size(); i++) {
@@ -2305,7 +2354,7 @@ void SuperMarker3D::_build_materials() {
 	// consistent regardless of scene lighting. The `_lights_and_shadows`
 	// flag is preserved (just greyed out in the inspector) so toggling
 	// always_on_top off restores the user's prior shading choice.
-	const bool effective_lit = _lights_and_shadows && !_always_on_top;
+	const bool effective_lit = _flag(F_LIGHTS_SHADOWS) && !_flag(F_ALWAYS_ON_TOP);
 
 	// --- Outline material ---
 	if (_outline_material.is_null()) _outline_material.instantiate();
@@ -2313,7 +2362,7 @@ void SuperMarker3D::_build_materials() {
 			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
 			: BaseMaterial3D::SHADING_MODE_UNSHADED);
 	_outline_material->set_flag(BaseMaterial3D::FLAG_DONT_RECEIVE_SHADOWS, !effective_lit);
-	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
+	_outline_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _flag(F_ALWAYS_ON_TOP));
 	_outline_material->set_render_priority(1); // Draw outline after fill (on top)
 	// Cull mode: flat shapes and mesh fills are CULL_DISABLED (two-sided
 	// surfaces, or depth-occluded by fill body). Axis/arrow 3D geometry
@@ -2340,7 +2389,7 @@ void SuperMarker3D::_build_materials() {
 		// the mesh during rigging.
 		_outline_material->set_albedo(Color(1, 1, 1, 1));
 		_outline_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-		const bool fig_alpha = is_figure_type && _figure_bone_color.a < 1.0f;
+		const bool fig_alpha = is_figure_type && _td.figure.bone_color.a < 1.0f;
 		_outline_material->set_transparency(fig_alpha
 				? BaseMaterial3D::TRANSPARENCY_ALPHA
 				: BaseMaterial3D::TRANSPARENCY_DISABLED);
@@ -2355,8 +2404,8 @@ void SuperMarker3D::_build_materials() {
 	// Shape + Curve only; Mesh/Axis don't billboard.
 	BaseMaterial3D::BillboardMode bb_mode = BaseMaterial3D::BILLBOARD_DISABLED;
 	if (is_shape_type || is_curve_flat) {
-		if (_billboard_y)       bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
-		else if (_billboard_xz) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
+		if (_flag(F_BILLBOARD_Y))       bb_mode = BaseMaterial3D::BILLBOARD_ENABLED;
+		else if (_flag(F_BILLBOARD_XZ)) bb_mode = BaseMaterial3D::BILLBOARD_FIXED_Y;
 	}
 	_outline_material->set_billboard_mode(bb_mode);
 
@@ -2365,7 +2414,7 @@ void SuperMarker3D::_build_materials() {
 	_fill_material->set_shading_mode(effective_lit
 			? BaseMaterial3D::SHADING_MODE_PER_PIXEL
 			: BaseMaterial3D::SHADING_MODE_UNSHADED);
-	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _always_on_top);
+	_fill_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, _flag(F_ALWAYS_ON_TOP));
 	_fill_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, false);
 	// Fill albedo is the user's fill_color across every type; alpha it out
 	// to hide the interior.
@@ -2400,7 +2449,7 @@ void SuperMarker3D::_build_materials() {
 	// computed from per-vertex perpendicular distances to face-boundary edges.
 	const bool use_bary_path = is_mesh_type || is_shape_type || is_curve_flat || is_figure_type;
 	if (use_bary_path) {
-		const bool use_sphere_shader = _smooth_shading
+		const bool use_sphere_shader = _flag(F_SMOOTH_SHADING)
 				&& (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
 		const bool is_capsule        = (_shape == MESH_CAPSULE);
 		const bool flat_bary = (is_shape_type || is_curve_flat) && !use_sphere_shader;
@@ -2410,7 +2459,7 @@ void SuperMarker3D::_build_materials() {
 		// Transparent: writes ALPHA, render_mode gets blend_mix.
 		const bool sphere_transparent = (_fill_color.a < 1.0f || _outline_color.a < 1.0f);
 		const bool bary_transparent   = (_fill_color.a < 1.0f || _outline_color.a < 1.0f
-				|| (_background_color.a > 0.0f && _background_color.a < 1.0f));
+				|| (_td.curve.background_color.a > 0.0f && _td.curve.background_color.a < 1.0f));
 		const bool fill_transparent   = (_fill_color.a < 1.0f);
 
 		// Build shader body strings.
@@ -2423,8 +2472,8 @@ void SuperMarker3D::_build_materials() {
 		// Determine cull mode for the primary bary surface.
 		// 0=cull_back, 1=cull_front, 2=cull_disabled.
 		int bary_cull = 0;
-		if (flat_bary && _two_sided)        bary_cull = 2;
-		else if (_flip_faces && !_two_sided) bary_cull = 1;
+		if (flat_bary && _flag(F_TWO_SIDED))        bary_cull = 2;
+		else if (_flag(F_FLIP_FACES) && !_flag(F_TWO_SIDED)) bary_cull = 1;
 
 		// Get shaders from cache using dynamic render_mode + body.
 		// Figure forces depth_draw_always so transparent fill self-sorts by
@@ -2433,7 +2482,7 @@ void SuperMarker3D::_build_materials() {
 		// because the GLB stores them later in the index buffer. Mesh
 		// subtypes deliberately don't get this so their back-wireframe-
 		// through-alpha effect is preserved.
-		const bool top = _always_on_top;
+		const bool top = _flag(F_ALWAYS_ON_TOP);
 		const bool fig_depth = is_figure_type;
 		auto get_shader = [&](int cull, bool transparent, const String &body) -> Ref<Shader> {
 			return _cached_shader(_render_mode(effective_lit && !top, cull, transparent, top, fig_depth) + body);
@@ -2466,23 +2515,23 @@ void SuperMarker3D::_build_materials() {
 			_bary_material->set_shader_parameter("fill_color", _fill_color);
 			_bary_material->set_shader_parameter("outline_color", _outline_color);
 			_bary_material->set_shader_parameter("outline_thickness", _outline_thickness);
-			_bary_material->set_shader_parameter("background_color", _background_color);
+			_bary_material->set_shader_parameter("background_color", _td.curve.background_color);
 			int bb = 0;
-			if (_billboard_y) bb = 1;
-			else if (_billboard_xz) bb = 2;
+			if (_flag(F_BILLBOARD_Y)) bb = 1;
+			else if (_flag(F_BILLBOARD_XZ)) bb = 2;
 			_bary_material->set_shader_parameter("billboard_mode", bb);
 			// outline_mode: 2 = per-fragment perimeter SDF (sharp mitres at every
 			// corner regardless of triangulation). All flat Shape subtypes use it;
 			// curve ribbons stay on mode 0 (no fixed perimeter to upload).
 			const int om = is_shape_type ? 2 : 0;
 			_bary_material->set_shader_parameter("outline_mode", om);
-			_bary_material->set_shader_parameter("flat_two_sided", (flat_bary && _two_sided) ? 1 : 0);
+			_bary_material->set_shader_parameter("flat_two_sided", (flat_bary && _flag(F_TWO_SIDED)) ? 1 : 0);
 			if (om == 2) _set_perimeter_uniform(_bary_material);
 			_bary_material->set_render_priority(0);
 		}
 
 		// Back-face material — only for 3D two-sided geometry (not flat).
-		const bool need_back = _two_sided && !flat_bary;
+		const bool need_back = _flag(F_TWO_SIDED) && !flat_bary;
 		if (need_back) {
 			if (use_sphere_shader) {
 				if (_mesh_material_back.is_null()) _mesh_material_back.instantiate();
@@ -2501,10 +2550,10 @@ void SuperMarker3D::_build_materials() {
 				_bary_material_back->set_shader_parameter("fill_color", _fill_color);
 				_bary_material_back->set_shader_parameter("outline_color", _outline_color);
 				_bary_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
-				_bary_material_back->set_shader_parameter("background_color", _background_color);
+				_bary_material_back->set_shader_parameter("background_color", _td.curve.background_color);
 				int bb = 0;
-				if (_billboard_y) bb = 1;
-				else if (_billboard_xz) bb = 2;
+				if (_flag(F_BILLBOARD_Y)) bb = 1;
+				else if (_flag(F_BILLBOARD_XZ)) bb = 2;
 				_bary_material_back->set_shader_parameter("billboard_mode", bb);
 				const int om = is_shape_type ? 2 : 0;
 				_bary_material_back->set_shader_parameter("outline_mode", om);
@@ -2517,7 +2566,7 @@ void SuperMarker3D::_build_materials() {
 		// Capsule hemisphere materials. Each carries a sphere_center
 		// uniform that offsets phi/theta evaluation to the hemisphere's true centre.
 		// Skipped when faceted — caps fold back into the BARY primary surface.
-		if (is_capsule && _smooth_shading) {
+		if (is_capsule && _flag(F_SMOOTH_SHADING)) {
 			const float cyl_half = _capsule_height * _marker_size * 0.5f;
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			if (_cap_bot_material.is_null()) _cap_bot_material.instantiate();
@@ -2533,7 +2582,7 @@ void SuperMarker3D::_build_materials() {
 				caps[i]->set_shader_parameter("cyl_half", 0.0f);
 				caps[i]->set_render_priority(0);
 			}
-			if (_two_sided) {
+			if (_flag(F_TWO_SIDED)) {
 				if (_cap_top_material_back.is_null()) _cap_top_material_back.instantiate();
 				if (_cap_bot_material_back.is_null()) _cap_bot_material_back.instantiate();
 				Ref<ShaderMaterial> caps_back[2] = { _cap_top_material_back, _cap_bot_material_back };
@@ -2553,7 +2602,7 @@ void SuperMarker3D::_build_materials() {
 		// cyl_half > 0 (meridian + rim); cone uses cyl_half = 0 (lat/lon).
 		// Faceted cylinder/cone fold the band/lateral into the BARY primary,
 		// so this block is skipped when smooth shading is off.
-		if (_smooth_shading && (_shape == MESH_CYLINDER || _shape == MESH_CONE)) {
+		if (_flag(F_SMOOTH_SHADING) && (_shape == MESH_CYLINDER || _shape == MESH_CONE)) {
 			const float cap_cyl_half = (_shape == MESH_CYLINDER) ? _marker_size : 0.0f;
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			_cap_top_material->set_shader(sphere_s);
@@ -2564,7 +2613,7 @@ void SuperMarker3D::_build_materials() {
 			_cap_top_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 			_cap_top_material->set_shader_parameter("cyl_half", cap_cyl_half);
 			_cap_top_material->set_render_priority(0);
-			if (_two_sided) {
+			if (_flag(F_TWO_SIDED)) {
 				if (_cap_top_material_back.is_null()) _cap_top_material_back.instantiate();
 				_cap_top_material_back->set_shader(sphere_s_back);
 				_cap_top_material_back->set_shader_parameter("fill_color", _fill_color);
@@ -2592,9 +2641,9 @@ void SuperMarker3D::_build_materials() {
 	if (_mesh.is_valid()) {
 		int sc = _mesh->get_surface_count();
 		if (use_bary_path) {
-			const bool use_sphere_shader = _smooth_shading
+			const bool use_sphere_shader = _flag(F_SMOOTH_SHADING)
 					&& (_shape == MESH_SPHERE || _shape == MESH_DIAMOND || _shape == MESH_CAPSULE);
-			const bool sphere_shader_caps = _smooth_shading;
+			const bool sphere_shader_caps = _flag(F_SMOOTH_SHADING);
 			Ref<ShaderMaterial> front_mat = use_sphere_shader ? _mesh_material : _bary_material;
 			Ref<ShaderMaterial> back_mat  = use_sphere_shader ? _mesh_material_back : _bary_material_back;
 			if (is_figure_type) {
@@ -2611,16 +2660,16 @@ void SuperMarker3D::_build_materials() {
 				// back-face bary material, which paints with outline_color
 				// instead of the per-vertex bone color).
 				int idx = 0;
-				if (_figure_show_mesh) {
-					if (_two_sided) {
+				if (_flag(F_FIGURE_SHOW_MESH)) {
+					if (_flag(F_TWO_SIDED)) {
 						if (sc > idx && back_mat.is_valid()) _mesh->surface_set_material(idx++, back_mat);
 					}
 					if (sc > idx && front_mat.is_valid()) _mesh->surface_set_material(idx++, front_mat);
 				}
-				if (_figure_show_bones && sc > idx && _outline_material.is_valid()) {
+				if (_flag(F_FIGURE_SHOW_BONES) && sc > idx && _outline_material.is_valid()) {
 					_mesh->surface_set_material(idx, _outline_material);
 				}
-			} else if (_two_sided && !flat_bary_assign) {
+			} else if (_flag(F_TWO_SIDED) && !flat_bary_assign) {
 				if (sc > 0 && back_mat.is_valid())  _mesh->surface_set_material(0, back_mat);
 				if (sc > 1 && front_mat.is_valid()) _mesh->surface_set_material(1, front_mat);
 				if (_shape == MESH_CAPSULE && sphere_shader_caps) {
@@ -2660,7 +2709,7 @@ void SuperMarker3D::_build_materials() {
 	// Attach the matching overlay as `next_pass` on every visible
 	// material; clear next_pass when checker is off so we don't leave a
 	// stale overlay attached.
-	if (_checker_enabled) {
+	if (_flag(F_CHECKER_ENABLED)) {
 		Ref<Shader> shader = _cached_shader(CHECKER_OVERLAY_SHADER);
 		auto build_overlay = [&](Ref<ShaderMaterial> &m, int cull, int priority) {
 			if (m.is_null()) m.instantiate();
@@ -2680,11 +2729,11 @@ void SuperMarker3D::_build_materials() {
 	}
 	auto apply_front = [&](const Ref<Material> &m) {
 		if (m.is_null()) return;
-		m->set_next_pass(_checker_enabled ? Ref<Material>(_checker_overlay_front) : Ref<Material>());
+		m->set_next_pass(_flag(F_CHECKER_ENABLED) ? Ref<Material>(_checker_overlay_front) : Ref<Material>());
 	};
 	auto apply_back = [&](const Ref<Material> &m) {
 		if (m.is_null()) return;
-		m->set_next_pass(_checker_enabled ? Ref<Material>(_checker_overlay_back) : Ref<Material>());
+		m->set_next_pass(_flag(F_CHECKER_ENABLED) ? Ref<Material>(_checker_overlay_back) : Ref<Material>());
 	};
 	// Front-cull parents (cull_back) and cull_disabled parents both take
 	// the front overlay — for cull_disabled the camera-relative cull
@@ -2925,8 +2974,8 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 
 // Round 3D arrowhead at the tip of an axis arm. Curve-cap-style
 // EXTERNAL cone: base disk sits at the arm tip (`p_arm_len * dir`),
-// apex extends OUTWARD past the tip by `_axis_arrow_length` along the
-// arm direction, base radius = `_axis_arrow_width`. Sharp point.
+// apex extends OUTWARD past the tip by `_td.axis.arrow_length` along the
+// arm direction, base radius = `_td.axis.arrow_width`. Sharp point.
 //
 // The cone's base disk overlaps and buries the tube's hemisphere cap —
 // no z-fighting because they're co-planar at the same axis position
@@ -2935,7 +2984,7 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 // the tip, arrow takes over from there.
 //
 // Side effect of the new convention: the visible arm reaches
-// `p_arm_len + _axis_arrow_length`. Treat `axis_length_*` as the
+// `p_arm_len + _td.axis.arrow_length`. Treat `axis_length_*` as the
 // SHAFT length and `axis_arrow_length` as the ADDITIONAL pointer past
 // the shaft. Cleaner mental model, simpler geometry.
 //
@@ -2946,20 +2995,20 @@ void SuperMarker3D::_add_axis_segment(GeoBuf &geo, const Vector3 &a, const Vecto
 // bookkeeping so AXIS_XYZ keeps its per-arm color on the cone.
 void SuperMarker3D::_add_axis_arrowhead(GeoBuf &geo, const Vector3 &dir,
 		float p_arm_len, const Color &p_color, bool p_use_color) const {
-	if (_axis_arrow_length <= 0.0f || p_arm_len <= 0.0f) return;
+	if (_td.axis.arrow_length <= 0.0f || p_arm_len <= 0.0f) return;
 	const Vector3 d = dir.normalized();
 	const Vector3 base_center = d * p_arm_len;
-	const Vector3 tip         = base_center + d * _axis_arrow_length;
+	const Vector3 tip         = base_center + d * _td.axis.arrow_length;
 
 	// Width = 0 → degenerate cone. Render a single line indicator so
 	// the arrow region stays visible even with no splay.
-	if (_axis_arrow_width <= 0.0f) {
+	if (_td.axis.arrow_width <= 0.0f) {
 		if (p_use_color) geo.add_line_colored(base_center, tip, p_color);
 		else             geo.add_line(base_center, tip);
 		return;
 	}
 
-	const float base_r = _axis_arrow_width;
+	const float base_r = _td.axis.arrow_width;
 	const int   segs   = 12;
 	Vector3 up    = Math::abs(d.dot(Vector3(0, 1, 0))) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	Vector3 right = d.cross(up).normalized();
@@ -3044,7 +3093,7 @@ void SuperMarker3D::_gen_axis_cross(GeoBuf &/*geo*/) const {
 
 void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 	const float s = _marker_size;
-	const int   N = MAX(3, _mesh_sides);
+	const int   N = MAX(3, _sides);
 	const Vector3 top(0,  s, 0);
 	const Vector3 btm(0, -s, 0);
 	PackedVector3Array eq;
@@ -3053,7 +3102,7 @@ void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 		const float a = SM_TAU * (float)i / N;
 		eq.set(i, Vector3(std::cos(a) * s, 0.0f, std::sin(a) * s));
 	}
-	if (_smooth_shading) {
+	if (_flag(F_SMOOTH_SHADING)) {
 		// Diamond = double cone. Use analytical cone normals (not spherical)
 		// so shadow normal-bias matches the actual 45° surface.
 		// Upper half: n = (cos, 1, sin)/√2. Follows the cone generator's
@@ -3125,7 +3174,7 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 			verts.set(i * W + j, Vector3(sp * ct, cp, sp * st) * r);
 		}
 	}
-	if (_smooth_shading) {
+	if (_flag(F_SMOOTH_SHADING)) {
 		auto push = [&](const Vector3 &v) {
 			geo.tri_bary_verts.push_back(v);
 			geo.tri_bary_normals.push_back(v.normalized());
@@ -3212,7 +3261,7 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 		top.set(i, Vector3(cx,  s, cz));
 		btm.set(i, Vector3(cx, -s, cz));
 	}
-	if (_smooth_shading) {
+	if (_flag(F_SMOOTH_SHADING)) {
 		// Band — smooth radial normals, emitted into cap_top surface for
 		// the sphere shader (cyl_half mode draws meridians + rim lines).
 		for (int i = 0; i < CYL_LON; i++) {
@@ -3254,7 +3303,7 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 
 void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 	const float s = _marker_size;
-	const int CONE_LON = MAX(3, _mesh_sides);
+	const int CONE_LON = MAX(3, _sides);
 	PackedVector3Array base;
 	base.resize(CONE_LON);
 	for (int i = 0; i < CONE_LON; i++) {
@@ -3262,7 +3311,7 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 		base.set(i, Vector3(std::cos(a) * s, -s, std::sin(a) * s));
 	}
 	const Vector3 apex(0, s, 0), bc(0, -s, 0);
-	if (_smooth_shading) {
+	if (_flag(F_SMOOTH_SHADING)) {
 		// Smooth-shaded lateral — sphere shader draws analytical lines.
 		// Cone normal at angle θ: (2cosθ, 1, 2sinθ)/√5.
 		const float inv_sqrt5 = 1.0f / std::sqrt(5.0f);
@@ -3333,7 +3382,7 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 		bot_ring.set(i, Vector3(cx, -cyl_half, cz));
 	}
 	if (_capsule_height > 0.0f) {
-		if (_smooth_shading) {
+		if (_flag(F_SMOOTH_SHADING)) {
 			// Band — smooth radial normals, sphere shader draws meridian + rim
 			// lines via cyl_half mode. Emitted into tri_bary arrays (primary surface).
 			for (int i = 0; i < LON; i++) {
@@ -3400,7 +3449,7 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 				const int ic = ia + W;
 				const int id = ic + 1;
 				const Vector3 va = verts[ia], vb = verts[ib], vc = verts[ic], vd = verts[id];
-				if (_smooth_shading) {
+				if (_flag(F_SMOOTH_SHADING)) {
 					// Flipped winding (v0, v2, v1) — matches `_add_mesh_face` /
 					// `_add_mesh_quad_face`. Position-based outward normals.
 					auto push = [&](const Vector3 &p0, const Vector3 &p1, const Vector3 &p2) {
@@ -3431,7 +3480,7 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 			}
 		}
 	};
-	if (_smooth_shading) {
+	if (_flag(F_SMOOTH_SHADING)) {
 		emit_hemisphere(true,  +cyl_half, geo.cap_top_verts, geo.cap_top_normals);
 		emit_hemisphere(false, -cyl_half, geo.cap_bot_verts, geo.cap_bot_normals);
 	} else {
@@ -3542,17 +3591,17 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 	if (active.is_null()) return;
 	const float L_total = active->get_baked_length();
 	if (L_total <= 0.0001f) return;
-	const float L = L_total * CLAMP(_length_fraction, 0.0f, 1.0f);
+	const float L = L_total * CLAMP(_td.curve.length_fraction, 0.0f, 1.0f);
 	if (L <= 0.0001f) return;
 
-	const float radius = MAX(0.001f, _curve_width * 0.5f);
+	const float radius = MAX(0.001f, _td.curve.width * 0.5f);
 	const int   sides  = 8;
 
-	// User-facing knob `_curve_segments` is the SOLID resolution across
+	// User-facing knob `_td.curve.segments` is the SOLID resolution across
 	// the full curve. Sub-spans (dashes) are subdivided proportionally
 	// at this density, with a 1-segment minimum so very short dashes
 	// still emit at least one ring-to-ring tube quad set.
-	const int   target_N    = MAX(_curve_segments, 4);
+	const int   target_N    = MAX(_td.curve.segments, 4);
 	const float global_step = L_total / (float)target_N;
 
 	// Tangent at arc-length s, for end-cap orientation.
@@ -3670,23 +3719,23 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 	};
 
 	// Pattern dispatch.
-	if (_curve_pattern == CURVE_PATTERN_DOT) {
+	if (_td.curve.pattern == CURVE_PATTERN_DOT) {
 		// Sphere stamps. Diameter = dash_length (decoupled from tube
 		// radius so the user can size dots independently of the curve
 		// width). Cycle = diameter + gap → spheres just touch at gap=0
 		// and space out as gap grows.
-		const float dot_r = MAX(0.001f, _dash_length * 0.5f);
-		const float gap   = MAX(0.001f, _dash_gap);
+		const float dot_r = MAX(0.001f, _td.curve.dash_length * 0.5f);
+		const float gap   = MAX(0.001f, _td.curve.dash_gap);
 		const float cycle = (dot_r * 2.0f) + gap;
 		for (float s = dot_r; s <= L - dot_r + 1e-4f; s += cycle) {
 			_add_sphere_blob(geo, active->sample_baked(s, false), dot_r, 4, sides);
 		}
-	} else if (_curve_pattern == CURVE_PATTERN_DASH) {
+	} else if (_td.curve.pattern == CURVE_PATTERN_DASH) {
 		// Tube sub-segments separated by gaps. No geometry in the gaps —
 		// 3D dash is just the absence of tube, the user can't see colour
 		// behind it the way the flat ribbon's "fill" surface is used.
-		const float dash  = MAX(0.001f, _dash_length);
-		const float gap   = MAX(0.001f, _dash_gap);
+		const float dash  = MAX(0.001f, _td.curve.dash_length);
+		const float gap   = MAX(0.001f, _td.curve.dash_gap);
 		const float cycle = dash + gap;
 		for (float s = 0.0f; s < L; s += cycle) {
 			emit_tube_run(s, MIN(s + dash, L));
@@ -3766,8 +3815,8 @@ void SuperMarker3D::_gen_curve_line_3d(GeoBuf &geo) const {
 			_add_sphere_blob(geo, hi, radius, 3, sides);
 		}
 	};
-	emit_3d_cap(_curve_start_cap, 0.0f, true,  _start_cap_size, _start_cap_linked);
-	emit_3d_cap(_curve_end_cap,   L,    false, _end_cap_size,   _end_cap_linked);
+	emit_3d_cap(_td.curve.start_cap, 0.0f, true,  _td.curve.start_cap_size, _flag(F_START_CAP_LINKED));
+	emit_3d_cap(_td.curve.end_cap,   L,    false, _td.curve.end_cap_size,   _flag(F_END_CAP_LINKED));
 }
 
 // ---------------------------------------------------------------------------
@@ -3917,9 +3966,9 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 	const FigureMeshCache &cache = _get_figure_mesh();
 
 	const float REF_HEIGHT = 1.65f;
-	const float scale = _figure_height / REF_HEIGHT;
-	const Vector3 pelvis = _figure_bone_pelvis_pos * scale;
-	const float spine_len_s = _figure_bone_length[BONE_SPINE] * scale;
+	const float scale = _td.figure.height / REF_HEIGHT;
+	const Vector3 pelvis = _td.figure.pelvis_pos * scale;
+	const float spine_len_s = _td.figure.bone_length[BONE_SPINE] * scale;
 
 	// Helper: run the bone chain for a given set of per-bone local bases.
 	// Returns world transforms and tip positions for all 11 bones.
@@ -3934,43 +3983,43 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 		Vector3 nk = pelvis + sb.xform(Vector3(0, 1, 0) * spine_len_s);
 		out_tip[BONE_SPINE] = nk;
 		// HEAD
-		Vector3 hp = nk + sb.xform(_figure_offset_head_base * scale);
+		Vector3 hp = nk + sb.xform(_td.figure.offsets[FO_HEAD_BASE] * scale);
 		const Basis &hb = local_basis[BONE_HEAD];
 		Basis head_wb = sb * hb;
 		out_world[BONE_HEAD] = Transform3D(head_wb, hp);
-		out_tip[BONE_HEAD] = hp + head_wb.xform(BONE_REST_AXIS[BONE_HEAD] * _figure_bone_length[BONE_HEAD] * scale);
+		out_tip[BONE_HEAD] = hp + head_wb.xform(BONE_REST_AXIS[BONE_HEAD] * _td.figure.bone_length[BONE_HEAD] * scale);
 		// Arms — upper inherits spine, lower inherits upper
 		auto do_arm = [&](int ua, int la, const Vector3 &shoulder_off) {
 			Vector3 sh = nk + sb.xform(shoulder_off * scale);
 			Basis ua_wb = sb * local_basis[ua];
 			out_world[ua] = Transform3D(ua_wb, sh);
-			Vector3 elb = sh + ua_wb.xform(BONE_REST_AXIS[ua] * _figure_bone_length[ua] * scale);
+			Vector3 elb = sh + ua_wb.xform(BONE_REST_AXIS[ua] * _td.figure.bone_length[ua] * scale);
 			out_tip[ua] = elb;
 			Basis la_wb = ua_wb * local_basis[la];
 			out_world[la] = Transform3D(la_wb, elb);
-			out_tip[la] = elb + la_wb.xform(BONE_REST_AXIS[la] * _figure_bone_length[la] * scale);
+			out_tip[la] = elb + la_wb.xform(BONE_REST_AXIS[la] * _td.figure.bone_length[la] * scale);
 		};
-		do_arm(BONE_L_UPPER_ARM, BONE_L_LOWER_ARM, _figure_offset_l_shoulder);
-		do_arm(BONE_R_UPPER_ARM, BONE_R_LOWER_ARM, _figure_offset_r_shoulder);
+		do_arm(BONE_L_UPPER_ARM, BONE_L_LOWER_ARM, _td.figure.offsets[FO_L_SHOULDER]);
+		do_arm(BONE_R_UPPER_ARM, BONE_R_LOWER_ARM, _td.figure.offsets[FO_R_SHOULDER]);
 		// Legs — don't inherit spine rotation
 		auto do_leg = [&](int ul, int ll, const Vector3 &hip_off) {
 			Vector3 hp2 = pelvis + hip_off * scale;
 			const Basis &ul_b = local_basis[ul];
 			out_world[ul] = Transform3D(ul_b, hp2);
-			Vector3 kn = hp2 + ul_b.xform(BONE_REST_AXIS[ul] * _figure_bone_length[ul] * scale);
+			Vector3 kn = hp2 + ul_b.xform(BONE_REST_AXIS[ul] * _td.figure.bone_length[ul] * scale);
 			out_tip[ul] = kn;
 			Basis ll_b = ul_b * local_basis[ll];
 			out_world[ll] = Transform3D(ll_b, kn);
-			out_tip[ll] = kn + ll_b.xform(BONE_REST_AXIS[ll] * _figure_bone_length[ll] * scale);
+			out_tip[ll] = kn + ll_b.xform(BONE_REST_AXIS[ll] * _td.figure.bone_length[ll] * scale);
 		};
-		do_leg(BONE_L_UPPER_LEG, BONE_L_LOWER_LEG, _figure_offset_l_hip);
-		do_leg(BONE_R_UPPER_LEG, BONE_R_LOWER_LEG, _figure_offset_r_hip);
+		do_leg(BONE_L_UPPER_LEG, BONE_L_LOWER_LEG, _td.figure.offsets[FO_L_HIP]);
+		do_leg(BONE_R_UPPER_LEG, BONE_R_LOWER_LEG, _td.figure.offsets[FO_R_HIP]);
 	};
 
 	// --- Rest chain (baked rest rotations only) ---
 	Basis rest_local[BONE_COUNT];
 	for (int b = 0; b < BONE_COUNT; b++)
-		rest_local[b] = Basis::from_euler(_figure_bone_rot[b]);
+		rest_local[b] = Basis::from_euler(_td.figure.bone_rot[b]);
 
 	Transform3D bone_rest[BONE_COUNT];
 	Vector3 rest_tip[BONE_COUNT];
@@ -3981,8 +4030,8 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 	// and the user can rig against the underlying mesh shape.
 	Basis posed_local[BONE_COUNT];
 	for (int b = 0; b < BONE_COUNT; b++) {
-		Basis pose = _figure_show_bones ? Basis() : Basis::from_euler(_figure_bone_pose_rot[b]);
-		posed_local[b] = Basis::from_euler(_figure_bone_rot[b]) * pose;
+		Basis pose = _flag(F_FIGURE_SHOW_BONES) ? Basis() : Basis::from_euler(_td.figure.bone_pose_rot[b]);
+		posed_local[b] = Basis::from_euler(_td.figure.bone_rot[b]) * pose;
 	}
 
 	Transform3D bone_posed[BONE_COUNT];
@@ -3990,7 +4039,7 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 	build_chain(posed_local, bone_posed, posed_tip);
 
 	// --- Mesh skinning: posed * rest.inverse() * v_rest ---
-	if (_figure_show_mesh && !cache.verts.is_empty()) {
+	if (_flag(F_FIGURE_SHOW_MESH) && !cache.verts.is_empty()) {
 		const PackedVector3Array &mv = cache.verts;
 		const PackedInt32Array   &mi = cache.indices;
 		const PackedByteArray &eb = cache.edge_boundary;
@@ -4005,14 +4054,14 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 		struct SkinSeg { Vector3 a, b; int driver; float radius; };
 		Vector<SkinSeg> segs;
 		for (int bn = 0; bn < BONE_COUNT; bn++)
-			segs.push_back({bone_rest[bn].origin, rest_tip[bn], bn, _figure_bone_width[bn]});
+			segs.push_back({bone_rest[bn].origin, rest_tip[bn], bn, _td.figure.bone_width[bn]});
 		const Vector3 neck_rest = rest_tip[BONE_SPINE];
 		const Basis sb_rest = bone_rest[BONE_SPINE].basis;
-		segs.push_back({pelvis, pelvis + _figure_offset_l_hip * scale, BONE_PELVIS, _figure_offset_l_hip_width});
-		segs.push_back({pelvis, pelvis + _figure_offset_r_hip * scale, BONE_PELVIS, _figure_offset_r_hip_width});
-		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_figure_offset_l_shoulder * scale), BONE_SPINE, _figure_offset_l_shoulder_width});
-		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_figure_offset_r_shoulder * scale), BONE_SPINE, _figure_offset_r_shoulder_width});
-		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_figure_offset_head_base * scale), BONE_SPINE, _figure_offset_head_base_width});
+		segs.push_back({pelvis, pelvis + _td.figure.offsets[FO_L_HIP] * scale, BONE_PELVIS, _td.figure.offset_widths[FO_L_HIP]});
+		segs.push_back({pelvis, pelvis + _td.figure.offsets[FO_R_HIP] * scale, BONE_PELVIS, _td.figure.offset_widths[FO_R_HIP]});
+		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_td.figure.offsets[FO_L_SHOULDER] * scale), BONE_SPINE, _td.figure.offset_widths[FO_L_SHOULDER]});
+		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_td.figure.offsets[FO_R_SHOULDER] * scale), BONE_SPINE, _td.figure.offset_widths[FO_R_SHOULDER]});
+		segs.push_back({neck_rest, neck_rest + sb_rest.xform(_td.figure.offsets[FO_HEAD_BASE] * scale), BONE_SPINE, _td.figure.offset_widths[FO_HEAD_BASE]});
 
 		auto skin = [&](int vidx) -> Vector3 {
 			Vector3 v_rest = mv[vidx] * scale;
@@ -4063,12 +4112,12 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 	// Tubes drawn at each bone's actual width so the visual matches the
 	// capsule that the skinning Voronoi uses. Real bones in cyan, offset
 	// bars in light grey to distinguish "rotates" from "rigid extension".
-	if (_figure_show_bones) {
+	if (_flag(F_FIGURE_SHOW_BONES)) {
 		// One color drives both real bones and offset bars — cleaner read in
 		// the inspector, and offsets are conceptually "extensions of a bone"
 		// not a different category once you've internalised the rig.
-		const Color bone_col = _figure_bone_color;
-		const Color offset_col = _figure_bone_color;
+		const Color bone_col = _td.figure.bone_color;
+		const Color offset_col = _td.figure.bone_color;
 		const int tube_segs = 10;
 		const Vector3 neck = rest_tip[BONE_SPINE];
 		const Basis sbasis = bone_rest[BONE_SPINE].basis;
@@ -4080,12 +4129,12 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 				_add_tube_colored(geo, a, b, w, tube_segs, c);
 		};
 		for (int b = 0; b < BONE_COUNT; b++)
-			draw_seg(bone_rest[b].origin, rest_tip[b], _figure_bone_width[b], bone_col);
-		draw_seg(pelvis, pelvis + _figure_offset_l_hip * scale, _figure_offset_l_hip_width, offset_col);
-		draw_seg(pelvis, pelvis + _figure_offset_r_hip * scale, _figure_offset_r_hip_width, offset_col);
-		draw_seg(neck, neck + sbasis.xform(_figure_offset_l_shoulder * scale), _figure_offset_l_shoulder_width, offset_col);
-		draw_seg(neck, neck + sbasis.xform(_figure_offset_r_shoulder * scale), _figure_offset_r_shoulder_width, offset_col);
-		draw_seg(neck, neck + sbasis.xform(_figure_offset_head_base * scale), _figure_offset_head_base_width, offset_col);
+			draw_seg(bone_rest[b].origin, rest_tip[b], _td.figure.bone_width[b], bone_col);
+		draw_seg(pelvis, pelvis + _td.figure.offsets[FO_L_HIP] * scale, _td.figure.offset_widths[FO_L_HIP], offset_col);
+		draw_seg(pelvis, pelvis + _td.figure.offsets[FO_R_HIP] * scale, _td.figure.offset_widths[FO_R_HIP], offset_col);
+		draw_seg(neck, neck + sbasis.xform(_td.figure.offsets[FO_L_SHOULDER] * scale), _td.figure.offset_widths[FO_L_SHOULDER], offset_col);
+		draw_seg(neck, neck + sbasis.xform(_td.figure.offsets[FO_R_SHOULDER] * scale), _td.figure.offset_widths[FO_R_SHOULDER], offset_col);
+		draw_seg(neck, neck + sbasis.xform(_td.figure.offsets[FO_HEAD_BASE] * scale), _td.figure.offset_widths[FO_HEAD_BASE], offset_col);
 	}
 }
 
@@ -4106,7 +4155,7 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 
 
 void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
-    const int   N = _shape_sides;
+    const int   N = _sides;
     const float r = _marker_size;
     Vector<Vector3> ring;
     ring.resize(N);
@@ -4226,8 +4275,8 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
 	const float total = _marker_size * 2.0f;
-	const float hl    = MIN(_head_length, total * 0.9f);
-	const float hw    = _head_width;
+	const float hl    = MIN(_td.shape.head_length, total * 0.9f);
+	const float hw    = _td.shape.head_width;
 	const float sw    = hw * 0.4f;
 	const float y_tip = total * 0.5f;
 	const float y_base = -y_tip;
@@ -4267,19 +4316,19 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	if (active.is_null()) return;
 	const float L = active->get_baked_length();
 	if (L < 0.0001f) return;
-	const float L_end = L * CLAMP(_length_fraction, 0.0f, 1.0f);
+	const float L_end = L * CLAMP(_td.curve.length_fraction, 0.0f, 1.0f);
 	if (L_end < 0.0001f) return;
 
-	const float width  = MAX(0.001f, _curve_width);
+	const float width  = MAX(0.001f, _td.curve.width);
 	const float half_w = width * 0.5f;
 
-	// Tessellation step driven by the user's `_curve_segments` knob —
+	// Tessellation step driven by the user's `_td.curve.segments` knob —
 	// gives N quads across the full curve at SOLID, and proportional
 	// sub-segment counts on dashes (min 1 per dash). Drops the
 	// bake_interval-driven oversampling that was emitting hundreds of
 	// quads at default 0.05m intervals; the mesh export shrinks
 	// proportionally.
-	const int   _seg_N = MAX(_curve_segments, 4);
+	const int   _seg_N = MAX(_td.curve.segments, 4);
 	const float step   = L / (float)_seg_N;
 
 	// Mitered ribbon-right offset at arc-length s. Returns a vector
@@ -4317,7 +4366,7 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		// outside edge rises (positive bank) or drops (negative bank). The
 		// turn signal is the projection of (tb0 × tb1) onto world-up — its
 		// sign flips with curve direction, so the outside edge always
-		// rises for positive `_curve_bank` regardless of left vs right
+		// rises for positive `_td.curve.bank` regardless of left vs right
 		// turn. Sign on the rotation is negated because we rotate about
 		// `bisect` (motion direction in Godot's -Z convention) and a
 		// positive rotation there sends the left perp upward — we want
@@ -4332,7 +4381,7 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		// only kick in at a handful of quads. Re-sample with a wider
 		// spread (≥2 segments) so the bank signal reflects average
 		// curvature across the local region.
-		const float seg_step = L / (float)MAX(_curve_segments, 4);
+		const float seg_step = L / (float)MAX(_td.curve.segments, 4);
 		const float eps_b    = MAX(eps * 4.0f, seg_step * 2.0f);
 		Vector3 pb0 = active->sample_baked(MAX(0.0f, s - eps_b), false);
 		Vector3 pb2 = active->sample_baked(MIN(L,    s + eps_b), false);
@@ -4344,18 +4393,18 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 			const float signed_turn = tb0.cross(tb1).dot(up);
 			// Ease bank in/out at the curve's start and end so the
 			// transition from flat → fully banked → flat is smooth
-			// rather than a hard corner. `_bank_easing` is the FRACTION
+			// rather than a hard corner. `_td.curve.bank_easing` is the FRACTION
 			// of the curve's total length used for each ramp; 0 = no
 			// ease (full bank everywhere), 0.5 = ramp meets in the middle.
 			float ease = 1.0f;
-			if (_bank_easing > 1e-4f) {
-				const float ramp  = MAX(L * _bank_easing, 1e-6f);
+			if (_td.curve.bank_easing > 1e-4f) {
+				const float ramp  = MAX(L * _td.curve.bank_easing, 1e-6f);
 				const float t_in  = CLAMP(s / ramp, 0.0f, 1.0f);
 				const float t_out = CLAMP((L - s) / ramp, 0.0f, 1.0f);
 				ease = MIN(t_in, t_out);
 				ease = ease * ease * (3.0f - 2.0f * ease);  // smoothstep
 			}
-			const float bank_angle = -signed_turn * _curve_bank * ease;
+			const float bank_angle = -signed_turn * _td.curve.bank * ease;
 			if (Math::abs(bank_angle) > 1e-5f) {
 				perp = perp.rotated(bisect, bank_angle);
 			}
@@ -4401,11 +4450,11 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 	//   DOT   — round disc stamps centred on the curve, spaced by gap.
 	// All geometry emits into BARY buffers — fill_color and outline_color
 	// are controlled by the shader uniform, not by surface assignment.
-	if (_curve_pattern == CURVE_PATTERN_SOLID) {
+	if (_td.curve.pattern == CURVE_PATTERN_SOLID) {
 		emit_segment(0.0f, L_end);
-	} else if (_curve_pattern == CURVE_PATTERN_DOT) {
-		const float radius = MAX(0.001f, _dash_length * 0.5f);
-		const float gap    = MAX(0.001f, _dash_gap);
+	} else if (_td.curve.pattern == CURVE_PATTERN_DOT) {
+		const float radius = MAX(0.001f, _td.curve.dash_length * 0.5f);
+		const float gap    = MAX(0.001f, _td.curve.dash_gap);
 		const float cycle  = (radius * 2.0f) + gap;
 		const int   DISC_SEGS = 16;
 		for (float s = radius; s <= L_end - radius + 1e-4f; s += cycle) {
@@ -4420,8 +4469,8 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 			_add_flat_polygon_fan(geo, c, disc_ring.ptr(), DISC_SEGS);
 		}
 	} else { // DASH
-		const float dash  = MAX(0.001f, _dash_length);
-		const float gap   = MAX(0.001f, _dash_gap);
+		const float dash  = MAX(0.001f, _td.curve.dash_length);
+		const float gap   = MAX(0.001f, _td.curve.dash_gap);
 		const float cycle = dash + gap;
 		for (float s = 0.0f; s < L_end; s += cycle) {
 			const float on_end  = MIN(s + dash,  L_end);
@@ -4514,8 +4563,8 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 				_add_mesh_quad_face(geo, vA, vD, vC, vB, true, true, true, true);
 		}
 	};
-	emit_cap(_curve_start_cap, 0.0f, true,  _start_cap_size, _start_cap_linked);
-	emit_cap(_curve_end_cap,   L_end, false, _end_cap_size,   _end_cap_linked);
+	emit_cap(_td.curve.start_cap, 0.0f, true,  _td.curve.start_cap_size, _flag(F_START_CAP_LINKED));
+	emit_cap(_td.curve.end_cap,   L_end, false, _td.curve.end_cap_size,   _flag(F_END_CAP_LINKED));
 }
 
 // ---------------------------------------------------------------------------
@@ -4794,7 +4843,7 @@ void SuperMarker3D::_rebuild_mesh() {
 		Vector<float> lens;
 		Vector<Color> cols;
 		bool use_color = (_shape == AXIS_XYZ);
-		bool with_arrows = _axis_arrows && _shape != AXIS_BURR;
+		bool with_arrows = _flag(F_AXIS_ARROWS) && _shape != AXIS_BURR;
 
 		switch (_shape) {
 			case AXIS_CROSS: {
@@ -4844,9 +4893,9 @@ void SuperMarker3D::_rebuild_mesh() {
 					Vector3( 0, 0, 1), Vector3( 0, 0,-1),
 				};
 				const Color c6[6] = {
-					_axis_color_x_pos, _axis_color_x_neg,
-					_axis_color_y_pos, _axis_color_y_neg,
-					_axis_color_z_pos, _axis_color_z_neg,
+					_td.axis.colors[AL_XP], _td.axis.colors[AL_XN],
+					_td.axis.colors[AL_YP], _td.axis.colors[AL_YN],
+					_td.axis.colors[AL_ZP], _td.axis.colors[AL_ZN],
 				};
 				for (int i = 0; i < 6; i++) {
 					dirs.push_back(d6[i]); lens.push_back(L[i]); cols.push_back(c6[i]);
@@ -4923,7 +4972,7 @@ void SuperMarker3D::_rebuild_mesh() {
 			a[Mesh::ARRAY_TEX_UV2] = geo.tri_bary_uv2s;
 			// Flat two-sided uses a single cull_disabled surface —
 			// no duplicate needed (avoids z-fighting at Z=0).
-			if (_two_sided && !flat_bary) {
+			if (_flag(F_TWO_SIDED) && !flat_bary) {
 				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back
 			}
 			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front
@@ -4936,7 +4985,7 @@ void SuperMarker3D::_rebuild_mesh() {
 				a[Mesh::ARRAY_NORMAL] = norms;
 				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 			};
-			if (_two_sided) {
+			if (_flag(F_TWO_SIDED)) {
 				if (geo.cap_top_verts.size() > 0) emit_cap(geo.cap_top_verts, geo.cap_top_normals);
 				if (geo.cap_bot_verts.size() > 0) emit_cap(geo.cap_bot_verts, geo.cap_bot_normals);
 			}

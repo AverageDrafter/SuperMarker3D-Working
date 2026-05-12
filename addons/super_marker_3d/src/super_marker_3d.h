@@ -421,7 +421,7 @@ public:
 	void reset_interpolation();
 
 	void set_template_mode(bool p);
-	bool is_template_mode() const { return _template_mode; }
+	bool is_template_mode() const { return _flag(F_TEMPLATE_MODE); }
 	RID get_mesh_rid() const;
 
 private:
@@ -442,132 +442,109 @@ private:
 	float _outline_thickness = 0.0f;
 
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);     // teal/cyan
-	Color _background_color = Color(0.0f, 0.0f, 0.0f, 0.0f); // curve gap fill
 
-	// Six direction colors for AXIS_XYZ. Pure primaries on positives,
-	// dark versions on negatives (10/255 ≈ 0.039, 40/255 ≈ 0.157).
-	Color _axis_color_x_pos = Color(1.00f, 0.04f, 0.04f, 1.0f);
-	Color _axis_color_x_neg = Color(0.16f, 0.04f, 0.04f, 1.0f);
-	Color _axis_color_y_pos = Color(0.04f, 1.00f, 0.04f, 1.0f);
-	Color _axis_color_y_neg = Color(0.04f, 0.16f, 0.04f, 1.0f);
-	Color _axis_color_z_pos = Color(0.04f, 0.04f, 1.00f, 1.0f);
-	Color _axis_color_z_neg = Color(0.04f, 0.04f, 0.16f, 1.0f);
-
-	bool _axis_arrows = false;
-	float _axis_arrow_length = 0.15f;
-	float _axis_arrow_width = 0.075f; // splay radius — half of length default
-
-	// Round-mesh longitudinal segmentation (cylinder, cone, diamond).
-	// Default 8 reads as a nice low-poly shape; clamped 3..24 at every
-	// entry point. 3 = triangular prism / tetrahedron / triangular
-	// bipyramid, 24 = effectively round.
-	int  _mesh_sides = 24;
-	// Smooth shading on curved mesh subtypes (sphere/diamond/cone/cylinder/
-	// capsule). True = per-pixel smooth normals + analytical sphere-shader
-	// lines. False = flat face normals + BARY outline on every actual face.
-	bool _smooth_shading = true;
-	// Capsule-only — cylinder body length as a multiplier of marker_size.
-	// Default 2 → body = sphere diameter, giving a 4:1 pill at any size.
-	// Reused by FLAT_CAPSULE for the 2D pill body length.
+	// Capsule body length — shared by MESH_CAPSULE + FLAT_CAPSULE
+	// (cross-type, stays common).
 	float _capsule_height = 2.0f;
-	// Shape-category state.
-	bool  _billboard_xz    = false;  // BILLBOARD_FIXED_Y — rotates in XZ plane, Y stays fixed
-	bool  _billboard_y     = false;  // BILLBOARD_ENABLED — fully faces camera
-	bool  _rounded_corners = true;   // disc blobs at arc joints / corners
-	int   _shape_sides     = 24;     // FLAT_CIRCLE polygon segment count
 
-	// Axis-category state.
-	int _axis_link_mode = LINK_ALL;
-	// Per-direction lengths. Defaults: every direction at 0.5 — so a
-	// fresh marker in any Axis subtype starts as a uniform indicator
-	// and the user only has to change the value if they want
-	// asymmetry. Link mode decides at render time which of these the
-	// other directions follow.
-	float _axis_length_x_pos = 0.5f;
-	float _axis_length_x_neg = 0.5f;
-	float _axis_length_y_pos = 0.5f;
-	float _axis_length_y_neg = 0.5f;
-	float _axis_length_z_pos = 0.5f;
-	float _axis_length_z_neg = 0.5f;
-	// Stored type — persisted alongside `_subtype` so a fresh
-	// inspector load shows the right Type dropdown without having to
-	// derive it from the subtype value (which would lose the user's
-	// "I picked Shape but it's empty so it stays on Cross visually"
-	// kind of edge cases).
 	int _type = TYPE_AXIS;
 
-	// FIGURE shape. Total standing height in meters; body / limb /
-	// head sizes derive proportionally inside _gen_figure.
-	float _figure_height = 1.8f;
-	bool  _figure_show_mesh  = true;
-	bool  _figure_show_bones = false;
-	Color _figure_bone_color = Color(0.5f, 0.5f, 0.5f, 1.0f);
-	Vector3 _figure_bone_pelvis_pos;        // pelvis offset from origin
-	Vector3 _figure_bone_rot[BONE_COUNT];   // baked rest rotations (locked after rigging)
-	Vector3 _figure_bone_pose_rot[BONE_COUNT]; // pose rotations applied on top of rest
-	float   _figure_bone_length[BONE_COUNT]; // per-bone rest lengths (rotation+length chain)
-	float   _figure_bone_width[BONE_COUNT];  // per-bone capsule radius (visualizer + skin Voronoi)
-	Vector3 _figure_offset_head_base;
-	Vector3 _figure_offset_l_shoulder;
-	Vector3 _figure_offset_r_shoulder;
-	Vector3 _figure_offset_l_hip;
-	Vector3 _figure_offset_r_hip;
-	float _figure_offset_head_base_width = 0.04f;
-	float _figure_offset_l_shoulder_width = 0.05f;
-	float _figure_offset_r_shoulder_width = 0.05f;
-	float _figure_offset_l_hip_width = 0.05f;
-	float _figure_offset_r_hip_width = 0.05f;
+	// Merged side count — backs both `mesh_sides` and `shape_sides`
+	// properties. Range enforced per subtype in setter / _validate_property.
+	int _sides = 24;
 
-	float _head_length = 0.3f;
-	float _head_width  = 0.15f;
+	// ---- Packed bool flags (was 17 separate bools) ----
+	static constexpr uint32_t F_AXIS_ARROWS       = 1u << 0;
+	static constexpr uint32_t F_SMOOTH_SHADING    = 1u << 1;
+	static constexpr uint32_t F_BILLBOARD_XZ      = 1u << 2;
+	static constexpr uint32_t F_BILLBOARD_Y       = 1u << 3;
+	static constexpr uint32_t F_ROUNDED_CORNERS   = 1u << 4;
+	static constexpr uint32_t F_CURVE_FLAT        = 1u << 5;
+	static constexpr uint32_t F_START_CAP_LINKED  = 1u << 6;
+	static constexpr uint32_t F_END_CAP_LINKED    = 1u << 7;
+	static constexpr uint32_t F_FIGURE_SHOW_MESH  = 1u << 8;
+	static constexpr uint32_t F_FIGURE_SHOW_BONES = 1u << 9;
+	static constexpr uint32_t F_SHOWS_IN_PLAY     = 1u << 10;
+	static constexpr uint32_t F_ALWAYS_ON_TOP     = 1u << 11;
+	static constexpr uint32_t F_LIGHTS_SHADOWS    = 1u << 12;
+	static constexpr uint32_t F_TWO_SIDED         = 1u << 13;
+	static constexpr uint32_t F_FLIP_FACES        = 1u << 14;
+	static constexpr uint32_t F_TEMPLATE_MODE     = 1u << 15;
+	static constexpr uint32_t F_CHECKER_ENABLED   = 1u << 16;
 
-	// Curve category — path geometry stamped along a Curve3D. The
-	// subtype picks the SHAPE (Line, Right Angle, Arc, Sine, Helix,
-	// Bezier, Custom); `_curve_flat` picks the rendering STYLE (flat
-	// ribbon vs 3D tube). For non-CUSTOM subtypes the path is built into
-	// `_preset_curve` on demand and reused until a preset parameter
-	// changes (`_preset_curve_dirty` flips on every invalidating setter).
+	uint32_t _flags = F_SMOOTH_SHADING | F_ROUNDED_CORNERS | F_CURVE_FLAT
+		| F_START_CAP_LINKED | F_END_CAP_LINKED | F_FIGURE_SHOW_MESH
+		| F_SHOWS_IN_PLAY | F_TWO_SIDED;
+
+	bool _flag(uint32_t f) const { return (_flags & f) != 0; }
+	void _sflag(uint32_t f, bool v) { if (v) _flags |= f; else _flags &= ~f; }
+
+	// ---- Type-exclusive union ----
+	// Only the active type's member is valid. Switching type reinits
+	// via _init_type_data(). Non-POD Refs stay outside the union.
+	enum AxisLen  { AL_XP = 0, AL_XN, AL_YP, AL_YN, AL_ZP, AL_ZN };
+	enum FigureOff { FO_HEAD_BASE = 0, FO_L_SHOULDER, FO_R_SHOULDER, FO_L_HIP, FO_R_HIP };
+
+	struct AxisData {
+		float lengths[6];
+		float arrow_length;
+		float arrow_width;
+		uint8_t link_mode;
+		uint8_t _pad[3];
+		Color colors[6];
+	};
+
+	struct CurveData {
+		float length;
+		float amplitude;
+		float turns;
+		float width;
+		float bank;
+		float bank_easing;
+		float dash_length;
+		float dash_gap;
+		float length_fraction;
+		int segments;
+		Vector2 start_cap_size;
+		Vector2 end_cap_size;
+		Color background_color;
+		uint8_t pattern;
+		uint8_t start_cap;
+		uint8_t end_cap;
+		uint8_t _pad;
+	};
+
+	struct FigureData {
+		float height;
+		Color bone_color;
+		Vector3 pelvis_pos;
+		Vector3 bone_rot[BONE_COUNT];
+		Vector3 bone_pose_rot[BONE_COUNT];
+		float bone_length[BONE_COUNT];
+		float bone_width[BONE_COUNT];
+		Vector3 offsets[5];
+		float offset_widths[5];
+	};
+
+	struct ShapeData {
+		float head_length;
+		float head_width;
+	};
+
+	union TypeData {
+		AxisData axis;
+		CurveData curve;
+		FigureData figure;
+		ShapeData shape;
+		TypeData() { memset(this, 0, sizeof(*this)); }
+		~TypeData() {}
+	} _td;
+
+	// Curve Refs stay outside the union (non-POD).
 	Ref<Curve3D> _curve;
-	bool  _curve_flat      = true;   // true = ribbon, false = 3D tube
-	float _curve_length    = 2.0f;
-	float _curve_amplitude = 0.5f;
-	float _curve_turns     = 2.0f;
-	int   _curve_segments  = 32;
 	mutable Ref<Curve3D> _preset_curve;
 	mutable bool _preset_curve_dirty = true;
-	float _curve_width = 0.15f;
-	float _curve_bank  = 0.0f;
-	float _bank_easing = 0.15f;
-	int   _curve_pattern = CURVE_PATTERN_SOLID;
-	float _dash_length = 1.0f;
-	float _dash_gap = 0.5f;
-	int   _curve_start_cap = CURVE_CAP_NONE;
-	int   _curve_end_cap = CURVE_CAP_NONE;
-	// Per-cap 2D size. Interpretation per cap kind:
-	//   DOT   — (x, y) = (perp radius, tangent radius). Linked → circle.
-	//   ARROW — (x, y) = (perp half-width, tangent length). Linked → isoceles.
-	//   LINE  — (x, y) = (left length, right length). Thickness = curve_width.
-	// Linked flag forces y := x on every setter call.
-	Vector2 _start_cap_size = Vector2(0.3f, 0.3f);
-	Vector2 _end_cap_size   = Vector2(0.3f, 0.3f);
-	bool _start_cap_linked = true;
-	bool _end_cap_linked   = true;
-	float _length_fraction = 1.0f;
 
-	// Renderer state. Defaults: visible at runtime, depth-tested,
-	// unshaded (debug-marker behavior). `_lights_and_shadows=true` flips
-	// it into "treat me like a real mesh" mode — lit shading, casts &
-	// receives shadows. `_shows_in_play` is the public name for the
-	// runtime-visibility flag (the old `editor_only`, inverted).
-	bool _shows_in_play  = true;
-	bool _always_on_top  = false;
-	bool _lights_and_shadows = false;
-	bool _two_sided      = true;
-	bool _flip_faces     = false;
-	bool _template_mode  = false;
-
-	// Checkerboard overlay state — see public setter docstrings.
-	bool  _checker_enabled = false;
 	float _checker_size    = 0.25f;
 	float _checker_darken  = 0.5f;
 
@@ -810,6 +787,7 @@ private:
 	/// Resolve the 6 axis lengths through the active link mode. Output
 	/// order: X+, X-, Y+, Y-, Z+, Z-.
 	void _resolved_axis_lengths(float p_out[6]) const;
+	void _init_type_data(int p_type);
 	/// Map a subtype value to its type. Used by `get_type` and the
 	/// inspector property hint logic.
 	static int _subtype_to_type(int p_subtype);
