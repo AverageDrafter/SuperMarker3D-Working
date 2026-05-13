@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://benchmark00"]
+
+[ext_resource type="Script" uid="uid://dwccrmg1imrc1" path="res://demos/benchmark/benchmark.gd" id="1_bench"]
+
+[node name="Benchmark" type="Node3D" unique_id=1472603344]
+script = ExtResource("1_bench")

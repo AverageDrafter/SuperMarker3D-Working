@@ -226,32 +226,64 @@ void vertex() {
 static const char *BARY_FRAG_OPAQUE = R"(
 void fragment() {
 	if (flat_two_sided == 0 && !FRONT_FACING) NORMAL = -NORMAL;
-	float min_dist;
-	if (outline_mode == 2) {
-		// Per-fragment perimeter SDF — loop the shape's perimeter and
-		// take min(box_sdf). Triangulation of the fill is irrelevant.
-		min_dist = 1.0e9;
-		for (int i = 0; i < perimeter_count; i++) {
-			vec2 a = perimeter[i].xy;
-			vec2 b = perimeter[i].zw;
-			vec2 ab = b - a;
-			float L = max(length(ab), 1.0e-9);
-			vec2 ap = v_local_xy - a;
-			float along = dot(ap, ab) / L;
-			float perp  = length(ap - (ab / L) * along);
-			float axial = max(0.0, max(-along, along - L));
-			min_dist = min(min_dist, max(perp, axial));
+	float edge = 0.0;
+	if (outline_thickness > 0.0) {
+		float min_dist;
+		if (outline_mode == 2) {
+			min_dist = 1.0e9;
+			for (int i = 0; i < perimeter_count; i++) {
+				vec2 a = perimeter[i].xy;
+				vec2 b = perimeter[i].zw;
+				vec2 ab = b - a;
+				float L = max(length(ab), 1.0e-9);
+				vec2 ap = v_local_xy - a;
+				float along = dot(ap, ab) / L;
+				float perp  = length(ap - (ab / L) * along);
+				float axial = max(0.0, max(-along, along - L));
+				min_dist = min(min_dist, max(perp, axial));
+			}
+		} else {
+			min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
 		}
-	} else {
-		min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+		float aa = max(fwidth(min_dist), 1.0e-5);
+		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	}
-	float aa = max(fwidth(min_dist), 1.0e-5);
-	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
-	if (outline_thickness <= 0.0) edge = 0.0;
 	vec4 base = (COLOR.r > 0.5) ? background_color : fill_color;
 	float a = mix(base.a, outline_color.a, edge);
 	if (a < 0.01) discard;
 	ALBEDO = mix(base.rgb, outline_color.rgb, edge);
+}
+)";
+// Opaque fragment without discard — used by mesh, shape, and figure
+// subtypes whose vertices never select background_color (COLOR.r is
+// always 0). Removing `discard` lets the depth prepass stay vertex-only
+// instead of forcing full fragment evaluation.
+static const char *BARY_FRAG_OPAQUE_NODISCARD = R"(
+void fragment() {
+	if (flat_two_sided == 0 && !FRONT_FACING) NORMAL = -NORMAL;
+	float edge = 0.0;
+	if (outline_thickness > 0.0) {
+		float min_dist;
+		if (outline_mode == 2) {
+			min_dist = 1.0e9;
+			for (int i = 0; i < perimeter_count; i++) {
+				vec2 a = perimeter[i].xy;
+				vec2 b = perimeter[i].zw;
+				vec2 ab = b - a;
+				float L = max(length(ab), 1.0e-9);
+				vec2 ap = v_local_xy - a;
+				float along = dot(ap, ab) / L;
+				float perp  = length(ap - (ab / L) * along);
+				float axial = max(0.0, max(-along, along - L));
+				min_dist = min(min_dist, max(perp, axial));
+			}
+		} else {
+			min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+		}
+		float aa = max(fwidth(min_dist), 1.0e-5);
+		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
+	}
+	ALBEDO = mix(fill_color.rgb, outline_color.rgb, edge);
 }
 )";
 // Transparent fragment — writes ALPHA for proper alpha blending.
@@ -259,17 +291,19 @@ void fragment() {
 static const char *BARY_FRAG_ALPHA = R"(
 void fragment() {
 	if (flat_two_sided == 0 && !FRONT_FACING) NORMAL = -NORMAL;
-	float min_dist;
-	if (outline_mode == 1) {
-		float d1 = max(UV.x, UV.y);
-		float d2 = max(UV2.x, UV2.y);
-		min_dist = min(d1, d2);
-	} else {
-		min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+	float edge = 0.0;
+	if (outline_thickness > 0.0) {
+		float min_dist;
+		if (outline_mode == 1) {
+			float d1 = max(UV.x, UV.y);
+			float d2 = max(UV2.x, UV2.y);
+			min_dist = min(d1, d2);
+		} else {
+			min_dist = min(min(UV.x, UV.y), min(UV2.x, UV2.y));
+		}
+		float aa = max(fwidth(min_dist), 1.0e-5);
+		edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
 	}
-	float aa = max(fwidth(min_dist), 1.0e-5);
-	float edge = 1.0 - smoothstep(outline_thickness - aa, outline_thickness + aa, min_dist);
-	if (outline_thickness <= 0.0) edge = 0.0;
 	vec4 base = (COLOR.r > 0.5) ? background_color : fill_color;
 	ALBEDO = mix(base.rgb, outline_color.rgb, edge);
 	ALPHA  = mix(base.a,   outline_color.a,   edge);
@@ -378,6 +412,15 @@ void vertex() {
 static const char *SPHERE_FRAG_OPAQUE =
 SPHERE_FRAG_EDGE
 "	if (a < 0.01) discard;\n"
+"	ALBEDO = (out_a * outline_color.rgb + fill_a * fill_color.rgb)\n"
+"	         / max(a, 1.0e-5);\n"
+"}\n";
+
+// Sphere/mesh subtypes never produce fragments where a < 0.01 on the
+// opaque path (both fill and outline alpha are 1.0 → a is always 1.0).
+// Dropping `discard` keeps the depth prepass vertex-only.
+static const char *SPHERE_FRAG_OPAQUE_NODISCARD =
+SPHERE_FRAG_EDGE
 "	ALBEDO = (out_a * outline_color.rgb + fill_a * fill_color.rgb)\n"
 "	         / max(a, 1.0e-5);\n"
 "}\n";
@@ -1409,7 +1452,16 @@ void SuperMarker3D::set_outline_color(const Color &p) {
 	SM_REBUILD_MATERIALS();
 }
 Color SuperMarker3D::get_outline_color() const { return _outline_color; }
-void SuperMarker3D::set_outline_thickness(float p) { _outline_thickness = MAX(0.0f, p); SM_REBUILD(); }
+void SuperMarker3D::set_outline_thickness(float p) {
+	_outline_thickness = MAX(0.0f, p);
+	// Axis tubes and silhouette outlines bake thickness into geometry;
+	// mesh/shape/curve subtypes use it as a shader uniform only.
+	if (get_type() == TYPE_AXIS || _detail_mode == DETAIL_SILHOUETTE) {
+		SM_REBUILD();
+	} else {
+		SM_REBUILD_MATERIALS();
+	}
+}
 float SuperMarker3D::get_outline_thickness() const { return _outline_thickness; }
 
 void SuperMarker3D::set_fill_color(const Color &p) {
@@ -2463,10 +2515,18 @@ void SuperMarker3D::_build_materials() {
 		const bool fill_transparent   = (_fill_color.a < 1.0f);
 
 		// Build shader body strings.
+		// Curve-flat dash gaps emit vertices with COLOR.r > 0.5 that select
+		// background_color; when bg alpha is 0 those fragments must be
+		// discarded. All other BARY users (mesh, shape, figure) always have
+		// COLOR.r = 0, so the discard can never fire — use the no-discard
+		// variant so the depth prepass stays vertex-only.
+		const bool bary_needs_discard = is_curve_flat;
+		const char *bary_opaque = bary_needs_discard
+				? BARY_FRAG_OPAQUE : BARY_FRAG_OPAQUE_NODISCARD;
 		const String sphere_body = String(SPHERE_SHADER_COMMON)
-				+ (sphere_transparent ? SPHERE_FRAG_ALPHA : SPHERE_FRAG_OPAQUE);
+				+ (sphere_transparent ? SPHERE_FRAG_ALPHA : SPHERE_FRAG_OPAQUE_NODISCARD);
 		const String bary_body = String(BARY_SHADER_COMMON)
-				+ (bary_transparent ? BARY_FRAG_ALPHA : BARY_FRAG_OPAQUE);
+				+ (bary_transparent ? BARY_FRAG_ALPHA : bary_opaque);
 		const String fill_body = fill_transparent ? FILL_SHADER_ALPHA : FILL_SHADER_OPAQUE;
 
 		// Determine cull mode for the primary bary surface.
