@@ -1191,9 +1191,9 @@ void SuperMarker3D::_init_type_data(int p_type) {
 			_td.axis.colors[AL_XN] = Color(0.16f, 0.04f, 0.04f, 1.0f);
 			_td.axis.colors[AL_YP] = Color(0.04f, 1.00f, 0.04f, 1.0f);
 			_td.axis.colors[AL_YN] = Color(0.04f, 0.16f, 0.04f, 1.0f);
-			_td.axis.colors[AL_ZP] = Color(0.04f, 0.04f, 1.00f, 1.0f);
+			_td.axis.colors[AL_ZP] = Color(0.08f, 0.08f, 1.00f, 1.0f);
 			_td.axis.colors[AL_ZN] = Color(0.04f, 0.04f, 0.16f, 1.0f);
-			_sflag(F_AXIS_ARROWS, false);
+			_sflag(F_AXIS_ARROWS, true);
 			break;
 		case TYPE_MESH:
 			_sflag(F_SMOOTH_SHADING, true);
@@ -1278,8 +1278,18 @@ void SuperMarker3D::_notification(int p_what) {
 			// renderer used to ignore it) would render a degenerate cap
 			// the first time `linked` was toggled off. Forcing y := x at
 			// enter-tree gives every loaded marker a sane y starting point.
-			if (_flag(F_START_CAP_LINKED)) _td.curve.start_cap_size.y = _td.curve.start_cap_size.x;
-			if (_flag(F_END_CAP_LINKED))   _td.curve.end_cap_size.y   = _td.curve.end_cap_size.x;
+			//
+			// MUST guard on _type == TYPE_CURVE: `_td` is a union, and
+			// writing through `_td.curve.*` while the active type is
+			// AXIS / SHAPE / FIGURE clobbers whichever fields happen to
+			// alias those byte offsets. The original bug: AXIS_XYZ's
+			// AL_XN.r overlapped end_cap_size.y, so this line silently
+			// overwrote -X arm's red channel with AL_XP.a (1.0) on every
+			// scene load — every Axis marker lost its dim-negative color.
+			if (_type == TYPE_CURVE) {
+				if (_flag(F_START_CAP_LINKED)) _td.curve.start_cap_size.y = _td.curve.start_cap_size.x;
+				if (_flag(F_END_CAP_LINKED))   _td.curve.end_cap_size.y   = _td.curve.end_cap_size.x;
+			}
 			_rebuild_mesh(); _build_materials();
 			_ensure_instance(); _update_visibility(); _update_transform();
 			// Initialise interpolation state to the current pose so the

@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://cotmeua8c3u24"]
+
+[node name="Node3D" type="Node3D" unique_id=1370824545]
+
+[node name="SuperMarker3D" type="SuperMarker3D" parent="." unique_id=1410938457]
+axis_arrows = true
+axis_color_z_pos = Color(0.078431375, 0.078431375, 1, 1)
+lights_and_shadows = true

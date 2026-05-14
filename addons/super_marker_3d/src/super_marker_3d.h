@@ -434,12 +434,12 @@ private:
 	Transform3D _xf_prev;
 	Transform3D _xf_target;
 
-	int   _shape = AXIS_CROSS;
+	int   _shape = AXIS_XYZ;
 	float _marker_size = 0.5f;
 	int   _detail_mode = DETAIL_WIREFRAME;
 
 	Color _outline_color = Color(1.0f, 1.0f, 0.0f, 1.0f);   // pure yellow
-	float _outline_thickness = 0.0f;
+	float _outline_thickness = 0.02f;
 
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);     // teal/cyan
 
@@ -474,7 +474,7 @@ private:
 
 	uint32_t _flags = F_SMOOTH_SHADING | F_ROUNDED_CORNERS | F_CURVE_FLAT
 		| F_START_CAP_LINKED | F_END_CAP_LINKED | F_FIGURE_SHOW_MESH
-		| F_SHOWS_IN_PLAY | F_TWO_SIDED;
+		| F_SHOWS_IN_PLAY | F_TWO_SIDED | F_LIGHTS_SHADOWS;
 
 	bool _flag(uint32_t f) const { return (_flags & f) != 0; }
 	void _sflag(uint32_t f, bool v) { if (v) _flags |= f; else _flags &= ~f; }
