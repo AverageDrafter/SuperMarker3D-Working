@@ -548,14 +548,8 @@ void SuperMarker3D::_bind_methods() {
 	// Marker size — used by Mesh / Arrow / Shape shapes; hidden for Axis (uses lengths) and Figure (uses figure_height).
 	ClassDB::bind_method(D_METHOD("set_marker_size", "size"), &SuperMarker3D::set_marker_size);
 	ClassDB::bind_method(D_METHOD("get_marker_size"), &SuperMarker3D::get_marker_size);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "marker_size", PROPERTY_HINT_RANGE, "0.01,50.0,0.01,or_greater,suffix:m"),
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "marker_size"),
 			"set_marker_size", "get_marker_size");
-	// Capsule body height — shared by MESH_CAPSULE and FLAT_CAPSULE; hidden elsewhere.
-	ClassDB::bind_method(D_METHOD("set_capsule_height", "height"), &SuperMarker3D::set_capsule_height);
-	ClassDB::bind_method(D_METHOD("get_capsule_height"), &SuperMarker3D::get_capsule_height);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "capsule_height",
-			PROPERTY_HINT_RANGE, "0.0,20.0,0.001,or_greater"),
-			"set_capsule_height", "get_capsule_height");
 	// detail_mode: deprecated 1.0-beta; always hidden in inspector but kept bound for scene-file compat.
 	ClassDB::bind_method(D_METHOD("set_detail_mode", "mode"), &SuperMarker3D::set_detail_mode);
 	ClassDB::bind_method(D_METHOD("get_detail_mode"), &SuperMarker3D::get_detail_mode);
@@ -851,6 +845,12 @@ void SuperMarker3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_smooth_shading"), &SuperMarker3D::get_smooth_shading);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smooth_shading"),
 			"set_smooth_shading", "get_smooth_shading");
+	// MESH_PRISM only — see set_prism_shift docstring.
+	ClassDB::bind_method(D_METHOD("set_prism_shift", "shift"), &SuperMarker3D::set_prism_shift);
+	ClassDB::bind_method(D_METHOD("get_prism_shift"), &SuperMarker3D::get_prism_shift);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "prism_shift",
+			PROPERTY_HINT_RANGE, "-1.0,1.0,0.001"),
+			"set_prism_shift", "get_prism_shift");
 	ClassDB::bind_method(D_METHOD("set_two_sided", "enabled"), &SuperMarker3D::set_two_sided);
 	ClassDB::bind_method(D_METHOD("get_two_sided"), &SuperMarker3D::get_two_sided);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "two_sided"), "set_two_sided", "get_two_sided");
@@ -927,6 +927,7 @@ void SuperMarker3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(MESH_CYLINDER);
 	BIND_ENUM_CONSTANT(MESH_CONE);
 	BIND_ENUM_CONSTANT(MESH_CAPSULE);
+	BIND_ENUM_CONSTANT(MESH_PRISM);
 	BIND_ENUM_CONSTANT(FLAT_CIRCLE);
 	BIND_ENUM_CONSTANT(FLAT_SQUARE);
 	BIND_ENUM_CONSTANT(FLAT_DIAMOND);
@@ -988,7 +989,7 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 				p_property.hint_string = "Cross:0,Axis:3,Burr:11,XYZ:8";
 				break;
 			case TYPE_MESH:
-				p_property.hint_string = "Sphere:2,Cube:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16";
+				p_property.hint_string = "Sphere:2,Cube:4,Diamond:1,Cylinder:14,Cone:15,Capsule:16,Prism:30";
 				break;
 			case TYPE_SHAPE:
 				p_property.hint_string = "Circle:17,Square:18,Diamond:19,Triangle:20,Capsule:21,X:22,Arrow:6";
@@ -1027,12 +1028,12 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 			|| _shape == MESH_CONE || _shape == MESH_CYLINDER || _shape == MESH_CAPSULE);
 	if (name == "smooth_shading" && !is_smooth_capable) hide();
 	if (name == "shape_sides" && _shape != FLAT_CIRCLE) hide();
+	if (name == "prism_shift" && _shape != MESH_PRISM) hide_nosave();
 	// Billboard: Shape + Curve only (2D shapes and flat ribbons).
 	if ((name == "billboard_xz" || name == "billboard_y") && !(is_shape || is_curve)) hide();
 	// Shape group: hide for non-Shape; rounded_corners has no effect on smooth curves.
 	if ((name == "rounded_corners" || name == "shape_sides") && !is_shape) hide();
 	if (name == "rounded_corners" && (_shape == FLAT_CIRCLE || _shape == FLAT_CAPSULE)) hide();
-	if (name == "capsule_height" && _shape != MESH_CAPSULE && _shape != FLAT_CAPSULE) hide();
 
 	// Axis type — link mode + 6 length fields. Whether each length
 	// is editable depends on the link mode; whether it's visible at all
@@ -1197,6 +1198,7 @@ void SuperMarker3D::_init_type_data(int p_type) {
 			break;
 		case TYPE_MESH:
 			_sflag(F_SMOOTH_SHADING, true);
+			_td.mesh.prism_shift = 0.0f;
 			break;
 		case TYPE_SHAPE:
 			_td.shape.head_length = 0.3f;
@@ -1400,6 +1402,7 @@ int SuperMarker3D::_subtype_to_type(int p_subtype) {
 			return TYPE_AXIS;
 		case MESH_SPHERE: case MESH_BOX: case MESH_DIAMOND:
 		case MESH_CYLINDER: case MESH_CONE: case MESH_CAPSULE:
+		case MESH_PRISM:
 			return TYPE_MESH;
 		case FLAT_CIRCLE: case FLAT_SQUARE: case FLAT_DIAMOND:
 		case FLAT_TRIANGLE: case FLAT_CAPSULE: case FLAT_X:
@@ -1426,8 +1429,13 @@ int SuperMarker3D::_type_first_subtype(int p_type) {
 		default:          return AXIS_CROSS;
 	}
 }
-void SuperMarker3D::set_marker_size(float p) { _marker_size = p; SM_REBUILD(); }
-float SuperMarker3D::get_marker_size() const { return _marker_size; }
+void SuperMarker3D::set_marker_size(const Vector3 &p) {
+	// Negative dimensions don't have a sensible geometric meaning here
+	// (would flip winding / invert hemisphere normals). Clamp to 0.
+	_marker_size = Vector3(MAX(0.0f, p.x), MAX(0.0f, p.y), MAX(0.0f, p.z));
+	SM_REBUILD();
+}
+Vector3 SuperMarker3D::get_marker_size() const { return _marker_size; }
 void SuperMarker3D::set_detail_mode(int p) { _detail_mode = p; SM_REBUILD(); }
 int  SuperMarker3D::get_detail_mode() const { return _detail_mode; }
 
@@ -1561,11 +1569,12 @@ void SuperMarker3D::set_smooth_shading(bool p) {
 }
 bool SuperMarker3D::get_smooth_shading() const { return _flag(F_SMOOTH_SHADING); }
 
-void SuperMarker3D::set_capsule_height(float p) {
-	_capsule_height = MAX(0.0f, p);
-	if (_shape == MESH_CAPSULE || _shape == FLAT_CAPSULE) SM_REBUILD();
+void SuperMarker3D::set_prism_shift(float p) {
+	_td.mesh.prism_shift = CLAMP(p, -1.0f, 1.0f);
+	if (_shape == MESH_PRISM) SM_REBUILD();
 }
-float SuperMarker3D::get_capsule_height() const { return _capsule_height; }
+float SuperMarker3D::get_prism_shift() const { return _td.mesh.prism_shift; }
+
 
 void SuperMarker3D::set_billboard_xz(bool p) {
 	_sflag(F_BILLBOARD_XZ, p);
@@ -2568,15 +2577,24 @@ void SuperMarker3D::_build_materials() {
 		Ref<Shader> bary_s_back   = get_shader(1, bary_transparent, bary_body);
 
 		// Front-face material.
+		// `sphere_shader_size` collapses Vector3 marker_size into a single
+		// scalar for the sphere shader's analytical strip-width math. The
+		// shader assumes a uniform-radius sphere. For capsule, the body and
+		// caps are circular at X so X is exact. For sphere/cylinder/cone the
+		// mean is a reasonable approximation under per-axis stretch (slightly
+		// off but visually fine for moderate aspect ratios).
+		const float sphere_shader_size = (_shape == MESH_CAPSULE)
+				? _marker_size.x
+				: (_marker_size.x + _marker_size.y + _marker_size.z) / 3.0f;
 		if (use_sphere_shader) {
 			if (_mesh_material.is_null()) _mesh_material.instantiate();
 			_mesh_material->set_shader(sphere_s);
 			_mesh_material->set_shader_parameter("fill_color", _fill_color);
 			_mesh_material->set_shader_parameter("outline_color", _outline_color);
 			_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
-			_mesh_material->set_shader_parameter("marker_size", _marker_size);
+			_mesh_material->set_shader_parameter("marker_size", sphere_shader_size);
 			_mesh_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
-			const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? (_capsule_height * _marker_size * 0.5f) : 0.0f;
+			const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? MAX(0.0f, _marker_size.y - _marker_size.x) : 0.0f;
 			_mesh_material->set_shader_parameter("cyl_half", mesh_cyl_half);
 			_mesh_material->set_render_priority(0);
 		} else {
@@ -2609,9 +2627,9 @@ void SuperMarker3D::_build_materials() {
 				_mesh_material_back->set_shader_parameter("fill_color", _fill_color);
 				_mesh_material_back->set_shader_parameter("outline_color", _outline_color);
 				_mesh_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
-				_mesh_material_back->set_shader_parameter("marker_size", _marker_size);
+				_mesh_material_back->set_shader_parameter("marker_size", sphere_shader_size);
 				_mesh_material_back->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
-				const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? (_capsule_height * _marker_size * 0.5f) : 0.0f;
+				const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? MAX(0.0f, _marker_size.y - _marker_size.x) : 0.0f;
 				_mesh_material_back->set_shader_parameter("cyl_half", mesh_cyl_half);
 				_mesh_material_back->set_render_priority(-1);
 			} else {
@@ -2637,7 +2655,7 @@ void SuperMarker3D::_build_materials() {
 		// uniform that offsets phi/theta evaluation to the hemisphere's true centre.
 		// Skipped when faceted — caps fold back into the BARY primary surface.
 		if (is_capsule && _flag(F_SMOOTH_SHADING)) {
-			const float cyl_half = _capsule_height * _marker_size * 0.5f;
+			const float cyl_half = MAX(0.0f, _marker_size.y - _marker_size.x);
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			if (_cap_bot_material.is_null()) _cap_bot_material.instantiate();
 			Ref<ShaderMaterial> caps[2] = { _cap_top_material, _cap_bot_material };
@@ -2647,7 +2665,7 @@ void SuperMarker3D::_build_materials() {
 				caps[i]->set_shader_parameter("fill_color", _fill_color);
 				caps[i]->set_shader_parameter("outline_color", _outline_color);
 				caps[i]->set_shader_parameter("outline_thickness", _outline_thickness);
-				caps[i]->set_shader_parameter("marker_size", _marker_size);
+				caps[i]->set_shader_parameter("marker_size", sphere_shader_size);
 				caps[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
 				caps[i]->set_shader_parameter("cyl_half", 0.0f);
 				caps[i]->set_render_priority(0);
@@ -2661,7 +2679,7 @@ void SuperMarker3D::_build_materials() {
 					caps_back[i]->set_shader_parameter("fill_color", _fill_color);
 					caps_back[i]->set_shader_parameter("outline_color", _outline_color);
 					caps_back[i]->set_shader_parameter("outline_thickness", _outline_thickness);
-					caps_back[i]->set_shader_parameter("marker_size", _marker_size);
+					caps_back[i]->set_shader_parameter("marker_size", sphere_shader_size);
 					caps_back[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
 					caps_back[i]->set_shader_parameter("cyl_half", 0.0f);
 					caps_back[i]->set_render_priority(-1);
@@ -2673,13 +2691,13 @@ void SuperMarker3D::_build_materials() {
 		// Faceted cylinder/cone fold the band/lateral into the BARY primary,
 		// so this block is skipped when smooth shading is off.
 		if (_flag(F_SMOOTH_SHADING) && (_shape == MESH_CYLINDER || _shape == MESH_CONE)) {
-			const float cap_cyl_half = (_shape == MESH_CYLINDER) ? _marker_size : 0.0f;
+			const float cap_cyl_half = (_shape == MESH_CYLINDER) ? _marker_size.y : 0.0f;
 			if (_cap_top_material.is_null()) _cap_top_material.instantiate();
 			_cap_top_material->set_shader(sphere_s);
 			_cap_top_material->set_shader_parameter("fill_color", _fill_color);
 			_cap_top_material->set_shader_parameter("outline_color", _outline_color);
 			_cap_top_material->set_shader_parameter("outline_thickness", _outline_thickness);
-			_cap_top_material->set_shader_parameter("marker_size", _marker_size);
+			_cap_top_material->set_shader_parameter("marker_size", sphere_shader_size);
 			_cap_top_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 			_cap_top_material->set_shader_parameter("cyl_half", cap_cyl_half);
 			_cap_top_material->set_render_priority(0);
@@ -2689,7 +2707,7 @@ void SuperMarker3D::_build_materials() {
 				_cap_top_material_back->set_shader_parameter("fill_color", _fill_color);
 				_cap_top_material_back->set_shader_parameter("outline_color", _outline_color);
 				_cap_top_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
-				_cap_top_material_back->set_shader_parameter("marker_size", _marker_size);
+				_cap_top_material_back->set_shader_parameter("marker_size", sphere_shader_size);
 				_cap_top_material_back->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 				_cap_top_material_back->set_shader_parameter("cyl_half", cap_cyl_half);
 				_cap_top_material_back->set_render_priority(-1);
@@ -3162,15 +3180,15 @@ void SuperMarker3D::_gen_axis_cross(GeoBuf &/*geo*/) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
-	const float s = _marker_size;
+	const Vector3 s = _marker_size;
 	const int   N = MAX(3, _sides);
-	const Vector3 top(0,  s, 0);
-	const Vector3 btm(0, -s, 0);
+	const Vector3 top(0,  s.y, 0);
+	const Vector3 btm(0, -s.y, 0);
 	PackedVector3Array eq;
 	eq.resize(N);
 	for (int i = 0; i < N; i++) {
 		const float a = SM_TAU * (float)i / N;
-		eq.set(i, Vector3(std::cos(a) * s, 0.0f, std::sin(a) * s));
+		eq.set(i, Vector3(std::cos(a) * s.x, 0.0f, std::sin(a) * s.z));
 	}
 	if (_flag(F_SMOOTH_SHADING)) {
 		// Diamond = double cone. Use analytical cone normals (not spherical)
@@ -3230,7 +3248,7 @@ void SuperMarker3D::_gen_diamond(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
-	const float r = _marker_size;
+	const Vector3 r = _marker_size;
 	const int   W = SPHERE_FILL_LON + 1;
 
 	PackedVector3Array verts;
@@ -3241,7 +3259,8 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 		for (int j = 0; j <= SPHERE_FILL_LON; j++) {
 			float theta = SM_TAU * (float)j / SPHERE_FILL_LON;
 			float st = std::sin(theta), ct = std::cos(theta);
-			verts.set(i * W + j, Vector3(sp * ct, cp, sp * st) * r);
+			// Component-wise scale → ellipsoid when r is non-uniform.
+			verts.set(i * W + j, Vector3(sp * ct * r.x, cp * r.y, sp * st * r.z));
 		}
 	}
 	if (_flag(F_SMOOTH_SHADING)) {
@@ -3295,10 +3314,10 @@ void SuperMarker3D::_gen_sphere(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_cube(GeoBuf &geo) const {
-	const float s  = _marker_size;
+	const Vector3 s  = _marker_size;
 	const Vector3 c[8] = {
-		Vector3(-s,-s,-s), Vector3(s,-s,-s), Vector3(s,s,-s), Vector3(-s,s,-s),
-		Vector3(-s,-s, s), Vector3(s,-s, s), Vector3(s,s, s), Vector3(-s,s, s),
+		Vector3(-s.x,-s.y,-s.z), Vector3(s.x,-s.y,-s.z), Vector3(s.x,s.y,-s.z), Vector3(-s.x,s.y,-s.z),
+		Vector3(-s.x,-s.y, s.z), Vector3(s.x,-s.y, s.z), Vector3(s.x,s.y, s.z), Vector3(-s.x,s.y, s.z),
 	};
 	struct QuadFace { int i0,i1,i2,i3; };
 	const QuadFace faces[6] = {
@@ -3321,15 +3340,19 @@ void SuperMarker3D::_gen_cube(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
-	const float s = _marker_size;
+	// X/Z give the cross-section (elliptic when unequal); Y gives the
+	// half-height. Smooth-shaded normals stay radial (cos, 0, sin) — for
+	// elliptic cross-sections this is a small lighting approximation,
+	// but the geometry is correct.
+	const Vector3 s = _marker_size;
 	const int CYL_LON = SPHERE_FILL_LON;
 	PackedVector3Array top, btm;
 	top.resize(CYL_LON); btm.resize(CYL_LON);
 	for (int i = 0; i < CYL_LON; i++) {
 		float a = SM_TAU * (float)i / CYL_LON;
-		float cx = std::cos(a) * s, cz = std::sin(a) * s;
-		top.set(i, Vector3(cx,  s, cz));
-		btm.set(i, Vector3(cx, -s, cz));
+		float cx = std::cos(a) * s.x, cz = std::sin(a) * s.z;
+		top.set(i, Vector3(cx,  s.y, cz));
+		btm.set(i, Vector3(cx, -s.y, cz));
 	}
 	if (_flag(F_SMOOTH_SHADING)) {
 		// Band — smooth radial normals, emitted into cap_top surface for
@@ -3357,7 +3380,7 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 		}
 	}
 	// Cap fans — BARY shader, chord edges as boundary for rim outlines.
-	const Vector3 tc(0,  s, 0), bc(0, -s, 0);
+	const Vector3 tc(0,  s.y, 0), bc(0, -s.y, 0);
 	for (int i = 0; i < CYL_LON; i++) {
 		int j = (i + 1) % CYL_LON;
 		_add_mesh_face(geo, tc, top[j], top[i], true, false, false);
@@ -3372,15 +3395,16 @@ void SuperMarker3D::_gen_cylinder(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
-	const float s = _marker_size;
+	// X/Z give base radii (elliptic base when unequal); Y gives apex height.
+	const Vector3 s = _marker_size;
 	const int CONE_LON = MAX(3, _sides);
 	PackedVector3Array base;
 	base.resize(CONE_LON);
 	for (int i = 0; i < CONE_LON; i++) {
 		float a = SM_TAU * (float)i / CONE_LON;
-		base.set(i, Vector3(std::cos(a) * s, -s, std::sin(a) * s));
+		base.set(i, Vector3(std::cos(a) * s.x, -s.y, std::sin(a) * s.z));
 	}
-	const Vector3 apex(0, s, 0), bc(0, -s, 0);
+	const Vector3 apex(0, s.y, 0), bc(0, -s.y, 0);
 	if (_flag(F_SMOOTH_SHADING)) {
 		// Smooth-shaded lateral — sphere shader draws analytical lines.
 		// Cone normal at angle θ: (2cosθ, 1, 2sinθ)/√5.
@@ -3416,8 +3440,13 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 }
 
 // ---------------------------------------------------------------------------
-// Capsule — top hemisphere + cylinder body + bottom hemisphere. Radius
-// = `marker_size`, cylinder body length = `_capsule_height`. The
+// Capsule — top hemisphere + cylinder body + bottom hemisphere. Cross-
+// section radii = `marker_size.x` (X) and `marker_size.z` (Z) for both
+// body and caps; cap height = `marker_size.x` (caps never warp in Y).
+// Body half-length = max(0, marker_size.y - marker_size.x), so growing Y
+// stretches the pill along its axis. When Y ≤ X the body collapses and
+// the marker renders as an ellipsoid of dimensions (X, X, Z) — a sphere
+// when X = Z, flattened when Z < X, fattened when Z > X. The
 // hemispheres share their equator vertices with the cylinder's top /
 // bottom rings, so the lat ring drawn at each hemisphere's equator
 // (by the sphere shader) lines up exactly with the corresponding
@@ -3433,9 +3462,68 @@ void SuperMarker3D::_gen_cone(GeoBuf &geo) const {
 //   3  bottom hemisphere    (SPHERE_SHADER, sphere_center = -cyl_half)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Prism — box with a shiftable top edge. The base is a rectangle in the
+// XZ plane of half-extents (marker_size.x, marker_size.z) at y=-marker_size.y;
+// the top is an edge running parallel to Z at y=+marker_size.y, with its
+// X position controlled by `prism_shift`:
+//   -1 → top edge above x=-marker_size.x (right-slant wall is the long ramp)
+//    0 → symmetric tent (centred top edge)
+//   +1 → top edge above x=+marker_size.x (left-slant wall is the long ramp)
+//
+// 6 vertices, 5 faces: bottom quad, two triangle end-caps (-Z and +Z), and
+// two slanted side quads. Ramps are typically authored with shift=±1 so one
+// slant face becomes the inclined surface and the opposite face collapses
+// to a vertical wall.
+// ---------------------------------------------------------------------------
+
+void SuperMarker3D::_gen_prism(GeoBuf &geo) const {
+	const Vector3 s = _marker_size;
+	const float top_x = _td.mesh.prism_shift * s.x;
+
+	// Bottom rectangle (Y = -s.y), CCW from below.
+	const Vector3 B0(-s.x, -s.y, -s.z); // back-left
+	const Vector3 B1( s.x, -s.y, -s.z); // back-right
+	const Vector3 B2( s.x, -s.y,  s.z); // front-right
+	const Vector3 B3(-s.x, -s.y,  s.z); // front-left
+	// Top edge endpoints (Y = +s.y), along Z.
+	const Vector3 T0(top_x, s.y, -s.z); // back-top
+	const Vector3 T1(top_x, s.y,  s.z); // front-top
+
+	// All five faces use CCW-from-outside winding so the right-hand rule
+	// puts the auto-computed normal on the outside. Verified via cross
+	// product of (v1-v0)×(v2-v0) for each face against the expected
+	// outward direction.
+
+	// Bottom — outside is -Y.
+	_add_mesh_quad_face(geo, B0, B1, B2, B3, true, true, true, true);
+
+	// Back triangle (-Z end) — outside is -Z.
+	_add_mesh_face(geo, B0, T0, B1, true, true, true);
+	// Front triangle (+Z end) — outside is +Z.
+	_add_mesh_face(geo, B2, T1, B3, true, true, true);
+
+	// Left slant — outside has -X component (and +Y when shift > -1).
+	// Collapses to a vertical -X wall when shift = -1.
+	_add_mesh_quad_face(geo, B0, B3, T1, T0, true, true, true, true);
+
+	// Right slant — outside has +X component (and +Y when shift < +1).
+	// Collapses to a vertical +X wall when shift = +1.
+	_add_mesh_quad_face(geo, B2, B1, T0, T1, true, true, true, true);
+}
+
 void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
-	const float r = _marker_size;
-	const float cyl_half = _capsule_height * r * 0.5f;
+	// X is the canonical capsule radius — used for the body's X-direction
+	// cross-section, the cap's X-direction radius, AND the cap's Y-direction
+	// height (so caps stay clean hemispheres in Y, never Y-warped). Z scales
+	// the body and cap cross-section along Z independently — non-uniform X/Z
+	// gives an elliptic cross-section that flattens or fattens the pill. Y
+	// controls body length only (max(0, Y - X) for the cylinder half-length);
+	// when Y ≤ X the body collapses and the marker renders as an ellipsoid
+	// of dimensions (X, X, Z) — which is a sphere when X = Z, a flattened
+	// disc-like solid when Z < X, and a Z-stretched ovoid when Z > X.
+	const Vector3 r = _marker_size;
+	const float cyl_half = MAX(0.0f, r.y - r.x);
 	const int LON = SPHERE_FILL_LON;
 	const int LAT = SPHERE_FILL_LAT; // half this many quads per hemisphere
 	const int W   = LON + 1;
@@ -3447,11 +3535,11 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 	top_ring.resize(LON); bot_ring.resize(LON);
 	for (int i = 0; i < LON; i++) {
 		const float a = SM_TAU * (float)i / LON;
-		const float cx = std::cos(a) * r, cz = std::sin(a) * r;
+		const float cx = std::cos(a) * r.x, cz = std::sin(a) * r.z;
 		top_ring.set(i, Vector3(cx,  cyl_half, cz));
 		bot_ring.set(i, Vector3(cx, -cyl_half, cz));
 	}
-	if (_capsule_height > 0.0f) {
+	if (cyl_half > 0.0f) {
 		if (_flag(F_SMOOTH_SHADING)) {
 			// Band — smooth radial normals, sphere shader draws meridian + rim
 			// lines via cyl_half mode. Emitted into tri_bary arrays (primary surface).
@@ -3506,7 +3594,11 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 			for (int j = 0; j <= LON; j++) {
 				const float theta = SM_TAU * (float)j / LON;
 				const float st = std::sin(theta), ct = std::cos(theta);
-				const Vector3 v(sp * ct * r, cp * r + y_offset, sp * st * r);
+				// Cap height (Y direction) uses X so Y never warps the cap; the
+				// cap's X and Z extents track marker_size.x and marker_size.z
+				// directly, giving an elliptic XZ cross-section that matches
+				// the cylinder body's at the equator (smooth seam).
+				const Vector3 v(sp * ct * r.x, cp * r.x + y_offset, sp * st * r.z);
 				verts.set((i - phi_start) * W + j, v);
 			}
 		}
@@ -3567,9 +3659,9 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_silhouette_diamond(GeoBuf &geo) const {
-	const float s  = _marker_size;
+	const Vector3 s  = _marker_size;
 	const float ew = _outline_thickness;
-	Vector3 top(0, s, 0), right(s, 0, 0), btm(0,-s, 0), left(-s, 0, 0);
+	Vector3 top(0, s.y, 0), right(s.x, 0, 0), btm(0,-s.y, 0), left(-s.x, 0, 0);
 	if (ew > 0.0f) {
 		// Thick outline — flat XY edge quads with disc corners (billboarded)
 		const float tr = ew * 0.5f;
@@ -3586,7 +3678,7 @@ void SuperMarker3D::_gen_silhouette_diamond(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_silhouette_sphere(GeoBuf &geo) const {
-	const float r  = _marker_size;
+	const Vector3 r  = _marker_size;
 	const int   N  = SIL_SEGS;
 	const float ew = _outline_thickness;
 
@@ -3594,7 +3686,7 @@ void SuperMarker3D::_gen_silhouette_sphere(GeoBuf &geo) const {
 	ring.resize(N);
 	for (int i = 0; i < N; i++) {
 		float a = SM_TAU * (float)i / N;
-		ring.set(i, Vector3(std::cos(a) * r, std::sin(a) * r, 0));
+		ring.set(i, Vector3(std::cos(a) * r.x, std::sin(a) * r.y, 0));
 	}
 
 	if (ew > 0.0f) {
@@ -3609,9 +3701,9 @@ void SuperMarker3D::_gen_silhouette_sphere(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_silhouette_cube(GeoBuf &geo) const {
-	const float s  = _marker_size;
+	const Vector3 s  = _marker_size;
 	const float ew = _outline_thickness;
-	Vector3 bl(-s,-s,0), br(s,-s,0), tr(s,s,0), tl(-s,s,0);
+	Vector3 bl(-s.x,-s.y,0), br(s.x,-s.y,0), tr(s.x,s.y,0), tl(-s.x,s.y,0);
 	if (ew > 0.0f) {
 		const float rad = ew * 0.5f;
 		_add_sil_edge_quad(geo, bl, br, ew); _add_sil_edge_quad(geo, br, tr, ew);
@@ -4226,12 +4318,13 @@ void SuperMarker3D::_gen_figure(GeoBuf &geo) const {
 
 void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
     const int   N = _sides;
-    const float r = _marker_size;
+    // X/Y radii — equal = circle, unequal = ellipse. Z is unused for flat shapes.
+    const Vector3 r = _marker_size;
     Vector<Vector3> ring;
     ring.resize(N);
     for (int i = 0; i < N; i++) {
         float a = SM_TAU * (float)i / N;
-        ring.set(i, Vector3(std::cos(a) * r, std::sin(a) * r, 0.0f));
+        ring.set(i, Vector3(std::cos(a) * r.x, std::sin(a) * r.y, 0.0f));
     }
     const Vector3 ctr(0.0f, 0.0f, 0.0f);
     _add_flat_polygon_fan(geo, ctr, ring.ptr(), N);
@@ -4239,9 +4332,10 @@ void SuperMarker3D::_gen_flat_circle(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_flat_square(GeoBuf &geo) const {
-    const float h = _marker_size;
-    const Vector3 TL(-h,  h, 0), TR( h,  h, 0);
-    const Vector3 BR( h, -h, 0), BL(-h, -h, 0);
+    // X/Y half-extents — equal = square, unequal = rectangle.
+    const Vector3 h = _marker_size;
+    const Vector3 TL(-h.x,  h.y, 0), TR( h.x,  h.y, 0);
+    const Vector3 BR( h.x, -h.y, 0), BL(-h.x, -h.y, 0);
     // CCW-from-outside (looking from +Z toward origin).
     // _add_mesh_quad_face flips emission for CW-from-camera front face.
     _add_mesh_quad_face(geo, TL, TR, BR, BL, true, true, true, true);
@@ -4250,9 +4344,10 @@ void SuperMarker3D::_gen_flat_square(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_flat_diamond(GeoBuf &geo) const {
-    const float h = _marker_size;
-    const Vector3 T(0,  h, 0), R( h, 0, 0);
-    const Vector3 B(0, -h, 0), L(-h, 0, 0);
+    // X/Y half-extents — equal = symmetric diamond, unequal = rhombus.
+    const Vector3 h = _marker_size;
+    const Vector3 T(0,  h.y, 0), R( h.x, 0, 0);
+    const Vector3 B(0, -h.y, 0), L(-h.x, 0, 0);
     // CCW-from-outside (from +Z).
     _add_mesh_quad_face(geo, T, R, B, L, true, true, true, true);
     const Vector3 ring[4] = { T, R, B, L };
@@ -4260,11 +4355,13 @@ void SuperMarker3D::_gen_flat_diamond(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
-    const float r   = _marker_size;
+    // X width / Y height — equilateral default uses sin(60°) for X to match
+    // Y; unequal X/Y stretches per-axis.
+    const Vector3 r   = _marker_size;
     const float s60 = 0.86602540f;
-    const Vector3 T(0,          r,        0.0f);
-    const Vector3 BL(-r * s60, -r * 0.5f, 0.0f);
-    const Vector3 BR( r * s60, -r * 0.5f, 0.0f);
+    const Vector3 T(0,           r.y,        0.0f);
+    const Vector3 BL(-r.x * s60, -r.y * 0.5f, 0.0f);
+    const Vector3 BR( r.x * s60, -r.y * 0.5f, 0.0f);
     // CCW-from-outside (from +Z). All 3 edges are boundaries.
     _add_mesh_face(geo, T, BL, BR, true, true, true);
     const Vector3 ring[3] = { T, BL, BR };
@@ -4272,8 +4369,12 @@ void SuperMarker3D::_gen_flat_triangle(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_flat_capsule(GeoBuf &geo) const {
-    const float r    = _marker_size;
-    const float half = _capsule_height * r * 0.5f;
+    // X is the cap radius and body half-width; Y is half of the total
+    // Y extent. Body half-length = max(0, Y - X). When Y ≤ X the body
+    // collapses and the pill degenerates into a circle of radius X.
+    const Vector3 ms   = _marker_size;
+    const float r    = ms.x;
+    const float half = MAX(0.0f, ms.y - ms.x);
     const int   SEGS = 24;
     // Build perimeter ring: right side → top arc → left side → bottom arc
     Vector<Vector3> ring;
@@ -4301,9 +4402,13 @@ void SuperMarker3D::_gen_flat_capsule(GeoBuf &geo) const {
 }
 
 void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
-    const float hl = _marker_size;          // center to arm tip
-    const float hw = _marker_size * 0.22f;  // half bar width
-    const float cs = 0.70710678f;           // cos/sin 45°
+    // X/Y both contribute: hl is the longest arm direction (geometric mean
+    // for arm length when stretched), bar width tracks the smaller axis so
+    // the X stays readable at non-uniform sizes.
+    const Vector3 ms = _marker_size;
+    const float hl = (ms.x + ms.y) * 0.5f;       // center to arm tip
+    const float hw = MIN(ms.x, ms.y) * 0.22f;    // half bar width
+    const float cs = 0.70710678f;                // cos/sin 45°
     const float inner = hw * 1.41421356f;
 
     auto rp = [cs](float x, float y) -> Vector3 { return Vector3(cs*(x-y), cs*(x+y), 0.0f); };
@@ -4344,7 +4449,10 @@ void SuperMarker3D::_gen_flat_x(GeoBuf &geo) const {
 // ---------------------------------------------------------------------------
 
 void SuperMarker3D::_gen_flat_arrow(GeoBuf &geo) const {
-	const float total = _marker_size * 2.0f;
+	// Arrow points along +Y; total length scales with marker_size.y.
+	// Head width / shaft width are controlled by their own parameters
+	// (head_length, head_width) — marker_size.x is unused on this shape.
+	const float total = _marker_size.y * 2.0f;
 	const float hl    = MIN(_td.shape.head_length, total * 0.9f);
 	const float hw    = _td.shape.head_width;
 	const float sw    = hw * 0.4f;
@@ -4991,6 +5099,7 @@ void SuperMarker3D::_rebuild_mesh() {
 		case MESH_CYLINDER:   _gen_cylinder(geo);    break;
 		case MESH_CONE:       _gen_cone(geo);        break;
 		case MESH_CAPSULE:    _gen_capsule(geo);     break;
+		case MESH_PRISM:      _gen_prism(geo);       break;
 		case FLAT_CIRCLE:     _gen_flat_circle(geo);   break;
 		case FLAT_SQUARE:     _gen_flat_square(geo);   break;
 		case FLAT_DIAMOND:    _gen_flat_diamond(geo);  break;

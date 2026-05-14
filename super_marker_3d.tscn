@@ -1,3 +1,8 @@
 [gd_scene format=3 uid="uid://bxg8uyr2ef1g1"]
 
 [node name="Node3D" type="Node3D" unique_id=37304808]
+
+[node name="SuperMarker3D" type="SuperMarker3D" parent="." unique_id=1067845862]
+type = 1
+subtype = 30
+prism_shift = 0.0

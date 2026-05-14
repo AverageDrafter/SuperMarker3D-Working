@@ -21,7 +21,7 @@
 		var m := SuperMarker3D.new()
 		m.type = SuperMarker3D.TYPE_MESH
 		m.subtype = SuperMarker3D.MESH_SPHERE
-		m.marker_size = 0.75
+		m.marker_size = Vector3(0.75, 0.75, 0.75)
 		m.outline_color = Color.YELLOW
 		m.fill_color = Color(0.0, 0.6, 1.0, 0.5)
 		add_child(m)
@@ -92,14 +92,14 @@
 		<member name="outline_color" type="Color" setter="set_outline_color" getter="get_outline_color" default="Color(1, 1, 0, 1)">
 			Universal edge / outline color. Used by every subtype that draws an outline strip.
 		</member>
-		<member name="outline_thickness" type="float" setter="set_outline_thickness" getter="get_outline_thickness" default="0.0">
+		<member name="outline_thickness" type="float" setter="set_outline_thickness" getter="get_outline_thickness" default="0.02">
 			Universal outline width in meters. At [code]0.0[/code], outlines render as 1px lines (crisp at every camera distance). Above 0, axis arms become thin tubes, arrowheads gain volume, and mesh-face outlines paint as a strip of the given thickness. Range hint allows values greater than 1m for dramatic stand-ins (overthick green burr as a bush, etc.).
 		</member>
-		<member name="marker_size" type="float" setter="set_marker_size" getter="get_marker_size" default="0.5">
-			Overall size in meters for Mesh and Shape subtypes. Hidden for Axis (uses per-direction lengths) and Figure (uses [member figure_height]).
+		<member name="marker_size" type="Vector3" setter="set_marker_size" getter="get_marker_size" default="Vector3(0.5, 0.5, 0.5)">
+			Marker dimensions per axis, in meters. Equal X/Y/Z components give a uniform sphere / cube / circle; unequal components stretch the geometry per-axis (sphere → ellipsoid, cube → slab, circle → ellipse). The outline and checker overlays stay isotropic regardless — they don't follow [member marker_size]. For per-package squash/stretch where the markings deform too, use [member Node3D.scale] instead. Applies to Mesh and Shape subtypes; hidden for Axis (uses per-direction [code]axis_length_*[/code]), Curve (uses its own [code]curve_*[/code] dimensions), and Figure (uses [member figure_height]).
 		</member>
-		<member name="capsule_height" type="float" setter="set_capsule_height" getter="get_capsule_height" default="2.0">
-			Body length between the two hemisphere caps for [code]MESH_CAPSULE[/code], and the body length of the 2D pill for [code]FLAT_CAPSULE[/code]. Cap radius follows [member marker_size].
+		<member name="prism_shift" type="float" setter="set_prism_shift" getter="get_prism_shift" default="0.0">
+			[code]MESH_PRISM[/code] only — horizontal offset of the top edge along X, in [code]-1.0[/code] to [code]+1.0[/code]. [code]0.0[/code] = centered (symmetric tent); [code]-1.0[/code] = top edge above the -X corner of the base (right-slant face becomes the long ramp); [code]+1.0[/code] = top edge above +X (left-slant face is the ramp). Use ±1.0 to author a clean wedge / ramp.
 		</member>
 		<member name="detail_mode" type="int" setter="set_detail_mode" getter="get_detail_mode" enum="SuperMarker3D.DetailMode" default="0">
 			[code]DETAIL_WIREFRAME[/code] (0) for a real-mesh look with face-normal edges; [code]DETAIL_SILHOUETTE[/code] (1) for a billboarded 2D outline that always faces the camera.
@@ -410,7 +410,10 @@
 			Round-base cone. Use [member mesh_sides] = 4 for a four-sided pyramid.
 		</constant>
 		<constant name="MESH_CAPSULE" value="16" enum="Subtype">
-			Cylinder body + hemisphere caps. See [member capsule_height].
+			Cylinder body + hemisphere caps. Cross-section is elliptic in XZ — X and Z components of [member marker_size] scale the body and caps independently along those axes. Cap height (Y direction) always equals X so caps never warp in Y. Total Y extent is [code]2 × marker_size.y[/code]; body half-length is [code]max(0, marker_size.y - marker_size.x)[/code]. When [code]marker_size.y ≤ marker_size.x[/code] the body collapses and the marker renders as an ellipsoid of dimensions [code](X, X, Z)[/code] — sphere when X = Z, flattened disc when Z &lt; X, fattened ovoid when Z &gt; X.
+		</constant>
+		<constant name="MESH_PRISM" value="30" enum="Subtype">
+			Box-derived prism with a shiftable top edge — use [member prism_shift] to lean the peak, yielding ramps, wedges, and lean-to roofs. Base is a rectangle of half-extents [code](marker_size.x, marker_size.z)[/code] at [code]y = -marker_size.y[/code]; top edge runs along Z at [code]y = +marker_size.y[/code].
 		</constant>
 		<constant name="FLAT_CIRCLE" value="17" enum="Subtype">
 			Regular N-gon, segment count from [member shape_sides].
@@ -425,7 +428,7 @@
 			Equilateral triangle, apex up.
 		</constant>
 		<constant name="FLAT_CAPSULE" value="21" enum="Subtype">
-			2D pill — two semicircles + rectangular body. See [member capsule_height].
+			2D pill — two semicircles + rectangular body. Cap radius is [member marker_size]'s X; total Y extent is [code]2 × marker_size.y[/code]. When [code]marker_size.y ≤ marker_size.x[/code] the body collapses and the marker renders as a circle of radius X.
 		</constant>
 		<constant name="FLAT_X" value="22" enum="Subtype">
 			X / close icon (two crossed bars).

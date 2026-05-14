@@ -65,6 +65,7 @@ public:
 		MESH_CYLINDER = 14,     // capped cylinder
 		MESH_CONE = 15,         // round-base cone (use mesh_sides=4 for a pyramid)
 		MESH_CAPSULE = 16,      // cylinder body + hemisphere caps
+		MESH_PRISM = 30,        // box with shiftable top edge (ramp / wedge)
 
 		// Shape category — flat 2D polygon icons.
 		FLAT_CIRCLE   = 17,   // regular N-gon, N = shape_sides
@@ -159,7 +160,16 @@ public:
 	/// field so the inspector dropdown stays consistent between equal-
 	/// value transitions.
 	void set_type(int p);     int get_type() const;
-	void set_marker_size(float p);  float get_marker_size() const;
+	/// Marker dimensions, per axis. X/Y/Z give the marker its intrinsic
+	/// shape: equal components = uniform sphere/cube/circle; unequal
+	/// components stretch the geometry per-axis (sphere → ellipsoid,
+	/// cube → slab, circle → ellipse). The outline + checker overlays
+	/// stay isotropic regardless — they don't follow `marker_size`.
+	/// For per-package squash/stretch where the markings deform too,
+	/// use Node3D.scale instead. Applies to Mesh + Shape subtypes;
+	/// hidden for Axis (uses axis_length_*), Curve (curve_length /
+	/// curve_amplitude / etc.), and Figure (figure_height).
+	void set_marker_size(const Vector3 &p);  Vector3 get_marker_size() const;
 	void set_detail_mode(int p);    int get_detail_mode() const;
 
 	void set_outline_color(const Color &p);   Color get_outline_color() const;
@@ -177,11 +187,6 @@ public:
 	void set_axis_color_y_neg(const Color &p); Color get_axis_color_y_neg() const;
 	void set_axis_color_z_pos(const Color &p); Color get_axis_color_z_pos() const;
 	void set_axis_color_z_neg(const Color &p); Color get_axis_color_z_neg() const;
-
-	/// Capsule-only — cylinder body height between the two hemisphere
-	/// caps. Radius (and the hemispheres) follow `marker_size`.
-	/// Also used by FLAT_CAPSULE for the 2D pill body length.
-	void set_capsule_height(float p);  float get_capsule_height() const;
 
 	/// Shape-category billboard flags. xz = BILLBOARD_FIXED_Y (rotates in XZ plane,
 	/// Y axis stays fixed). y = BILLBOARD_ENABLED (fully faces camera).
@@ -206,6 +211,13 @@ public:
 	/// painted along the actual mesh edges via the BARY shader — the
 	/// faceted, low-poly look. Pyramid is always faceted regardless.
 	void set_smooth_shading(bool p);  bool get_smooth_shading() const;
+
+	/// MESH_PRISM only — horizontal offset of the top edge relative to
+	/// the bottom rectangle, in -1..+1. 0 = centered (symmetric tent),
+	/// -1 = top edge aligned with the -X edge of the base (right-side
+	/// slant becomes a single ramp face), +1 = top edge aligned with
+	/// +X. Used for ramps, wedges, lean-to roofs.
+	void set_prism_shift(float p);  float get_prism_shift() const;
 
 
 	// Universal arrow flag for the Axis category. ON: every axis arm in
@@ -435,17 +447,13 @@ private:
 	Transform3D _xf_target;
 
 	int   _shape = AXIS_XYZ;
-	float _marker_size = 0.5f;
+	Vector3 _marker_size = Vector3(0.5f, 0.5f, 0.5f);
 	int   _detail_mode = DETAIL_WIREFRAME;
 
 	Color _outline_color = Color(1.0f, 1.0f, 0.0f, 1.0f);   // pure yellow
 	float _outline_thickness = 0.02f;
 
 	Color _fill_color = Color(0.0f, 1.0f, 0.8f, 1.0f);     // teal/cyan
-
-	// Capsule body length — shared by MESH_CAPSULE + FLAT_CAPSULE
-	// (cross-type, stays common).
-	float _capsule_height = 2.0f;
 
 	int _type = TYPE_AXIS;
 
@@ -531,11 +539,16 @@ private:
 		float head_width;
 	};
 
+	struct MeshData {
+		float prism_shift;
+	};
+
 	union TypeData {
 		AxisData axis;
 		CurveData curve;
 		FigureData figure;
 		ShapeData shape;
+		MeshData mesh;
 		TypeData() { memset(this, 0, sizeof(*this)); }
 		~TypeData() {}
 	} _td;
@@ -724,6 +737,7 @@ private:
 	void _gen_cylinder(GeoBuf &geo) const;
 	void _gen_cone(GeoBuf &geo) const;
 	void _gen_capsule(GeoBuf &geo) const;
+	void _gen_prism(GeoBuf &geo) const;
 	/// Helper used by every Mesh subtype's generator. Pushes one fill
 	/// triangle (with the flipped winding the rest of the renderer
 	/// expects) plus the per-vertex barycentric + edge-height attribs
