@@ -1,8 +1,65 @@
 [gd_scene format=3 uid="uid://bxg8uyr2ef1g1"]
 
+[ext_resource type="Shape3D" uid="uid://cvrmg84vwm5ls" path="res://dot test.tres" id="1_4jh7y"]
+[ext_resource type="Shape3D" uid="uid://esoecuh8vc6a" path="res://dash test.tres" id="2_vn4sy"]
+
 [node name="Node3D" type="Node3D" unique_id=37304808]
 
-[node name="SuperMarker3D" type="SuperMarker3D" parent="." unique_id=1067845862]
-type = 1
-subtype = 30
-prism_shift = 0.0
+[node name="DotTest" type="SuperMarker3D" parent="." unique_id=1067845862]
+type = 3
+subtype = 23
+background_color = Color(0, 0, 0, 0)
+curve_flat = true
+curve_length = 7.952
+curve_amplitude = 0.5
+curve_turns = 2.0
+curve_segments = 32
+curve = null
+curve_width = 0.15
+curve_bank = 0.0
+bank_easing = 0.15
+curve_pattern = 2
+dash_length = 0.1
+dash_gap = 0.05
+curve_start_cap = 0
+start_cap_size = Vector2(0.3, 0.3)
+start_cap_linked = true
+curve_end_cap = 0
+end_cap_size = Vector2(0.3, 0.3)
+end_cap_linked = true
+length_fraction = 1.0
+
+[node name="StaticBody3D" type="StaticBody3D" parent="DotTest" unique_id=731537969]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DotTest/StaticBody3D" unique_id=510634418]
+shape = ExtResource("1_4jh7y")
+
+[node name="DashTest" type="SuperMarker3D" parent="." unique_id=484918392]
+type = 3
+subtype = 23
+background_color = Color(0, 0, 0, 0)
+curve_flat = true
+curve_length = 7.952
+curve_amplitude = 0.5
+curve_turns = 2.0
+curve_segments = 32
+curve = null
+curve_width = 0.15
+curve_bank = 0.0
+bank_easing = 0.15
+curve_pattern = 1
+dash_length = 0.1
+dash_gap = 0.05
+curve_start_cap = 0
+start_cap_size = Vector2(0.3, 0.3)
+start_cap_linked = true
+curve_end_cap = 0
+end_cap_size = Vector2(0.3, 0.3)
+end_cap_linked = true
+length_fraction = 1.0
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1)
+
+[node name="StaticBody3D" type="StaticBody3D" parent="DashTest" unique_id=1969870102]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DashTest/StaticBody3D" unique_id=1862552215]
+shape = ExtResource("2_vn4sy")

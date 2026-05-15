@@ -680,6 +680,19 @@ private:
 		PackedVector2Array tri_bary_uvs;      // (h0, h1)
 		PackedVector2Array tri_bary_uv2s;     // (h2, 0)
 
+		// Curve start/end cap geometry — same bary attributes as
+		// tri_bary_*, emitted into a separate surface so the transparent
+		// queue centroid-sorts caps independently from the dash/dot
+		// ribbon. Without the split, caps share submission-order draw
+		// with the ribbon and appear on top regardless of viewing angle
+		// (visible bug: launch pad rendering through helix loops above
+		// it when viewed from below).
+		PackedVector3Array cap_bary_verts;
+		PackedVector3Array cap_bary_normals;
+		PackedColorArray   cap_bary_colors;
+		PackedVector2Array cap_bary_uvs;
+		PackedVector2Array cap_bary_uv2s;
+
 		// Per-fragment outline perimeter (outline_mode == 2). Each entry is
 		// (a.x, a.y, b.x, b.y) for one perimeter segment, in the shape's
 		// local 2D plane (XY for the flat arrow). The shader loops the

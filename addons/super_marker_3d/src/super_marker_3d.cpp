@@ -362,6 +362,12 @@ uniform vec4  fill_color : source_color    = vec4(0.0, 1.0, 0.8, 1.0);
 uniform vec4  outline_color : source_color = vec4(0.0, 1.0, 0.8, 1.0);
 uniform float outline_thickness            = 0.05;
 uniform float marker_size                  = 1.0;
+// Per-axis radii (X, Y, Z). v_local_pos / marker_size_xyz maps a point on
+// the actual ellipsoid back to its position on the unit sphere — so phi
+// and theta land at the same angular slots a uniform-sphere build would
+// have them, matching the faceted mesh's edges on a non-uniformly scaled
+// shape. The legacy scalar `marker_size` stays for strip-width math.
+uniform vec3  marker_size_xyz              = vec3(1.0);
 uniform vec3  sphere_center                = vec3(0.0);
 uniform float cyl_half                     = 0.0;
 
@@ -380,9 +386,10 @@ void vertex() {
 "	float edge = 0.0;\n" \
 "	if (outline_thickness > 0.0) {\n" \
 "		float min_dist = 1.0e9;\n" \
-"		float r = length(v_local_pos);\n" \
+"		vec3 unit_pos = v_local_pos / max(marker_size_xyz, vec3(1.0e-5));\n" \
+"		float r = length(unit_pos);\n" \
 "		if (r > 1.0e-5) {\n" \
-"			float theta = atan(v_local_pos.z, v_local_pos.x);\n" \
+"			float theta = atan(unit_pos.z, unit_pos.x);\n" \
 "			float theta_off = abs(mod(theta + MER_STEP * 0.5, MER_STEP) - MER_STEP * 0.5);\n" \
 "			if (cyl_half > 0.0) {\n" \
 "				float mer_w = marker_size * theta_off;\n" \
@@ -390,7 +397,7 @@ void vertex() {
 "				                  abs(v_local_pos.y + cyl_half));\n" \
 "				min_dist = min(mer_w, rim_d);\n" \
 "			} else {\n" \
-"				float phi   = acos(clamp(v_local_pos.y / r, -1.0, 1.0));\n" \
+"				float phi   = acos(clamp(unit_pos.y / r, -1.0, 1.0));\n" \
 "				float lat_off = abs(phi - SPHERE_PI * 0.5);\n" \
 "				float d0 = lat_off;\n" \
 "				float d1 = abs(lat_off - SPHERE_PI / 6.0);\n" \
@@ -1088,8 +1095,10 @@ void SuperMarker3D::_validate_property(PropertyInfo &p_property) const {
 	else if ((name == "head_length" || name == "head_width") && _shape != ARROW_FLAT) hide();
 	if (name == "rounded_corners" && _shape == ARROW_FLAT) hide();
 
-	// Curve shape uses its own width; generic marker_size / outline_thickness don't apply.
-	if ((name == "marker_size" || name == "outline_thickness") && is_curve) hide();
+	// Curve uses its own ribbon width (`curve_width`); generic marker_size doesn't apply.
+	// `outline_thickness` IS meaningful on curves — paints the edge strip on
+	// each dash/dot face via the bary shader, same as flat shapes.
+	if (name == "marker_size" && is_curve) hide();
 	// Curve-specific props.
 	if ((name == "curve" || name == "curve_preset" || name == "curve_flat"
 			|| name == "curve_length"
@@ -1430,9 +1439,12 @@ int SuperMarker3D::_type_first_subtype(int p_type) {
 	}
 }
 void SuperMarker3D::set_marker_size(const Vector3 &p) {
-	// Negative dimensions don't have a sensible geometric meaning here
-	// (would flip winding / invert hemisphere normals). Clamp to 0.
-	_marker_size = Vector3(MAX(0.0f, p.x), MAX(0.0f, p.y), MAX(0.0f, p.z));
+	// Clamp to a small positive epsilon. Exactly 0 collapses geometry to
+	// zero-area triangles which the smooth-shader analytic strip math
+	// divides by; negative would flip winding and invert hemisphere
+	// normals. Both are degenerate — pin at a sliver above zero.
+	const float MIN_SIZE = 1.0e-4f;
+	_marker_size = Vector3(MAX(MIN_SIZE, p.x), MAX(MIN_SIZE, p.y), MAX(MIN_SIZE, p.z));
 	SM_REBUILD();
 }
 Vector3 SuperMarker3D::get_marker_size() const { return _marker_size; }
@@ -2558,9 +2570,10 @@ void SuperMarker3D::_build_materials() {
 		// Figure forces depth_draw_always so transparent fill self-sorts by
 		// depth instead of submission order — without it, partial-alpha
 		// figure shows hand/foot tris drawing on top of head tris simply
-		// because the GLB stores them later in the index buffer. Mesh
-		// subtypes deliberately don't get this so their back-wireframe-
-		// through-alpha effect is preserved.
+		// because the GLB stores them later in the index buffer. Mesh +
+		// curve subtypes deliberately don't get this so back faces remain
+		// visible through alpha (intentional "see-through translucent
+		// ribbon" / "back-wireframe through alpha mesh" behavior).
 		const bool top = _flag(F_ALWAYS_ON_TOP);
 		const bool fig_depth = is_figure_type;
 		auto get_shader = [&](int cull, bool transparent, const String &body) -> Ref<Shader> {
@@ -2593,6 +2606,7 @@ void SuperMarker3D::_build_materials() {
 			_mesh_material->set_shader_parameter("outline_color", _outline_color);
 			_mesh_material->set_shader_parameter("outline_thickness", _outline_thickness);
 			_mesh_material->set_shader_parameter("marker_size", sphere_shader_size);
+			_mesh_material->set_shader_parameter("marker_size_xyz", _marker_size);
 			_mesh_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 			const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? MAX(0.0f, _marker_size.y - _marker_size.x) : 0.0f;
 			_mesh_material->set_shader_parameter("cyl_half", mesh_cyl_half);
@@ -2628,6 +2642,7 @@ void SuperMarker3D::_build_materials() {
 				_mesh_material_back->set_shader_parameter("outline_color", _outline_color);
 				_mesh_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
 				_mesh_material_back->set_shader_parameter("marker_size", sphere_shader_size);
+				_mesh_material_back->set_shader_parameter("marker_size_xyz", _marker_size);
 				_mesh_material_back->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 				const float mesh_cyl_half = (_shape == MESH_CAPSULE) ? MAX(0.0f, _marker_size.y - _marker_size.x) : 0.0f;
 				_mesh_material_back->set_shader_parameter("cyl_half", mesh_cyl_half);
@@ -2660,12 +2675,16 @@ void SuperMarker3D::_build_materials() {
 			if (_cap_bot_material.is_null()) _cap_bot_material.instantiate();
 			Ref<ShaderMaterial> caps[2] = { _cap_top_material, _cap_bot_material };
 			const float ys[2] = { +cyl_half, -cyl_half };
+			// Capsule hemispheres have radius X in both X and Y, and radius Z in Z.
+			// (Y dimension of the marker_size controls cyl_half, not the cap shape.)
+			const Vector3 cap_size_xyz(_marker_size.x, _marker_size.x, _marker_size.z);
 			for (int i = 0; i < 2; i++) {
 				caps[i]->set_shader(sphere_s);
 				caps[i]->set_shader_parameter("fill_color", _fill_color);
 				caps[i]->set_shader_parameter("outline_color", _outline_color);
 				caps[i]->set_shader_parameter("outline_thickness", _outline_thickness);
 				caps[i]->set_shader_parameter("marker_size", sphere_shader_size);
+				caps[i]->set_shader_parameter("marker_size_xyz", cap_size_xyz);
 				caps[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
 				caps[i]->set_shader_parameter("cyl_half", 0.0f);
 				caps[i]->set_render_priority(0);
@@ -2680,6 +2699,7 @@ void SuperMarker3D::_build_materials() {
 					caps_back[i]->set_shader_parameter("outline_color", _outline_color);
 					caps_back[i]->set_shader_parameter("outline_thickness", _outline_thickness);
 					caps_back[i]->set_shader_parameter("marker_size", sphere_shader_size);
+					caps_back[i]->set_shader_parameter("marker_size_xyz", cap_size_xyz);
 					caps_back[i]->set_shader_parameter("sphere_center", Vector3(0, ys[i], 0));
 					caps_back[i]->set_shader_parameter("cyl_half", 0.0f);
 					caps_back[i]->set_render_priority(-1);
@@ -2698,6 +2718,7 @@ void SuperMarker3D::_build_materials() {
 			_cap_top_material->set_shader_parameter("outline_color", _outline_color);
 			_cap_top_material->set_shader_parameter("outline_thickness", _outline_thickness);
 			_cap_top_material->set_shader_parameter("marker_size", sphere_shader_size);
+			_cap_top_material->set_shader_parameter("marker_size_xyz", _marker_size);
 			_cap_top_material->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 			_cap_top_material->set_shader_parameter("cyl_half", cap_cyl_half);
 			_cap_top_material->set_render_priority(0);
@@ -2708,6 +2729,7 @@ void SuperMarker3D::_build_materials() {
 				_cap_top_material_back->set_shader_parameter("outline_color", _outline_color);
 				_cap_top_material_back->set_shader_parameter("outline_thickness", _outline_thickness);
 				_cap_top_material_back->set_shader_parameter("marker_size", sphere_shader_size);
+				_cap_top_material_back->set_shader_parameter("marker_size_xyz", _marker_size);
 				_cap_top_material_back->set_shader_parameter("sphere_center", Vector3(0, 0, 0));
 				_cap_top_material_back->set_shader_parameter("cyl_half", cap_cyl_half);
 				_cap_top_material_back->set_render_priority(-1);
@@ -2778,6 +2800,12 @@ void SuperMarker3D::_build_materials() {
 				}
 				if ((_shape == MESH_CYLINDER || _shape == MESH_CONE) && sphere_shader_caps) {
 					if (sc > 1 && _cap_top_material.is_valid()) _mesh->surface_set_material(1, _cap_top_material);
+				}
+				// Curve cap surface (when present) reuses the ribbon's
+				// front_mat; it's a distinct surface only so the transparent
+				// queue can centroid-sort it independently.
+				if (is_curve_flat && sc > 1 && front_mat.is_valid()) {
+					_mesh->surface_set_material(1, front_mat);
 				}
 			}
 		} else {
@@ -3527,6 +3555,66 @@ void SuperMarker3D::_gen_capsule(GeoBuf &geo) const {
 	const int LON = SPHERE_FILL_LON;
 	const int LAT = SPHERE_FILL_LAT; // half this many quads per hemisphere
 	const int W   = LON + 1;
+
+	// Y <= X: the capsule body collapses; the marker is documented to render
+	// as an ellipsoid of dimensions (X, X, Z). Build it as a SINGLE unified
+	// sphere surface in tri_bary_* rather than the split top+bot cap-surface
+	// pair the Y > X path uses. When cyl_half = 0 the two cap surfaces share
+	// their equator ring exactly, and any draw-order asymmetry between them
+	// at that boundary catches one hemisphere differently from the other —
+	// previously visible as the top hemisphere rendering inverted at
+	// Y == X. One surface = no boundary.
+	if (cyl_half <= 0.0f) {
+		const Vector3 r_eff(r.x, r.x, r.z);
+		PackedVector3Array verts;
+		verts.resize((LAT + 1) * W);
+		for (int i = 0; i <= LAT; i++) {
+			const float phi = SM_PI * (float)i / LAT;
+			const float sp = std::sin(phi), cp = std::cos(phi);
+			for (int j = 0; j <= LON; j++) {
+				const float theta = SM_TAU * (float)j / LON;
+				const float st = std::sin(theta), ct = std::cos(theta);
+				verts.set(i * W + j, Vector3(sp * ct * r_eff.x, cp * r_eff.y, sp * st * r_eff.z));
+			}
+		}
+		if (_flag(F_SMOOTH_SHADING)) {
+			auto push = [&](const Vector3 &v) {
+				geo.tri_bary_verts.push_back(v);
+				geo.tri_bary_normals.push_back(v.normalized());
+				geo.tri_bary_colors.push_back(Color(0, 0, 0, 1));
+				geo.tri_bary_uvs.push_back(Vector2(0, 0));
+				geo.tri_bary_uv2s.push_back(Vector2(0, 0));
+			};
+			for (int i = 0; i < LAT; i++) {
+				for (int j = 0; j < LON; j++) {
+					const int ia = i * W + j;
+					const int ib = ia + 1;
+					const int ic = ia + W;
+					const int id = ic + 1;
+					push(verts[ia]); push(verts[id]); push(verts[ib]);
+					push(verts[ia]); push(verts[ic]); push(verts[id]);
+				}
+			}
+		} else {
+			for (int i = 0; i < LAT; i++) {
+				for (int j = 0; j < LON; j++) {
+					const int ia = i * W + j;
+					const int ib = ia + 1;
+					const int ic = ia + W;
+					const int id = ic + 1;
+					if (i == 0) {
+						_add_mesh_face(geo, verts[ia], verts[id], verts[ic]);
+					} else if (i == LAT - 1) {
+						_add_mesh_face(geo, verts[ia], verts[ib], verts[ic]);
+					} else {
+						_add_mesh_quad_face(geo, verts[ia], verts[ib], verts[id], verts[ic],
+								true, true, true, true);
+					}
+				}
+			}
+		}
+		return;
+	}
 
 	// --- Cylinder body lateral facets ---------------------------------
 	// Use the same LON count as the sphere so meridian seams align with
@@ -4650,12 +4738,21 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 		const float dash  = MAX(0.001f, _td.curve.dash_length);
 		const float gap   = MAX(0.001f, _td.curve.dash_gap);
 		const float cycle = dash + gap;
+		// When background is fully transparent, skip the gap geometry
+		// entirely — fragments would just be discarded by the shader,
+		// but the triangles still ship into export_mesh / concave shape
+		// exports, smearing per-dash colliders into one long ribbon.
+		// Dropping the quads keeps each dash a disconnected island so
+		// the concave collider matches the visual (floating platforms).
+		const bool emit_gaps = _td.curve.background_color.a > 0.0f;
 		for (float s = 0.0f; s < L_end; s += cycle) {
 			const float on_end  = MIN(s + dash,  L_end);
 			emit_segment(s, on_end);
-			const float off_end = MIN(s + cycle, L_end);
-			if (off_end > on_end)
-				emit_segment(on_end, off_end, true);
+			if (emit_gaps) {
+				const float off_end = MIN(s + cycle, L_end);
+				if (off_end > on_end)
+					emit_segment(on_end, off_end, true);
+			}
 		}
 	}
 
@@ -4741,8 +4838,27 @@ void SuperMarker3D::_gen_curve(GeoBuf &geo) const {
 				_add_mesh_quad_face(geo, vA, vD, vC, vB, true, true, true, true);
 		}
 	};
+	// Snapshot the bary array sizes BEFORE the caps emit, then splice the
+	// cap-appended range out of tri_bary_* and into cap_bary_*. _rebuild_mesh
+	// emits cap_bary_* as a separate surface so the transparent queue sorts
+	// it independently from the dash ribbon — fixes start cap drawing on top
+	// of helix loops above it when viewed from below.
+	const int bary_before = geo.tri_bary_verts.size();
 	emit_cap(_td.curve.start_cap, 0.0f, true,  _td.curve.start_cap_size, _flag(F_START_CAP_LINKED));
 	emit_cap(_td.curve.end_cap,   L_end, false, _td.curve.end_cap_size,   _flag(F_END_CAP_LINKED));
+	const int bary_after = geo.tri_bary_verts.size();
+	for (int i = bary_before; i < bary_after; i++) {
+		geo.cap_bary_verts.push_back(geo.tri_bary_verts[i]);
+		geo.cap_bary_normals.push_back(geo.tri_bary_normals[i]);
+		geo.cap_bary_colors.push_back(geo.tri_bary_colors[i]);
+		geo.cap_bary_uvs.push_back(geo.tri_bary_uvs[i]);
+		geo.cap_bary_uv2s.push_back(geo.tri_bary_uv2s[i]);
+	}
+	geo.tri_bary_verts.resize(bary_before);
+	geo.tri_bary_normals.resize(bary_before);
+	geo.tri_bary_colors.resize(bary_before);
+	geo.tri_bary_uvs.resize(bary_before);
+	geo.tri_bary_uv2s.resize(bary_before);
 }
 
 // ---------------------------------------------------------------------------
@@ -5155,6 +5271,20 @@ void SuperMarker3D::_rebuild_mesh() {
 				_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // back
 			}
 			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a); // front
+		}
+		// Curve caps as a separate surface so the transparent queue sorts
+		// them by centroid against the ribbon — keeps a start-cap launch
+		// pad from drawing through helix loops above it (looking from
+		// below) without breaking the see-through behavior on the ribbon
+		// itself. Same material as the ribbon, just a distinct surface.
+		if (is_curve_flat && geo.cap_bary_verts.size() > 0) {
+			Array a; a.resize(Mesh::ARRAY_MAX);
+			a[Mesh::ARRAY_VERTEX]  = geo.cap_bary_verts;
+			a[Mesh::ARRAY_NORMAL]  = geo.cap_bary_normals;
+			a[Mesh::ARRAY_COLOR]   = geo.cap_bary_colors;
+			a[Mesh::ARRAY_TEX_UV]  = geo.cap_bary_uvs;
+			a[Mesh::ARRAY_TEX_UV2] = geo.cap_bary_uv2s;
+			_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, a);
 		}
 		// Capsule hemisphere caps / cylinder band / cone lateral — sphere-shader surfaces.
 		if (_shape == MESH_CAPSULE || _shape == MESH_CYLINDER || _shape == MESH_CONE) {
